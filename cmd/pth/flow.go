@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
 	"google.golang.org/grpc/status"
@@ -33,7 +34,7 @@ func defaultFlowProfileFactory(getenv envSnapshot) flowProfileFactory {
 	}
 }
 
-const flowUsage = `flow: action required (one of: golden-m1)`
+const flowUsage = `flow: action required (one of: golden-m1, golden-m2)`
 
 func runFlow(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, mk flowProfileFactory) int {
 	if len(args) == 0 {
@@ -44,6 +45,8 @@ func runFlow(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []s
 	switch action {
 	case "golden-m1":
 		return runFlowGoldenM1(ctx, stdout, stderr, g, rest, mk)
+	case "golden-m2":
+		return runFlowGoldenM2(ctx, stdout, stderr, g, rest, mk)
 	default:
 		fmt.Fprintf(stderr, "flow: unknown action %q\n", action)
 		return exitLocalError
@@ -196,6 +199,293 @@ func runFlowGoldenM1(ctx context.Context, stdout, stderr io.Writer, g *Globals, 
 		return exitClientError
 	}
 	return exitOK
+}
+
+// goldenM2Inputs bundles the parsed flag values for golden-m2. Pulled
+// out as a struct so the parse / validation step has a single return
+// shape and the orchestrator stays linear.
+type goldenM2Inputs struct {
+	slug          string
+	title         string
+	platforms     []pb.Platform
+	ndaProse      string
+	csvBody       []byte
+	csvFilename   string
+	adminProfile  string
+	playerProfile string
+	dryRun        bool
+}
+
+// parseGoldenM2Flags returns parsed inputs or, on validation failure,
+// an exit code (caller returns it). All user-visible error messages are
+// written to stderr inside this function.
+func parseGoldenM2Flags(stderr io.Writer, g *Globals, args []string) (goldenM2Inputs, int) {
+	fs := flag.NewFlagSet("flow golden-m2", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	slug := fs.String("slug", "", "playtest slug (required, PRD §5.1 regex)")
+	title := fs.String("title", "", "playtest title (default: 'Playtest <slug>')")
+	platformsCSV := fs.String("platforms", "STEAM", "platforms for both create and signup")
+	ndaText := fs.String("nda-text", "Standard playtest NDA — golden-m2.", "NDA prose; @file to load from disk")
+	codesFile := fs.String("codes-file", "", "CSV path to upload (overrides --codes-count)")
+	codesCount := fs.Int("codes-count", 1, "number of synthetic codes to upload when --codes-file is empty (1..50)")
+	adminProfile := fs.String("admin-profile", "", "credential profile for admin steps")
+	playerProfile := fs.String("player-profile", "", "credential profile for player steps")
+	dryRun := fs.Bool("dry-run", false, "print every step's request JSON and exit without dialling")
+	if err := fs.Parse(args); err != nil {
+		return goldenM2Inputs{}, exitLocalError
+	}
+	if *slug == "" {
+		fmt.Fprintln(stderr, "flow golden-m2: --slug is required")
+		return goldenM2Inputs{}, exitLocalError
+	}
+	if g.Namespace == "" {
+		fmt.Fprintln(stderr, "flow golden-m2: --namespace (or PTH_NAMESPACE) is required")
+		return goldenM2Inputs{}, exitLocalError
+	}
+	if !*dryRun && *adminProfile == "" {
+		fmt.Fprintln(stderr, "flow golden-m2: --admin-profile is required")
+		return goldenM2Inputs{}, exitLocalError
+	}
+	if !*dryRun && *playerProfile == "" {
+		fmt.Fprintln(stderr, "flow golden-m2: --player-profile is required")
+		return goldenM2Inputs{}, exitLocalError
+	}
+	platforms, err := parsePlatforms(*platformsCSV)
+	if err != nil {
+		fmt.Fprintf(stderr, "flow golden-m2: %v\n", err)
+		return goldenM2Inputs{}, exitLocalError
+	}
+	if len(platforms) == 0 {
+		platforms = []pb.Platform{pb.Platform_PLATFORM_STEAM}
+	}
+	ndaProse, err := readMaybeFile(*ndaText)
+	if err != nil {
+		fmt.Fprintf(stderr, "flow golden-m2: --nda-text %v\n", err)
+		return goldenM2Inputs{}, exitLocalError
+	}
+	if ndaProse == "" {
+		fmt.Fprintln(stderr, "flow golden-m2: --nda-text must be non-empty (PRD §5.1: NDA-required playtests need prose)")
+		return goldenM2Inputs{}, exitLocalError
+	}
+	csvBody, csvFilename, err := resolveGoldenM2CSV(*codesFile, *codesCount, *slug)
+	if err != nil {
+		fmt.Fprintf(stderr, "flow golden-m2: %v\n", err)
+		return goldenM2Inputs{}, exitLocalError
+	}
+	resolvedTitle := *title
+	if resolvedTitle == "" {
+		resolvedTitle = "Playtest " + *slug
+	}
+	return goldenM2Inputs{
+		slug:          *slug,
+		title:         resolvedTitle,
+		platforms:     platforms,
+		ndaProse:      ndaProse,
+		csvBody:       csvBody,
+		csvFilename:   csvFilename,
+		adminProfile:  *adminProfile,
+		playerProfile: *playerProfile,
+		dryRun:        *dryRun,
+	}, exitOK
+}
+
+// runFlowGoldenM2 composes the PRD §4.1 M2 golden flow on top of M1's
+// four steps. Seven NDJSON lines: create-playtest (NDA required) →
+// transition-open → signup → accept-nda → upload-codes → approve →
+// get-code. The flow stops on the first failure with the cli.md §8
+// exit code matching the failed step.
+func runFlowGoldenM2(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, mk flowProfileFactory) int {
+	in, code := parseGoldenM2Flags(stderr, g, args)
+	if code != exitOK {
+		return code
+	}
+	createReq := &pb.CreatePlaytestRequest{
+		Namespace:         g.Namespace,
+		Slug:              in.slug,
+		Title:             in.title,
+		Platforms:         in.platforms,
+		DistributionModel: pb.DistributionModel_DISTRIBUTION_MODEL_STEAM_KEYS,
+		NdaRequired:       true,
+		NdaText:           in.ndaProse,
+	}
+	if in.dryRun {
+		return runFlowGoldenM2DryRun(stdout, stderr, g, &in, createReq)
+	}
+	return runFlowGoldenM2Live(ctx, stdout, stderr, g, &in, createReq, mk)
+}
+
+// runFlowGoldenM2DryRun emits one NDJSON line per request shape (with
+// placeholder ids for fields that only resolve after a real dial).
+func runFlowGoldenM2DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest) int {
+	const placeholder = "<resolved-after-create>"
+	dryRunSteps := []struct {
+		label string
+		msg   proto.Message
+	}{
+		{"create-playtest", createReq},
+		{"transition-open", &pb.TransitionPlaytestStatusRequest{
+			Namespace:    g.Namespace,
+			PlaytestId:   placeholder,
+			TargetStatus: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN,
+		}},
+		{"signup", &pb.SignupRequest{Slug: in.slug, Platforms: in.platforms}},
+		{"accept-nda", &pb.AcceptNDARequest{PlaytestId: placeholder}},
+		{"upload-codes", &pb.UploadCodesRequest{
+			Namespace:  g.Namespace,
+			PlaytestId: placeholder,
+			CsvContent: in.csvBody,
+			Filename:   in.csvFilename,
+		}},
+		{"approve", &pb.ApproveApplicantRequest{
+			Namespace:   g.Namespace,
+			ApplicantId: "<resolved-after-signup>",
+		}},
+		{"get-code", &pb.GetGrantedCodeRequest{PlaytestId: placeholder}},
+	}
+	for _, s := range dryRunSteps {
+		if !writeFlowDryRun(stdout, stderr, s.label, s.msg) {
+			return exitLocalError
+		}
+	}
+	return exitOK
+}
+
+// runFlowGoldenM2Live drives the seven RPCs in sequence, halting on the
+// first failure. The two id resolutions (playtest_id from create-playtest,
+// applicant_id from signup) are the only state threaded between steps.
+func runFlowGoldenM2Live(ctx context.Context, stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest, mk flowProfileFactory) int {
+	adminFactory, _ := mk(g, in.adminProfile)
+	playerFactory, _ := mk(g, in.playerProfile)
+
+	playtestID, code := flowGoldenM2CreateAndOpen(ctx, stdout, stderr, g, adminFactory, createReq)
+	if code != exitOK {
+		return code
+	}
+	applicantID, code := flowGoldenM2SignupAndAccept(ctx, stdout, stderr, g, playerFactory, in, playtestID)
+	if code != exitOK {
+		return code
+	}
+	if code := flowGoldenM2UploadAndApprove(ctx, stdout, stderr, g, adminFactory, in, playtestID, applicantID); code != exitOK {
+		return code
+	}
+	return flowGoldenM2GetCode(ctx, stdout, stderr, g, playerFactory, playtestID)
+}
+
+func flowGoldenM2CreateAndOpen(ctx context.Context, stdout, stderr io.Writer, g *Globals, admin playtestClientFactory, createReq *pb.CreatePlaytestRequest) (string, int) {
+	createResp, code := flowInvoke(ctx, stdout, stderr, g, admin, "create-playtest",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.CreatePlaytest(cctx, createReq)
+		})
+	if code != exitOK {
+		return "", code
+	}
+	cp, ok := createResp.(*pb.CreatePlaytestResponse)
+	if !ok || cp.Playtest == nil || cp.Playtest.Id == "" {
+		writeFlowFailure(stdout, stderr, "create-playtest", "Internal", "CreatePlaytest response missing playtest.id")
+		return "", exitClientError
+	}
+	playtestID := cp.Playtest.Id
+	transReq := &pb.TransitionPlaytestStatusRequest{
+		Namespace:    g.Namespace,
+		PlaytestId:   playtestID,
+		TargetStatus: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN,
+	}
+	if _, code := flowInvoke(ctx, stdout, stderr, g, admin, "transition-open",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.TransitionPlaytestStatus(cctx, transReq)
+		}); code != exitOK {
+		return "", code
+	}
+	return playtestID, exitOK
+}
+
+func flowGoldenM2SignupAndAccept(ctx context.Context, stdout, stderr io.Writer, g *Globals, player playtestClientFactory, in *goldenM2Inputs, playtestID string) (string, int) {
+	signupResp, code := flowInvoke(ctx, stdout, stderr, g, player, "signup",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.Signup(cctx, &pb.SignupRequest{Slug: in.slug, Platforms: in.platforms})
+		})
+	if code != exitOK {
+		return "", code
+	}
+	sr, ok := signupResp.(*pb.SignupResponse)
+	if !ok || sr.Applicant == nil || sr.Applicant.Id == "" {
+		writeFlowFailure(stdout, stderr, "signup", "Internal", "Signup response missing applicant.id")
+		return "", exitClientError
+	}
+	if _, code := flowInvoke(ctx, stdout, stderr, g, player, "accept-nda",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.AcceptNDA(cctx, &pb.AcceptNDARequest{PlaytestId: playtestID})
+		}); code != exitOK {
+		return "", code
+	}
+	return sr.Applicant.Id, exitOK
+}
+
+func flowGoldenM2UploadAndApprove(ctx context.Context, stdout, stderr io.Writer, g *Globals, admin playtestClientFactory, in *goldenM2Inputs, playtestID, applicantID string) int {
+	uploadReq := &pb.UploadCodesRequest{
+		Namespace:  g.Namespace,
+		PlaytestId: playtestID,
+		CsvContent: in.csvBody,
+		Filename:   in.csvFilename,
+	}
+	if _, code := flowInvoke(ctx, stdout, stderr, g, admin, "upload-codes",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.UploadCodes(cctx, uploadReq)
+		}); code != exitOK {
+		return code
+	}
+	if _, code := flowInvoke(ctx, stdout, stderr, g, admin, "approve",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.ApproveApplicant(cctx, &pb.ApproveApplicantRequest{Namespace: g.Namespace, ApplicantId: applicantID})
+		}); code != exitOK {
+		return code
+	}
+	return exitOK
+}
+
+func flowGoldenM2GetCode(ctx context.Context, stdout, stderr io.Writer, g *Globals, player playtestClientFactory, playtestID string) int {
+	getCodeResp, code := flowInvoke(ctx, stdout, stderr, g, player, "get-code",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.GetGrantedCode(cctx, &pb.GetGrantedCodeRequest{PlaytestId: playtestID})
+		})
+	if code != exitOK {
+		return code
+	}
+	gc, ok := getCodeResp.(*pb.GetGrantedCodeResponse)
+	if !ok || gc.Value == "" {
+		writeFlowFailure(stdout, stderr, "get-code", "FailedPrecondition",
+			"GetGrantedCode response missing or empty code value")
+		return exitClientError
+	}
+	return exitOK
+}
+
+// resolveGoldenM2CSV resolves the CSV body for the upload-codes step.
+// --codes-file wins; otherwise we synthesise `count` short codes using
+// slug+ordinal so concurrent runs against the same backend don't collide.
+// The synthesis path keeps the harness self-contained — callers can run
+// `pth flow golden-m2 --slug e2e-1 --admin-profile admin --player-profile p1`
+// without staging a CSV on disk.
+func resolveGoldenM2CSV(filePath string, count int, slug string) ([]byte, string, error) {
+	if filePath != "" {
+		body, err := readFile(filePath)
+		if err != nil {
+			return nil, "", err
+		}
+		filename := ""
+		if filePath != "-" {
+			filename = filePath
+		}
+		return body, filename, nil
+	}
+	if count <= 0 || count > 50 {
+		return nil, "", fmt.Errorf("--codes-count must be between 1 and 50 (got %d)", count)
+	}
+	var b strings.Builder
+	for i := range count {
+		fmt.Fprintf(&b, "GOLDEN-M2-%s-%04d\n", strings.ToUpper(slug), i)
+	}
+	return []byte(b.String()), fmt.Sprintf("golden-m2-%s.csv", slug), nil
 }
 
 // flowInvoke runs one step against the supplied factory, writes the step

@@ -2,6 +2,151 @@
   "schema": "cli-schema.v1",
   "commands": [
     {
+      "name": "applicant accept-nda",
+      "milestone": "M2",
+      "description": "Persist a versioned NDA acceptance for the calling player (cli.md §6.2).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --profile player applicant accept-nda --playtest 01J0..."
+    },
+    {
+      "name": "applicant approve",
+      "milestone": "M2",
+      "description": "Admin: approve an applicant; reserves + grants a code (cli.md §6.2, PRD §4.1).",
+      "requiredFlags": [
+        {
+          "name": "--id",
+          "description": "ULID identifier",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin applicant approve --id 01J0..."
+    },
+    {
+      "name": "applicant get-code",
+      "milestone": "M2",
+      "description": "Fetch the granted code for the calling player. Player token required (cli.md §6.2).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --profile player applicant get-code --playtest 01J0..."
+    },
+    {
+      "name": "applicant list",
+      "milestone": "M2",
+      "description": "Admin: list applicants on a playtest. Server-side status + dm-failed filters (cli.md §6.2).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--status",
+          "description": "applicant status filter: PENDING | APPROVED | REJECTED",
+          "valueType": "enum"
+        },
+        {
+          "name": "--dm-failed",
+          "description": "only rows where last_dm_status='failed'",
+          "valueType": "bool"
+        },
+        {
+          "name": "--cursor",
+          "description": "opaque page_token from a prior response",
+          "valueType": "string"
+        },
+        {
+          "name": "--page-size",
+          "description": "page size (0 → server default 50)",
+          "valueType": "int"
+        },
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin applicant list --playtest 01J0... --status PENDING"
+    },
+    {
+      "name": "applicant reject",
+      "milestone": "M2",
+      "description": "Admin: reject an applicant (cli.md §6.2). Optional --reason ≤500 chars.",
+      "requiredFlags": [
+        {
+          "name": "--id",
+          "description": "ULID identifier",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--reason",
+          "description": "admin-visible rejection reason (≤500 chars)",
+          "valueType": "string"
+        },
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin applicant reject --id 01J0... --reason 'duplicate signup'"
+    },
+    {
+      "name": "applicant retry-dm",
+      "milestone": "M2",
+      "description": "Admin: re-enqueue the Discord DM for an applicant (cli.md §6.2).",
+      "requiredFlags": [
+        {
+          "name": "--id",
+          "description": "ULID identifier",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin applicant retry-dm --id 01J0..."
+    },
+    {
       "name": "applicant signup",
       "milestone": "M1",
       "description": "Sign up the calling player to a playtest. Requires a player token (cli.md §6.1).",
@@ -115,6 +260,96 @@
       "example": "pth --profile admin auth whoami"
     },
     {
+      "name": "code pool",
+      "milestone": "M2",
+      "description": "Admin: show CodePoolStats + raw code values for a playtest (cli.md §6.2, PRD §5.7).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin code pool --playtest 01J0..."
+    },
+    {
+      "name": "code sync-from-ags",
+      "milestone": "M2",
+      "description": "Admin: re-sync the local code pool from AGS Campaign API. AGS_CAMPAIGN only (cli.md §6.2).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin code sync-from-ags --playtest 01J0..."
+    },
+    {
+      "name": "code top-up",
+      "milestone": "M2",
+      "description": "Admin: generate more codes via AGS Campaign API. AGS_CAMPAIGN only (cli.md §6.2, PRD §4.6).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        },
+        {
+          "name": "--quantity",
+          "description": "number of codes to generate (1..50000)",
+          "valueType": "int"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin code top-up --playtest 01J0... --quantity 100"
+    },
+    {
+      "name": "code upload",
+      "milestone": "M2",
+      "description": "Admin: upload a CSV of codes (STEAM_KEYS only). Whole-file reject on any violation (cli.md §6.2, PRD §4.3).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        },
+        {
+          "name": "--file",
+          "description": "path to CSV file ('-' reads stdin)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin code upload --playtest 01J0... --file ./keys.csv"
+    },
+    {
       "name": "describe",
       "milestone": "M1",
       "description": "Emit the JSON catalogue of every subcommand. Stable schema cli-schema.v1 (cli.md §5, §10).",
@@ -169,6 +404,61 @@
         }
       ],
       "example": "pth --namespace mygame flow golden-m1 --slug e2e-1234 --admin-profile admin --player-profile player"
+    },
+    {
+      "name": "flow golden-m2",
+      "milestone": "M2",
+      "description": "Composite: golden-m1 → accept-nda → upload codes → approve → assert APPROVED + code visible. NDJSON output (cli.md §6.4).",
+      "requiredFlags": [
+        {
+          "name": "--slug",
+          "description": "playtest slug (PRD §5.1 regex ^[a-z0-9-]{3,50}$)",
+          "valueType": "string"
+        },
+        {
+          "name": "--admin-profile",
+          "description": "credential profile for admin steps (create, transition, upload, approve)",
+          "valueType": "string"
+        },
+        {
+          "name": "--player-profile",
+          "description": "credential profile for player steps (signup, accept-nda, get-code)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--title",
+          "description": "playtest title (default: 'Playtest \u003cslug\u003e')",
+          "valueType": "string"
+        },
+        {
+          "name": "--platforms",
+          "description": "platforms for both create and signup (default STEAM)",
+          "valueType": "csv"
+        },
+        {
+          "name": "--nda-text",
+          "description": "NDA prose; @file to load from disk",
+          "valueType": "string"
+        },
+        {
+          "name": "--codes-file",
+          "description": "CSV path to upload (overrides --codes-count; '-' reads stdin)",
+          "valueType": "string"
+        },
+        {
+          "name": "--codes-count",
+          "description": "number of synthetic codes when --codes-file is empty (1..50, default 1)",
+          "valueType": "int"
+        },
+        {
+          "name": "--dry-run",
+          "description": "print every step's request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame flow golden-m2 --slug e2e-1234 --admin-profile admin --player-profile player"
     },
     {
       "name": "playtest create",

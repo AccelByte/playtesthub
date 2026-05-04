@@ -341,6 +341,51 @@ while IFS= read -r line; do
     i=$((i+1))
 done <<<"$flow_dry"
 
+# --- pth flow golden-m2 --dry-run (unconditional) ---------------------
+# Phase 12 (docs/STATUS.md M2): seven NDJSON steps with status=DRY_RUN.
+# Adds the M2 surface (accept-nda, upload-codes, approve, get-code) to
+# the M1 golden flow.
+log "pth flow golden-m2 --dry-run emits 7 NDJSON steps without dialling"
+flow_dry_m2=$("$PTH_BIN" --namespace smoke flow golden-m2 --slug demo-flow-m2 --dry-run)
+flow_dry_m2_lines=$(printf '%s\n' "$flow_dry_m2" | wc -l | tr -d ' ')
+[[ "$flow_dry_m2_lines" -eq 7 ]] \
+    || { printf '%s\n' "$flow_dry_m2" >&2; fail "flow golden-m2 dry-run lines=$flow_dry_m2_lines, want 7"; }
+expected_steps_m2=("create-playtest" "transition-open" "signup" "accept-nda" "upload-codes" "approve" "get-code")
+i=0
+while IFS= read -r line; do
+    step=$(jq -r '.step' <<<"$line")
+    status=$(jq -r '.status' <<<"$line")
+    [[ "$step" == "${expected_steps_m2[$i]}" ]] \
+        || fail "flow golden-m2 dry-run line $((i+1)) step=$step, want ${expected_steps_m2[$i]}"
+    [[ "$status" == "DRY_RUN" ]] \
+        || fail "flow golden-m2 dry-run line $((i+1)) status=$status, want DRY_RUN"
+    i=$((i+1))
+done <<<"$flow_dry_m2"
+
+# --- pth M2 subcommand catalogue presence -----------------------------
+# Phase 12 commits the §6.2 surface to the catalogue. The byte-exact
+# diff lives in cmd/pth/testdata/describe.golden.json — this probe is a
+# defence-in-depth check that the binary emits every M2 entry name so
+# AI consumers don't see a surprise drop on a dirty checkout.
+log "pth describe contains every M2 §6.2 subcommand"
+m2_required=(
+    "applicant accept-nda"
+    "applicant approve"
+    "applicant get-code"
+    "applicant list"
+    "applicant reject"
+    "applicant retry-dm"
+    "code pool"
+    "code sync-from-ags"
+    "code top-up"
+    "code upload"
+    "flow golden-m2"
+)
+for name in "${m2_required[@]}"; do
+    jq -e --arg n "$name" '.commands[] | select(.name == $n)' <<<"$describe_out" >/dev/null \
+        || fail "describe missing M2 command: $name"
+done
+
 # --- pth auth login --password (gated on PTH_E2E_* secrets) -----------
 # Phase 10.2 spec (docs/STATUS.md): probe ROPC + whoami + token + logout
 # round-trip when admin creds + IAM env are present. Skipped when any

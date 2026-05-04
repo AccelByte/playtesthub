@@ -41,6 +41,63 @@ type commandSpec struct {
 // describe.golden.json (cli.md §9, STATUS.md M1 phase 10.6).
 var catalogue = []commandSpec{
 	{
+		Name:          "applicant accept-nda",
+		Milestone:     "M2",
+		Description:   "Persist a versioned NDA acceptance for the calling player (cli.md §6.2).",
+		RequiredFlags: []flagSpec{playtestFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --profile player applicant accept-nda --playtest 01J0...",
+	},
+	{
+		Name:          "applicant approve",
+		Milestone:     "M2",
+		Description:   "Admin: approve an applicant; reserves + grants a code (cli.md §6.2, PRD §4.1).",
+		RequiredFlags: []flagSpec{idFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin applicant approve --id 01J0...",
+	},
+	{
+		Name:          "applicant get-code",
+		Milestone:     "M2",
+		Description:   "Fetch the granted code for the calling player. Player token required (cli.md §6.2).",
+		RequiredFlags: []flagSpec{playtestFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --profile player applicant get-code --playtest 01J0...",
+	},
+	{
+		Name:          "applicant list",
+		Milestone:     "M2",
+		Description:   "Admin: list applicants on a playtest. Server-side status + dm-failed filters (cli.md §6.2).",
+		RequiredFlags: []flagSpec{playtestFlag()},
+		OptionalFlags: []flagSpec{
+			{Name: "--status", Description: "applicant status filter: PENDING | APPROVED | REJECTED", ValueType: "enum"},
+			{Name: "--dm-failed", Description: "only rows where last_dm_status='failed'", ValueType: "bool"},
+			{Name: "--cursor", Description: "opaque page_token from a prior response", ValueType: "string"},
+			{Name: "--page-size", Description: "page size (0 → server default 50)", ValueType: "int"},
+			dryRunFlag(),
+		},
+		Example: "pth --namespace mygame --profile admin applicant list --playtest 01J0... --status PENDING",
+	},
+	{
+		Name:          "applicant reject",
+		Milestone:     "M2",
+		Description:   "Admin: reject an applicant (cli.md §6.2). Optional --reason ≤500 chars.",
+		RequiredFlags: []flagSpec{idFlag()},
+		OptionalFlags: []flagSpec{
+			{Name: "--reason", Description: "admin-visible rejection reason (≤500 chars)", ValueType: "string"},
+			dryRunFlag(),
+		},
+		Example: "pth --namespace mygame --profile admin applicant reject --id 01J0... --reason 'duplicate signup'",
+	},
+	{
+		Name:          "applicant retry-dm",
+		Milestone:     "M2",
+		Description:   "Admin: re-enqueue the Discord DM for an applicant (cli.md §6.2).",
+		RequiredFlags: []flagSpec{idFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin applicant retry-dm --id 01J0...",
+	},
+	{
 		Name:          "applicant signup",
 		Milestone:     "M1",
 		Description:   "Sign up the calling player to a playtest. Requires a player token (cli.md §6.1).",
@@ -98,6 +155,44 @@ var catalogue = []commandSpec{
 		Example:     "pth --profile admin auth whoami",
 	},
 	{
+		Name:          "code pool",
+		Milestone:     "M2",
+		Description:   "Admin: show CodePoolStats + raw code values for a playtest (cli.md §6.2, PRD §5.7).",
+		RequiredFlags: []flagSpec{playtestFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin code pool --playtest 01J0...",
+	},
+	{
+		Name:          "code sync-from-ags",
+		Milestone:     "M2",
+		Description:   "Admin: re-sync the local code pool from AGS Campaign API. AGS_CAMPAIGN only (cli.md §6.2).",
+		RequiredFlags: []flagSpec{playtestFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin code sync-from-ags --playtest 01J0...",
+	},
+	{
+		Name:        "code top-up",
+		Milestone:   "M2",
+		Description: "Admin: generate more codes via AGS Campaign API. AGS_CAMPAIGN only (cli.md §6.2, PRD §4.6).",
+		RequiredFlags: []flagSpec{
+			playtestFlag(),
+			{Name: "--quantity", Description: "number of codes to generate (1..50000)", ValueType: "int"},
+		},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin code top-up --playtest 01J0... --quantity 100",
+	},
+	{
+		Name:        "code upload",
+		Milestone:   "M2",
+		Description: "Admin: upload a CSV of codes (STEAM_KEYS only). Whole-file reject on any violation (cli.md §6.2, PRD §4.3).",
+		RequiredFlags: []flagSpec{
+			playtestFlag(),
+			{Name: "--file", Description: "path to CSV file ('-' reads stdin)", ValueType: "string"},
+		},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin code upload --playtest 01J0... --file ./keys.csv",
+	},
+	{
 		Name:        "describe",
 		Milestone:   "M1",
 		Description: "Emit the JSON catalogue of every subcommand. Stable schema cli-schema.v1 (cli.md §5, §10).",
@@ -124,6 +219,25 @@ var catalogue = []commandSpec{
 			{Name: "--dry-run", Description: "print every step's request JSON and exit without dialling", ValueType: "bool"},
 		},
 		Example: "pth --namespace mygame flow golden-m1 --slug e2e-1234 --admin-profile admin --player-profile player",
+	},
+	{
+		Name:        "flow golden-m2",
+		Milestone:   "M2",
+		Description: "Composite: golden-m1 → accept-nda → upload codes → approve → assert APPROVED + code visible. NDJSON output (cli.md §6.4).",
+		RequiredFlags: []flagSpec{
+			slugFlag(),
+			{Name: "--admin-profile", Description: "credential profile for admin steps (create, transition, upload, approve)", ValueType: "string"},
+			{Name: "--player-profile", Description: "credential profile for player steps (signup, accept-nda, get-code)", ValueType: "string"},
+		},
+		OptionalFlags: []flagSpec{
+			{Name: "--title", Description: "playtest title (default: 'Playtest <slug>')", ValueType: "string"},
+			platformsFlag("platforms for both create and signup (default STEAM)"),
+			{Name: "--nda-text", Description: "NDA prose; @file to load from disk", ValueType: "string"},
+			{Name: "--codes-file", Description: "CSV path to upload (overrides --codes-count; '-' reads stdin)", ValueType: "string"},
+			{Name: "--codes-count", Description: "number of synthetic codes when --codes-file is empty (1..50, default 1)", ValueType: "int"},
+			{Name: "--dry-run", Description: "print every step's request JSON and exit without dialling", ValueType: "bool"},
+		},
+		Example: "pth --namespace mygame flow golden-m2 --slug e2e-1234 --admin-profile admin --player-profile player",
 	},
 	{
 		Name:          "playtest create",
@@ -263,6 +377,10 @@ func slugFlag() flagSpec {
 
 func idFlag() flagSpec {
 	return flagSpec{Name: "--id", Description: "ULID identifier", ValueType: "string"}
+}
+
+func playtestFlag() flagSpec {
+	return flagSpec{Name: "--playtest", Description: "playtest id (ULID)", ValueType: "string"}
 }
 
 func platformsFlag(desc string) flagSpec {

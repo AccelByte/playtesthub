@@ -344,6 +344,171 @@ func TestRunFlowGoldenM1_FactoryDialFailureExitsTransport(t *testing.T) {
 	}
 }
 
+// ---------------- golden-m2 ----------------
+
+func TestRunFlowGoldenM2_HappyPath(t *testing.T) {
+	createdID := testFlowPlaytestID
+	applicantID := "01J0M2APP"
+	adminStub := &stubPlaytestClient{
+		createFunc: func(_ context.Context, in *pb.CreatePlaytestRequest, _ ...grpc.CallOption) (*pb.CreatePlaytestResponse, error) {
+			if !in.NdaRequired {
+				t.Errorf("create nda_required=%v, want true", in.NdaRequired)
+			}
+			if in.NdaText == "" {
+				t.Errorf("create nda_text empty")
+			}
+			return &pb.CreatePlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Slug: in.Slug, Namespace: in.Namespace}}, nil
+		},
+		transitionFunc: func(_ context.Context, _ *pb.TransitionPlaytestStatusRequest, _ ...grpc.CallOption) (*pb.TransitionPlaytestStatusResponse, error) {
+			return &pb.TransitionPlaytestStatusResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN}}, nil
+		},
+		uploadCodesFunc: func(_ context.Context, in *pb.UploadCodesRequest, _ ...grpc.CallOption) (*pb.UploadCodesResponse, error) {
+			if in.PlaytestId != createdID {
+				t.Errorf("upload playtest_id=%q, want %q", in.PlaytestId, createdID)
+			}
+			if !bytes.Contains(in.CsvContent, []byte("GOLDEN-M2-DEMO-FLOW-M2-0000")) {
+				t.Errorf("upload csv body=%q, want synthesised slug entry", string(in.CsvContent))
+			}
+			return &pb.UploadCodesResponse{Inserted: 1}, nil
+		},
+		approveFunc: func(_ context.Context, in *pb.ApproveApplicantRequest, _ ...grpc.CallOption) (*pb.ApproveApplicantResponse, error) {
+			if in.ApplicantId != applicantID {
+				t.Errorf("approve applicant_id=%q, want %q", in.ApplicantId, applicantID)
+			}
+			return &pb.ApproveApplicantResponse{Applicant: &pb.Applicant{Id: applicantID, Status: pb.ApplicantStatus_APPLICANT_STATUS_APPROVED}}, nil
+		},
+	}
+	playerStub := &stubPlaytestClient{
+		signupFunc: func(_ context.Context, in *pb.SignupRequest, _ ...grpc.CallOption) (*pb.SignupResponse, error) {
+			return &pb.SignupResponse{Applicant: &pb.Applicant{Id: applicantID, PlaytestId: createdID, Status: pb.ApplicantStatus_APPLICANT_STATUS_PENDING, Platforms: in.Platforms}}, nil
+		},
+		acceptNDAFunc: func(_ context.Context, in *pb.AcceptNDARequest, _ ...grpc.CallOption) (*pb.AcceptNDAResponse, error) {
+			if in.PlaytestId != createdID {
+				t.Errorf("accept-nda playtest_id=%q, want %q", in.PlaytestId, createdID)
+			}
+			return &pb.AcceptNDAResponse{Acceptance: &pb.NDAAcceptance{NdaVersionHash: "h"}}, nil
+		},
+		getGrantedCodeFunc: func(_ context.Context, _ *pb.GetGrantedCodeRequest, _ ...grpc.CallOption) (*pb.GetGrantedCodeResponse, error) {
+			return &pb.GetGrantedCodeResponse{Value: "STEAM-KEY-1", DistributionModel: pb.DistributionModel_DISTRIBUTION_MODEL_STEAM_KEYS}, nil
+		},
+	}
+	rec := &flowFactoryRecorder{byProfile: map[string]*stubPlaytestClient{"admin": adminStub, "player": playerStub}}
+
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m2", "--slug", "demo-flow-m2", "--admin-profile", "admin", "--player-profile", "player"}, rec.factory)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q stdout=%q)", code, exitOK, stderr.String(), stdout.String())
+	}
+
+	lines := splitNDJSON(stdout.Bytes())
+	wantSteps := []string{"create-playtest", "transition-open", "signup", "accept-nda", "upload-codes", "approve", "get-code"}
+	if got, want := len(lines), len(wantSteps); got != want {
+		t.Fatalf("emitted %d lines, want %d (stdout=%q)", got, want, stdout.String())
+	}
+	for i, raw := range lines {
+		var got struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("line %d unmarshal: %v: %q", i, err, raw)
+		}
+		if got.Step != wantSteps[i] {
+			t.Errorf("line %d step=%q, want %q", i, got.Step, wantSteps[i])
+		}
+		if got.Status != "OK" {
+			t.Errorf("line %d status=%q, want OK", i, got.Status)
+		}
+	}
+}
+
+func TestRunFlowGoldenM2_StopsOnApproveFailure(t *testing.T) {
+	createdID := testFlowPlaytestID
+	adminStub := &stubPlaytestClient{
+		createFunc: func(_ context.Context, in *pb.CreatePlaytestRequest, _ ...grpc.CallOption) (*pb.CreatePlaytestResponse, error) {
+			return &pb.CreatePlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Slug: in.Slug}}, nil
+		},
+		transitionFunc: func(_ context.Context, _ *pb.TransitionPlaytestStatusRequest, _ ...grpc.CallOption) (*pb.TransitionPlaytestStatusResponse, error) {
+			return &pb.TransitionPlaytestStatusResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN}}, nil
+		},
+		uploadCodesFunc: func(_ context.Context, _ *pb.UploadCodesRequest, _ ...grpc.CallOption) (*pb.UploadCodesResponse, error) {
+			return &pb.UploadCodesResponse{Inserted: 1}, nil
+		},
+		approveFunc: func(_ context.Context, _ *pb.ApproveApplicantRequest, _ ...grpc.CallOption) (*pb.ApproveApplicantResponse, error) {
+			return nil, status.Error(codes.ResourceExhausted, "No codes remaining in pool. Upload more codes to continue approving.")
+		},
+	}
+	playerStub := &stubPlaytestClient{
+		signupFunc: func(_ context.Context, _ *pb.SignupRequest, _ ...grpc.CallOption) (*pb.SignupResponse, error) {
+			return &pb.SignupResponse{Applicant: &pb.Applicant{Id: "01J0APP", PlaytestId: createdID, Status: pb.ApplicantStatus_APPLICANT_STATUS_PENDING}}, nil
+		},
+		acceptNDAFunc: func(_ context.Context, _ *pb.AcceptNDARequest, _ ...grpc.CallOption) (*pb.AcceptNDAResponse, error) {
+			return &pb.AcceptNDAResponse{Acceptance: &pb.NDAAcceptance{NdaVersionHash: "h"}}, nil
+		},
+	}
+	rec := &flowFactoryRecorder{byProfile: map[string]*stubPlaytestClient{"admin": adminStub, "player": playerStub}}
+
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m2", "--slug", "demo-flow-m2", "--admin-profile", "admin", "--player-profile", "player"}, rec.factory)
+	if code != exitClientError {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitClientError, stderr.String())
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	// 5 OK lines + 1 FAILED (approve). get-code must NOT execute.
+	if got, want := len(lines), 6; got != want {
+		t.Fatalf("emitted %d lines, want %d (stdout=%q)", got, want, stdout.String())
+	}
+	var last struct {
+		Step   string `json:"step"`
+		Status string `json:"status"`
+		Error  struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(lines[5], &last); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if last.Step != "approve" || last.Status != statusFailed {
+		t.Errorf("got %q/%q, want approve/%s", last.Step, last.Status, statusFailed)
+	}
+	if last.Error.Code != codes.ResourceExhausted.String() {
+		t.Errorf("code=%q, want ResourceExhausted", last.Error.Code)
+	}
+}
+
+func TestRunFlowGoldenM2_DryRun(t *testing.T) {
+	rec := &flowFactoryRecorder{}
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m2", "--slug", "demo-flow-m2", "--dry-run"}, rec.factory)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	if got, want := len(lines), 7; got != want {
+		t.Fatalf("dry-run emitted %d lines, want %d", got, want)
+	}
+	if len(rec.requested) != 0 {
+		t.Errorf("dry-run must not request profiles: %v", rec.requested)
+	}
+}
+
+func TestRunFlowGoldenM2_RequiresProfilesWhenNotDryRun(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rec := &flowFactoryRecorder{}
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m2", "--slug", "demo-flow-m2"}, rec.factory)
+	if code != exitLocalError {
+		t.Fatalf("exit=%d, want %d", code, exitLocalError)
+	}
+	if !strings.Contains(stderr.String(), "--admin-profile") {
+		t.Errorf("stderr=%q, want --admin-profile", stderr.String())
+	}
+}
+
 // splitNDJSON splits stdout on '\n', drops the trailing empty record, and
 // returns each line as a raw byte slice. NDJSON readers don't tolerate an
 // empty trailing line, but writeFlowSuccess emits one trailing newline

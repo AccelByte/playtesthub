@@ -38,6 +38,16 @@ type stubPlaytestClient struct {
 	transitionFunc      func(ctx context.Context, in *pb.TransitionPlaytestStatusRequest, opts ...grpc.CallOption) (*pb.TransitionPlaytestStatusResponse, error)
 	signupFunc          func(ctx context.Context, in *pb.SignupRequest, opts ...grpc.CallOption) (*pb.SignupResponse, error)
 	applicantStatusFunc func(ctx context.Context, in *pb.GetApplicantStatusRequest, opts ...grpc.CallOption) (*pb.GetApplicantStatusResponse, error)
+	acceptNDAFunc       func(ctx context.Context, in *pb.AcceptNDARequest, opts ...grpc.CallOption) (*pb.AcceptNDAResponse, error)
+	listApplicantsFunc  func(ctx context.Context, in *pb.ListApplicantsRequest, opts ...grpc.CallOption) (*pb.ListApplicantsResponse, error)
+	approveFunc         func(ctx context.Context, in *pb.ApproveApplicantRequest, opts ...grpc.CallOption) (*pb.ApproveApplicantResponse, error)
+	rejectFunc          func(ctx context.Context, in *pb.RejectApplicantRequest, opts ...grpc.CallOption) (*pb.RejectApplicantResponse, error)
+	retryDMFunc         func(ctx context.Context, in *pb.RetryDMRequest, opts ...grpc.CallOption) (*pb.RetryDMResponse, error)
+	getGrantedCodeFunc  func(ctx context.Context, in *pb.GetGrantedCodeRequest, opts ...grpc.CallOption) (*pb.GetGrantedCodeResponse, error)
+	uploadCodesFunc     func(ctx context.Context, in *pb.UploadCodesRequest, opts ...grpc.CallOption) (*pb.UploadCodesResponse, error)
+	topUpCodesFunc      func(ctx context.Context, in *pb.TopUpCodesRequest, opts ...grpc.CallOption) (*pb.TopUpCodesResponse, error)
+	syncFromAGSFunc     func(ctx context.Context, in *pb.SyncFromAGSRequest, opts ...grpc.CallOption) (*pb.SyncFromAGSResponse, error)
+	getCodePoolFunc     func(ctx context.Context, in *pb.GetCodePoolRequest, opts ...grpc.CallOption) (*pb.GetCodePoolResponse, error)
 
 	calls int
 }
@@ -90,6 +100,56 @@ func (s *stubPlaytestClient) Signup(ctx context.Context, in *pb.SignupRequest, o
 func (s *stubPlaytestClient) GetApplicantStatus(ctx context.Context, in *pb.GetApplicantStatusRequest, opts ...grpc.CallOption) (*pb.GetApplicantStatusResponse, error) {
 	s.calls++
 	return s.applicantStatusFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) AcceptNDA(ctx context.Context, in *pb.AcceptNDARequest, opts ...grpc.CallOption) (*pb.AcceptNDAResponse, error) {
+	s.calls++
+	return s.acceptNDAFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) ListApplicants(ctx context.Context, in *pb.ListApplicantsRequest, opts ...grpc.CallOption) (*pb.ListApplicantsResponse, error) {
+	s.calls++
+	return s.listApplicantsFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) ApproveApplicant(ctx context.Context, in *pb.ApproveApplicantRequest, opts ...grpc.CallOption) (*pb.ApproveApplicantResponse, error) {
+	s.calls++
+	return s.approveFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) RejectApplicant(ctx context.Context, in *pb.RejectApplicantRequest, opts ...grpc.CallOption) (*pb.RejectApplicantResponse, error) {
+	s.calls++
+	return s.rejectFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) RetryDM(ctx context.Context, in *pb.RetryDMRequest, opts ...grpc.CallOption) (*pb.RetryDMResponse, error) {
+	s.calls++
+	return s.retryDMFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) GetGrantedCode(ctx context.Context, in *pb.GetGrantedCodeRequest, opts ...grpc.CallOption) (*pb.GetGrantedCodeResponse, error) {
+	s.calls++
+	return s.getGrantedCodeFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) UploadCodes(ctx context.Context, in *pb.UploadCodesRequest, opts ...grpc.CallOption) (*pb.UploadCodesResponse, error) {
+	s.calls++
+	return s.uploadCodesFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) TopUpCodes(ctx context.Context, in *pb.TopUpCodesRequest, opts ...grpc.CallOption) (*pb.TopUpCodesResponse, error) {
+	s.calls++
+	return s.topUpCodesFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) SyncFromAGS(ctx context.Context, in *pb.SyncFromAGSRequest, opts ...grpc.CallOption) (*pb.SyncFromAGSResponse, error) {
+	s.calls++
+	return s.syncFromAGSFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) GetCodePool(ctx context.Context, in *pb.GetCodePoolRequest, opts ...grpc.CallOption) (*pb.GetCodePoolResponse, error) {
+	s.calls++
+	return s.getCodePoolFunc(ctx, in, opts...)
 }
 
 func factoryFor(client pb.PlaytesthubServiceClient) playtestClientFactory {

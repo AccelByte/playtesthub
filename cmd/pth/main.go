@@ -52,6 +52,8 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string, getenv en
 		return runUser(ctx, stdout, stderr, g, cmdArgs, getenv)
 	case "applicant":
 		return runApplicant(ctx, stdout, stderr, g, cmdArgs, factory)
+	case "code":
+		return runCode(ctx, stdout, stderr, g, cmdArgs, factory)
 	case "flow":
 		return runFlow(ctx, stdout, stderr, g, cmdArgs, defaultFlowProfileFactory(getenv))
 	case "help", "-h", "--help":
@@ -83,12 +85,15 @@ func writeUsage(w io.Writer) {
 Usage:
   pth [global flags] <command> [command flags]
 
-Commands (M1 phase 10.1–10.6):
+Commands (M1 phase 10 + M2 phase 12):
   version                          Print build SHA, proto schema, Go version.
   doctor                           Probe the backend. Reports gRPC code + latency.
   describe                         Emit the JSON catalogue (cli-schema.v1) of every subcommand.
   flow golden-m1 --slug <s>        Composite: create → transition OPEN → signup → assert PENDING.
     --admin-profile <p> --player-profile <p> [--title <t>] [--platforms <csv>] [--dry-run]
+  flow golden-m2 --slug <s>        Composite: golden-m1 → accept-nda → upload codes → approve → assert APPROVED + code visible.
+    --admin-profile <p> --player-profile <p> [--title <t>] [--platforms <csv>] [--nda-text <s>|@file]
+    [--codes-file <csv>] [--codes-count N] [--dry-run]
   playtest get-public --slug <s>   Fetch the public view of a playtest (unauth).
   playtest get-player --slug <s>   Fetch the player view (player token required).
   playtest get --id <id>           Fetch the admin view (admin token required).
@@ -109,6 +114,23 @@ Commands (M1 phase 10.1–10.6):
   applicant signup --slug <s>      Sign up the calling player.
     --platforms STEAM,XBOX,...
   applicant status --slug <s>      Show the calling player's applicant row.
+  applicant accept-nda --playtest <id>
+                                   Persist a versioned NDA acceptance for the calling player.
+  applicant get-code --playtest <id>
+                                   Fetch the granted code for the calling player (post-approve).
+  applicant list --playtest <id>   Admin: list applicants on a playtest.
+    [--status PENDING|APPROVED|REJECTED] [--dm-failed] [--cursor <token>] [--page-size N]
+  applicant approve --id <id>      Admin: approve an applicant; reserves + grants a code.
+  applicant reject --id <id>       Admin: reject an applicant.
+    [--reason <text>]
+  applicant retry-dm --id <id>     Admin: re-enqueue the Discord DM for an applicant.
+  code upload --playtest <id> --file <csv>
+                                   Admin: upload a CSV of codes (STEAM_KEYS only).
+  code top-up --playtest <id> --quantity <n>
+                                   Admin: generate more codes via AGS Campaign API (AGS_CAMPAIGN only).
+  code sync-from-ags --playtest <id>
+                                   Admin: re-sync the local code pool from AGS (AGS_CAMPAIGN only).
+  code pool --playtest <id>        Admin: show CodePoolStats + raw code values.
   auth login --password            Log in via AGS IAM ROPC grant. Stores token under --profile.
     --username <u> [--password-stdin]
   auth login --discord             Log in via Discord OAuth (cli.md §7.1).
