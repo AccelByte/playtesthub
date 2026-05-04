@@ -71,6 +71,16 @@ type CodeStore interface {
 	// nil); on dedup failure returns (inserted=0, dups=...); the empty
 	// values slice short-circuits to (0, nil, nil).
 	UploadAtomic(ctx context.Context, playtestID uuid.UUID, values []string) (inserted int, dupsAgainstDB []string, err error)
+	// InsertGeneratedAtomic is the AGS-side variant of UploadAtomic used
+	// by TopUpCodes (PRD §4.6 step 4) and SyncFromAGS (step 5). Holds the
+	// per-playtest pg_advisory_xact_lock — same discipline as CSV upload —
+	// dedups against existing code rows, and COPYs only the previously-
+	// unseen values. Unlike UploadAtomic this is not whole-file-reject:
+	// duplicates are silently skipped so SyncFromAGS is idempotent on
+	// UNIQUE(playtest_id, value) and TopUpCodes is defensive against an
+	// AGS replay returning a value already in the pool. Returns the
+	// number of rows actually inserted (0 ≤ inserted ≤ len(values)).
+	InsertGeneratedAtomic(ctx context.Context, playtestID uuid.UUID, values []string) (int, error)
 	// Reserve picks a single UNUSED row from the playtest's pool, marks
 	// it RESERVED with reserved_by=userID and reserved_at=NOW(), and
 	// returns the row. Concurrent callers do not block on each other —
@@ -364,6 +374,75 @@ func (s *PgCodeStore) UploadAtomic(ctx context.Context, playtestID uuid.UUID, va
 		return 0, nil, fmt.Errorf("committing upload tx: %w", err)
 	}
 	return int(copied), nil, nil
+}
+
+// InsertGeneratedAtomic implements the TopUpCodes / SyncFromAGS insert
+// path. Same advisory-lock discipline as UploadAtomic, but instead of
+// whole-file-reject on dedup, the COPY only writes values not already
+// present for this playtest. The lock serialises with concurrent
+// UploadCodes / TopUpCodes / SyncFromAGS calls for the same playtest;
+// approves continue to use row-level locks (PRD §4.1 step 6) and
+// interleave freely.
+func (s *PgCodeStore) InsertGeneratedAtomic(ctx context.Context, playtestID uuid.UUID, values []string) (int, error) {
+	if len(values) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("beginning insert-generated tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, playtestID.String()); err != nil {
+		return 0, fmt.Errorf("acquiring insert-generated advisory lock: %w", err)
+	}
+
+	dupRows, err := tx.Query(ctx,
+		`SELECT value FROM code WHERE playtest_id = $1 AND value = ANY($2)`,
+		playtestID, values)
+	if err != nil {
+		return 0, fmt.Errorf("dedup query: %w", err)
+	}
+	existing := make(map[string]struct{}, len(values))
+	for dupRows.Next() {
+		var v string
+		if scanErr := dupRows.Scan(&v); scanErr != nil {
+			dupRows.Close()
+			return 0, fmt.Errorf("scanning dedup row: %w", scanErr)
+		}
+		existing[v] = struct{}{}
+	}
+	dupRows.Close()
+	if rowsErr := dupRows.Err(); rowsErr != nil {
+		return 0, fmt.Errorf("iterating dedup rows: %w", rowsErr)
+	}
+
+	fresh := make([][]any, 0, len(values))
+	for _, v := range values {
+		if _, dup := existing[v]; dup {
+			continue
+		}
+		fresh = append(fresh, []any{playtestID, v})
+	}
+	if len(fresh) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("committing insert-generated tx (no-op): %w", err)
+		}
+		return 0, nil
+	}
+	copied, err := tx.CopyFrom(ctx,
+		pgx.Identifier{"code"},
+		[]string{"playtest_id", "value"},
+		pgx.CopyFromRows(fresh),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("copying generated rows: %w", classifyPgError(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing insert-generated tx: %w", err)
+	}
+	return int(copied), nil
 }
 
 // Reclaim releases RESERVED rows whose reservation is older than ttl.

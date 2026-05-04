@@ -142,19 +142,15 @@ for m in "${EXPECTED_METHODS[@]}"; do
         || fail "method missing from service descriptor: $m"
 done
 
-log "remaining M2 RPCs still return Unimplemented"
-# Phases 4–8 implement AcceptNDA, UploadCodes, GetCodePool, the four
-# approve-flow RPCs (ApproveApplicant, RejectApplicant,
-# ListApplicants, GetGrantedCode), RetryDM, and the AGS_CAMPAIGN
-# branch of CreatePlaytest. The remaining 2 M2 RPCs (TopUpCodes,
-# SyncFromAGS) still ride the embedded UnimplementedPlaytesthubService
-# Server. TopUpCodes is the canary — it lands in M2 phase 9.
-unimpl_status=$(grpcurl -plaintext \
-    -d '{"namespace":"smoke","playtest_id":"00000000-0000-0000-0000-000000000000","quantity":1}' \
-    "localhost:$APP_PORT_GRPC" \
-    playtesthub.v1.PlaytesthubService/TopUpCodes 2>&1 || true)
-grep -q "Unimplemented" <<<"$unimpl_status" \
-    || { echo "$unimpl_status" >&2; fail "expected Unimplemented from TopUpCodes (still pending in M2)"; }
+log "every M2 RPC handler is wired (no remaining Unimplemented stubs)"
+# Phases 4–9 cover all 10 M2 RPCs: AcceptNDA, GetGrantedCode,
+# ListApplicants, ApproveApplicant, RejectApplicant, RetryDM,
+# UploadCodes, TopUpCodes, SyncFromAGS, GetCodePool, plus the
+# AGS_CAMPAIGN branch of CreatePlaytest. The probes below target each
+# handler over native gRPC + grpc-gateway with auth disabled — every
+# call must surface its own validation (Unauthenticated / 401), never
+# the generic Unimplemented response. The TopUpCodes probe doubles as
+# the regression canary now that no M2 RPC is pending.
 
 log "AcceptNDA reaches the handler (no longer Unimplemented)"
 # Phase 4: AcceptNDA must surface its own validation, not the generic
@@ -413,6 +409,50 @@ curl -s -o /dev/null \
 if grep -q "$NDA_MARKER" /tmp/playtesthub-smoke.log; then
     fail "NDA text marker leaked into logs — PRD §6 violation"
 fi
+
+log "admin TopUpCodes reaches the handler (no longer Unimplemented)"
+# Phase 9: TopUpCodes must surface its own validation, not the generic
+# Unimplemented. With auth disabled the auth interceptor does not
+# attach an actor, so the handler short-circuits on requireActor with
+# Unauthenticated.
+topup_status=$(grpcurl -plaintext \
+    -d '{"namespace":"smoke","playtest_id":"00000000-0000-0000-0000-000000000000","quantity":1}' \
+    "localhost:$APP_PORT_GRPC" \
+    playtesthub.v1.PlaytesthubService/TopUpCodes 2>&1 || true)
+if grep -q "Unimplemented" <<<"$topup_status"; then
+    echo "$topup_status" >&2
+    fail "TopUpCodes still Unimplemented — phase 9 wiring did not land"
+fi
+grep -q "Unauthenticated" <<<"$topup_status" \
+    || { echo "$topup_status" >&2; fail "expected Unauthenticated from TopUpCodes (auth disabled, handler reached)"; }
+
+log "admin SyncFromAGS reaches the handler (no longer Unimplemented)"
+sync_status=$(grpcurl -plaintext \
+    -d '{"namespace":"smoke","playtest_id":"00000000-0000-0000-0000-000000000000"}' \
+    "localhost:$APP_PORT_GRPC" \
+    playtesthub.v1.PlaytesthubService/SyncFromAGS 2>&1 || true)
+if grep -q "Unimplemented" <<<"$sync_status"; then
+    echo "$sync_status" >&2
+    fail "SyncFromAGS still Unimplemented — phase 9 wiring did not land"
+fi
+grep -q "Unauthenticated" <<<"$sync_status" \
+    || { echo "$sync_status" >&2; fail "expected Unauthenticated from SyncFromAGS (auth disabled, handler reached)"; }
+
+log "admin TopUpCodes reaches the handler over the gateway (expect 401 Unauthenticated)"
+topup_code=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -X POST -d '{"quantity":1}' \
+    "http://localhost:$APP_PORT_HTTP$BASE_PATH/v1/admin/namespaces/smoke/playtests/00000000-0000-0000-0000-000000000000/codes:topUp")
+[[ "$topup_code" == "401" ]] \
+    || { tail -30 /tmp/playtesthub-smoke.log >&2; fail "expected 401 Unauthenticated from TopUpCodes gateway path, got $topup_code"; }
+
+log "admin SyncFromAGS reaches the handler over the gateway (expect 401 Unauthenticated)"
+sync_code=$(curl -s -o /dev/null -w '%{http_code}' \
+    -H 'Content-Type: application/json' \
+    -X POST -d '{}' \
+    "http://localhost:$APP_PORT_HTTP$BASE_PATH/v1/admin/namespaces/smoke/playtests/00000000-0000-0000-0000-000000000000/codes:syncFromAgs")
+[[ "$sync_code" == "401" ]] \
+    || { tail -30 /tmp/playtesthub-smoke.log >&2; fail "expected 401 Unauthenticated from SyncFromAGS gateway path, got $sync_code"; }
 
 log "admin CreatePlaytest AGS_CAMPAIGN reaches the handler over the gateway (expect 401 Unauthenticated)"
 # M2 phase 8: the AGS_CAMPAIGN branch of CreatePlaytest used to short-

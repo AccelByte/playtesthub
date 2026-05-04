@@ -344,6 +344,94 @@ func TestCodeUploadAtomic_EmptyValuesShortCircuits(t *testing.T) {
 	}
 }
 
+// InsertGeneratedAtomic happy-path: empty pool, all values fresh,
+// CopyFrom writes everything under the advisory lock.
+func TestCodeInsertGeneratedAtomic_HappyPath(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "code-gen-happy")
+	store := repo.NewPgCodeStore(testPool)
+	ctx := context.Background()
+
+	inserted, err := store.InsertGeneratedAtomic(ctx, pt.ID, []string{"AGS-A", "AGS-B", "AGS-C"})
+	if err != nil {
+		t.Fatalf("InsertGeneratedAtomic: %v", err)
+	}
+	if inserted != 3 {
+		t.Errorf("inserted = %d, want 3", inserted)
+	}
+	counts, err := store.CountByState(ctx, pt.ID)
+	if err != nil {
+		t.Fatalf("CountByState: %v", err)
+	}
+	if counts[repo.CodeStateUnused] != 3 {
+		t.Errorf("UNUSED count = %d, want 3", counts[repo.CodeStateUnused])
+	}
+}
+
+// PRD §4.6 step 5: SyncFromAGS is idempotent on UNIQUE(playtest_id,
+// value). InsertGeneratedAtomic skips dups silently and inserts only the
+// previously-unseen values.
+func TestCodeInsertGeneratedAtomic_DedupsAndAddsOnlyMissing(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "code-gen-dedup")
+	store := repo.NewPgCodeStore(testPool)
+	ctx := context.Background()
+
+	if _, err := store.BulkInsert(ctx, pt.ID, []string{"OLD-1", "OLD-2"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	inserted, err := store.InsertGeneratedAtomic(ctx, pt.ID, []string{"NEW-A", "OLD-1", "NEW-B", "OLD-2"})
+	if err != nil {
+		t.Fatalf("InsertGeneratedAtomic: %v", err)
+	}
+	if inserted != 2 {
+		t.Errorf("inserted = %d, want 2 (NEW-A + NEW-B; OLD-1/OLD-2 dedup'd)", inserted)
+	}
+	counts, err := store.CountByState(ctx, pt.ID)
+	if err != nil {
+		t.Fatalf("CountByState: %v", err)
+	}
+	if counts[repo.CodeStateUnused] != 4 {
+		t.Errorf("UNUSED count = %d, want 4", counts[repo.CodeStateUnused])
+	}
+}
+
+// All-dups → 0 inserted, no error. Idempotent re-Sync after a complete
+// recovery is a clean no-op.
+func TestCodeInsertGeneratedAtomic_AllDupsNoOp(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "code-gen-noop")
+	store := repo.NewPgCodeStore(testPool)
+	ctx := context.Background()
+
+	if _, err := store.BulkInsert(ctx, pt.ID, []string{"X", "Y"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	inserted, err := store.InsertGeneratedAtomic(ctx, pt.ID, []string{"X", "Y"})
+	if err != nil {
+		t.Fatalf("InsertGeneratedAtomic: %v", err)
+	}
+	if inserted != 0 {
+		t.Errorf("inserted = %d, want 0 (all dups)", inserted)
+	}
+}
+
+func TestCodeInsertGeneratedAtomic_EmptyValuesShortCircuits(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "code-gen-empty")
+	store := repo.NewPgCodeStore(testPool)
+
+	inserted, err := store.InsertGeneratedAtomic(context.Background(), pt.ID, nil)
+	if err != nil {
+		t.Fatalf("InsertGeneratedAtomic empty: %v", err)
+	}
+	if inserted != 0 {
+		t.Errorf("empty values: inserted = %d, want 0", inserted)
+	}
+}
+
 // ListByPlaytest returns every row in created_at ASC order. Power-of
 // the admin GetCodePool view (PRD §5.7 page 4 — raw values surfaced).
 func TestCodeListByPlaytest_OrdersByCreatedAt(t *testing.T) {

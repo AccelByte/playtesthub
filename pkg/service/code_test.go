@@ -32,6 +32,10 @@ type fakeCodeStore struct {
 	finalizeRowsOverride *int64
 	reclaimReleased      int64
 	reclaimErr           error
+
+	// TopUp / Sync knobs (phase 9).
+	insertGeneratedCalls int
+	insertGeneratedErr   error
 }
 
 func (f *fakeCodeStore) BulkInsert(_ context.Context, playtestID uuid.UUID, values []string) (int, error) {
@@ -92,6 +96,39 @@ func (f *fakeCodeStore) ListByPlaytest(_ context.Context, playtestID uuid.UUID) 
 		}
 	}
 	return out, nil
+}
+
+// InsertGeneratedAtomic mirrors the production path: dedup against
+// existing rows for the playtest, append only the previously-unseen
+// values. Used by TopUpCodes (M2 phase 9 sub-cap 6) and SyncFromAGS
+// (sub-cap 7).
+func (f *fakeCodeStore) InsertGeneratedAtomic(_ context.Context, playtestID uuid.UUID, values []string) (int, error) {
+	if f.insertGeneratedErr != nil {
+		return 0, f.insertGeneratedErr
+	}
+	f.insertGeneratedCalls++
+	existing := make(map[string]struct{}, len(values))
+	for _, r := range f.rows {
+		if r.PlaytestID == playtestID {
+			existing[r.Value] = struct{}{}
+		}
+	}
+	added := 0
+	for _, v := range values {
+		if _, dup := existing[v]; dup {
+			continue
+		}
+		existing[v] = struct{}{}
+		f.rows = append(f.rows, &repo.Code{
+			ID:         uuid.New(),
+			PlaytestID: playtestID,
+			Value:      v,
+			State:      repo.CodeStateUnused,
+			CreatedAt:  time.Now(),
+		})
+		added++
+	}
+	return added, nil
 }
 
 func (f *fakeCodeStore) UploadAtomic(_ context.Context, playtestID uuid.UUID, values []string) (int, []string, error) {
