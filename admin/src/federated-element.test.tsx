@@ -427,4 +427,33 @@ describe('CodePoolPage', () => {
     await user.click(screen.getByRole('button', { name: /sync from ags/i }))
     await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: {} }))
   })
+
+  it('reads the chosen file and uploads its contents on click', async () => {
+    const mutate = vi.fn()
+    mockUploadMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: { id: 'pt_1', slug: 'a', title: 'A', distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS' }
+      },
+      isLoading: false,
+      error: null
+    })
+    const { container } = renderAt('/pt_1/codes')
+    const csv = 'K7R2P-9M4XW-Q6V1B\nJ9L5T-B2N8R-M3K7P\n'
+    const file = new File([csv], 'dummycodes.txt', { type: 'text/plain' })
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    const user = userEvent.setup()
+    await user.upload(input, file)
+    await waitFor(() => expect(screen.getByText('dummycodes.txt')).toBeInTheDocument())
+    const uploadBtn = screen.getByRole('button', { name: /^upload$/i })
+    await waitFor(() => expect(uploadBtn).not.toBeDisabled())
+    await user.click(uploadBtn)
+    await waitFor(() =>
+      expect(mutate).toHaveBeenCalledWith({
+        playtestId: 'pt_1',
+        data: { csvContent: csv, filename: 'dummycodes.txt' }
+      })
+    )
+  })
 })

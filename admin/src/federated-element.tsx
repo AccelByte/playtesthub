@@ -21,7 +21,6 @@ import {
   Upload,
   message
 } from 'antd'
-import type { UploadFile } from 'antd/es/upload/interface'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { Route, Routes, useNavigate, useParams } from 'react-router'
@@ -814,16 +813,14 @@ function CodePoolPage() {
   const codes = (codesQuery.data?.codes ?? []) as V1Code[]
   const isAGS = playtest?.distributionModel === 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'
 
-  const handleFileChosen = (file: UploadFile) => {
-    const blob = file.originFileObj as Blob | undefined
-    if (!blob) return false
+  const handleFileChosen = (file: File) => {
     const reader = new FileReader()
     reader.onload = () => {
       setCsvText(typeof reader.result === 'string' ? reader.result : '')
       setCsvFilename(file.name ?? '')
       setRejections([])
     }
-    reader.readAsText(blob)
+    reader.readAsText(file)
     return false
   }
 
@@ -885,7 +882,7 @@ function CodePoolPage() {
             One code per line. UTF-8, max 10 MB, max 50,000 lines, charset <code>[A-Za-z0-9._-]</code>, length 1–128. Any
             invalid line rejects the whole file.
           </Typography.Paragraph>
-          <Upload accept=".csv,.txt,text/plain,text/csv" beforeUpload={() => false} onChange={info => handleFileChosen(info.file)} maxCount={1} showUploadList={false}>
+          <Upload accept=".csv,.txt,text/plain,text/csv" beforeUpload={handleFileChosen} maxCount={1} showUploadList={false}>
             <Button>Choose file</Button>
           </Upload>
           {csvFilename && (
