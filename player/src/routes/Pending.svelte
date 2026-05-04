@@ -3,15 +3,29 @@
   import {
     ApiError,
     fetchApplicantStatusWithIds,
+    fetchGrantedCode,
     fetchPlayerPlaytest,
     type ApplicantWithPlaytestId,
+    type GrantedCode,
+    type PlayerPlaytest,
   } from '../lib/api';
   import { navigate, ndaPath, playtestPath } from '../lib/router';
 
   let { config, slug }: { config: Config; slug: string } = $props();
 
+  let playtest = $state<PlayerPlaytest | null>(null);
   let applicant = $state<ApplicantWithPlaytestId | null>(null);
+  let grantedCode = $state<GrantedCode | null>(null);
+  let codeError = $state<string | null>(null);
+  let copied = $state(false);
   let loadError = $state<string | null>(null);
+
+  let reacceptRequired = $derived(
+    !!playtest &&
+      !!applicant &&
+      playtest.ndaRequired &&
+      applicant.ndaVersionHash !== playtest.currentNdaVersionHash,
+  );
 
   async function load() {
     try {
@@ -19,14 +33,22 @@
         fetchPlayerPlaytest(config, slug),
         fetchApplicantStatusWithIds(config, slug),
       ]);
-      // PRD §5.3: when an NDA is required and the applicant's stored
-      // hash diverges from the playtest's current hash, the player must
-      // re-accept before progressing — bounce them to the NDA route.
-      if (pt.ndaRequired && app.ndaVersionHash !== pt.currentNdaVersionHash) {
+      // PRD §5.3 + §4.1 step 7: NDA re-accept blocks PENDING applicants
+      // (they must re-accept before approval can proceed) but never hides
+      // a code that was already GRANTED — APPROVED stays on this view.
+      if (
+        app.status === 'APPLICANT_STATUS_PENDING' &&
+        pt.ndaRequired &&
+        app.ndaVersionHash !== pt.currentNdaVersionHash
+      ) {
         navigate(ndaPath(slug));
         return;
       }
+      playtest = pt;
       applicant = app;
+      if (app.status === 'APPLICANT_STATUS_APPROVED') {
+        await loadGrantedCode(app.playtestId);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         navigate(playtestPath(slug));
@@ -37,6 +59,31 @@
         return;
       }
       loadError = 'Could not load application status.';
+    }
+  }
+
+  async function loadGrantedCode(playtestId: string) {
+    try {
+      grantedCode = await fetchGrantedCode(config, playtestId);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        navigate(playtestPath(slug));
+        return;
+      }
+      codeError = 'Your code is not available yet — please refresh in a moment.';
+    }
+  }
+
+  async function handleCopy() {
+    if (!grantedCode) return;
+    try {
+      await navigator.clipboard.writeText(grantedCode.value);
+      copied = true;
+      setTimeout(() => (copied = false), 2000);
+    } catch {
+      // Clipboard write can fail (insecure context, denied permission);
+      // the input stays selectable so the player can copy manually.
+      copied = false;
     }
   }
 
@@ -59,9 +106,52 @@
     <p class="mt-3 text-slate-700">Thanks for applying.</p>
   {:else if applicant.status === 'APPLICANT_STATUS_APPROVED'}
     <h1 class="text-2xl font-semibold">You're approved!</h1>
-    <p class="mt-3 text-slate-700">
-      Key retrieval is coming in a later release. For now, check your Discord DMs for the code.
-    </p>
+    {#if reacceptRequired}
+      <p
+        class="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        role="status"
+      >
+        The NDA was updated. Your key is still valid; please re-accept the new NDA before
+        submitting any future surveys.
+      </p>
+    {/if}
+    {#if grantedCode}
+      <p class="mt-3 text-slate-700">Your key is below — copy it before redeeming.</p>
+      <div class="mt-4 flex items-center gap-2">
+        <input
+          type="text"
+          readonly
+          value={grantedCode.value}
+          data-testid="granted-code-value"
+          class="flex-1 rounded border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-sm"
+          onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
+        />
+        <button
+          type="button"
+          onclick={handleCopy}
+          class="rounded bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-700"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      {#if grantedCode.distributionModel === 'DISTRIBUTION_MODEL_STEAM_KEYS'}
+        <p class="mt-4 text-sm text-slate-700">
+          Redeem on Steam: open the Steam client, go to <strong>Games → Activate a Product on
+          Steam…</strong>, and paste the key above.
+        </p>
+      {:else if grantedCode.distributionModel === 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'}
+        <p class="mt-4 text-sm text-slate-700">
+          Redeem in-game: launch the game and use the in-game code-redeem screen
+          (<code class="rounded bg-slate-200 px-1">PublicRedeemCode</code>) to apply this code.
+        </p>
+      {/if}
+    {:else if codeError}
+      <p class="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">
+        {codeError}
+      </p>
+    {:else}
+      <p class="mt-3 text-slate-500">Loading your key…</p>
+    {/if}
   {:else}
     <p class="text-slate-500">Status: {applicant.status}</p>
   {/if}

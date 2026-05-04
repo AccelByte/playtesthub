@@ -17,14 +17,15 @@ const json = (status: number, body: unknown) =>
     headers: { 'Content-Type': 'application/json' },
   });
 
-// Pending fetches both the player playtest (NDA hash) and the applicant
-// row so the §5.3 re-accept gate can run before any UI renders. Tests
-// route by URL so each call gets the right body.
-type Routes = { playerPlaytest?: Response; applicant?: Response };
+// Pending fetches the player playtest, the applicant row, and (on
+// APPROVED) the granted code. Tests route by URL so each call gets the
+// right body.
+type Routes = { playerPlaytest?: Response; applicant?: Response; grantedCode?: Response };
 const stubFetchByUrl = (routes: Routes) => {
   const fn = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes(':acceptNda')) return json(200, { acceptance: {} });
+    if (url.includes('/grantedCode')) return routes.grantedCode ?? json(404, {});
     if (/\/applicant(\?|$)/.test(url)) return routes.applicant ?? json(404, {});
     return routes.playerPlaytest ?? json(404, {});
   });
@@ -42,6 +43,20 @@ const playtestNoNda = (slug: string) =>
       ndaRequired: false,
       ndaText: '',
       currentNdaVersionHash: '',
+      distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+    },
+  });
+
+const playtestNdaV2 = (slug: string) =>
+  json(200, {
+    playtest: {
+      slug,
+      title: 't',
+      description: 'd',
+      status: 'PLAYTEST_STATUS_OPEN',
+      ndaRequired: true,
+      ndaText: 'v2',
+      currentNdaVersionHash: 'sha-v2',
       distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
     },
   });
@@ -98,26 +113,15 @@ describe('Pending', () => {
     });
   });
 
-  it('redirects to NDA route when applicant.ndaVersionHash != currentNdaVersionHash', async () => {
+  it('redirects PENDING applicants to NDA route when ndaVersionHash diverges', async () => {
     setAccessToken('tok');
     stubFetchByUrl({
-      playerPlaytest: json(200, {
-        playtest: {
-          slug: 'demo',
-          title: 't',
-          description: 'd',
-          status: 'PLAYTEST_STATUS_OPEN',
-          ndaRequired: true,
-          ndaText: 'v2',
-          currentNdaVersionHash: 'sha-v2',
-          distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
-        },
-      }),
+      playerPlaytest: playtestNdaV2('demo'),
       applicant: json(200, {
         applicant: {
           id: 'a1',
           playtestId: 'pt-1',
-          status: 'APPLICANT_STATUS_APPROVED',
+          status: 'APPLICANT_STATUS_PENDING',
           ndaVersionHash: 'sha-v1',
         },
       }),
@@ -126,5 +130,95 @@ describe('Pending', () => {
     await vi.waitFor(() => {
       expect(window.location.hash).toBe('#/playtest/demo/nda');
     });
+  });
+
+  it('renders STEAM_KEYS code with redeem-on-Steam instructions when APPROVED', async () => {
+    setAccessToken('tok');
+    stubFetchByUrl({
+      playerPlaytest: playtestNoNda('demo'),
+      applicant: json(200, {
+        applicant: {
+          id: 'a1',
+          playtestId: 'pt-1',
+          status: 'APPLICANT_STATUS_APPROVED',
+          ndaVersionHash: '',
+        },
+      }),
+      grantedCode: json(200, {
+        value: 'STEAM-AAAA-BBBB-CCCC',
+        distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+      }),
+    });
+    render(Pending, { config, slug: 'demo' });
+    expect(await screen.findByText(/you're approved/i)).toBeInTheDocument();
+    const input = (await screen.findByTestId('granted-code-value')) as HTMLInputElement;
+    expect(input.value).toBe('STEAM-AAAA-BBBB-CCCC');
+    expect(screen.getByText(/Activate a Product on Steam/)).toBeInTheDocument();
+  });
+
+  it('renders AGS_CAMPAIGN code with PublicRedeemCode instructions when APPROVED', async () => {
+    setAccessToken('tok');
+    stubFetchByUrl({
+      playerPlaytest: playtestNoNda('demo'),
+      applicant: json(200, {
+        applicant: {
+          id: 'a1',
+          playtestId: 'pt-1',
+          status: 'APPLICANT_STATUS_APPROVED',
+          ndaVersionHash: '',
+        },
+      }),
+      grantedCode: json(200, {
+        value: 'AGS-XXXX-YYYY',
+        distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN',
+      }),
+    });
+    render(Pending, { config, slug: 'demo' });
+    const input = (await screen.findByTestId('granted-code-value')) as HTMLInputElement;
+    expect(input.value).toBe('AGS-XXXX-YYYY');
+    expect(screen.getByText(/PublicRedeemCode/)).toBeInTheDocument();
+  });
+
+  it('keeps the granted code visible when re-accept is required (PRD §5.3)', async () => {
+    setAccessToken('tok');
+    stubFetchByUrl({
+      playerPlaytest: playtestNdaV2('demo'),
+      applicant: json(200, {
+        applicant: {
+          id: 'a1',
+          playtestId: 'pt-1',
+          status: 'APPLICANT_STATUS_APPROVED',
+          ndaVersionHash: 'sha-v1', // diverges from current sha-v2
+        },
+      }),
+      grantedCode: json(200, {
+        value: 'STILL-VISIBLE-CODE',
+        distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+      }),
+    });
+    render(Pending, { config, slug: 'demo' });
+    const input = (await screen.findByTestId('granted-code-value')) as HTMLInputElement;
+    expect(input.value).toBe('STILL-VISIBLE-CODE');
+    expect(screen.getByText(/NDA was updated/i)).toBeInTheDocument();
+    // Must not redirect — APPROVED stays put even with re-accept required.
+    expect(window.location.hash).not.toBe('#/playtest/demo/nda');
+  });
+
+  it('shows a code-fetch error message when GetGrantedCode fails (non-401)', async () => {
+    setAccessToken('tok');
+    stubFetchByUrl({
+      playerPlaytest: playtestNoNda('demo'),
+      applicant: json(200, {
+        applicant: {
+          id: 'a1',
+          playtestId: 'pt-1',
+          status: 'APPLICANT_STATUS_APPROVED',
+          ndaVersionHash: '',
+        },
+      }),
+      grantedCode: json(503, { message: 'service unavailable' }),
+    });
+    render(Pending, { config, slug: 'demo' });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/not available yet/i);
   });
 });

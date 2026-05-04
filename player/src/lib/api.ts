@@ -194,3 +194,19 @@ export async function acceptNda(config: Config, playtestId: string): Promise<Nda
   );
   return body.acceptance;
 }
+
+export type GrantedCode = {
+  value: string;
+  distributionModel: DistributionModel;
+};
+
+export async function fetchGrantedCode(
+  config: Config,
+  playtestId: string,
+): Promise<GrantedCode> {
+  return doJson<GrantedCode>(
+    config,
+    `/v1/player/playtests/${encodeURIComponent(playtestId)}/grantedCode`,
+    { method: 'GET', authed: true },
+  );
+}

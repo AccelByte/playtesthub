@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/lib/config';
-import { ApiError, fetchApplicantStatus, fetchPublicPlaytest, submitSignup } from '../src/lib/api';
+import {
+  ApiError,
+  fetchApplicantStatus,
+  fetchGrantedCode,
+  fetchPublicPlaytest,
+  submitSignup,
+} from '../src/lib/api';
 import { setAccessToken, TOKEN_STORAGE_KEY } from '../src/lib/auth';
 
 const config: Config = {
@@ -126,6 +132,39 @@ describe('fetchApplicantStatus', () => {
     expect(url).toBe('https://api.example.com/playtesthub/v1/player/playtests/demo/applicant');
     expect(init.headers['Authorization']).toBe('Bearer tok');
     expect(applicant.status).toBe('APPLICANT_STATUS_PENDING');
+  });
+});
+
+describe('fetchGrantedCode', () => {
+  it('GETs /v1/player/playtests/:id/grantedCode with bearer and returns the value+model', async () => {
+    setAccessToken('tok');
+    const fetchMock = vi.fn().mockResolvedValue(
+      respond(200, {
+        value: 'STEAM-CODE',
+        distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const code = await fetchGrantedCode(config, 'pt-uuid-1');
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      'https://api.example.com/playtesthub/v1/player/playtests/pt-uuid-1/grantedCode',
+    );
+    expect(init.method).toBe('GET');
+    expect(init.headers['Authorization']).toBe('Bearer tok');
+    expect(code.value).toBe('STEAM-CODE');
+    expect(code.distributionModel).toBe('DISTRIBUTION_MODEL_STEAM_KEYS');
+  });
+
+  it('bubbles 404 (soft-deleted playtest, errors.md GetGrantedCode row) as ApiError', async () => {
+    setAccessToken('tok');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond(404, '{"message":"not found"}')));
+    await expect(fetchGrantedCode(config, 'pt-uuid-1')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 404,
+    });
   });
 });
 
