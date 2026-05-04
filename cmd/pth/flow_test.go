@@ -366,8 +366,8 @@ func TestRunFlowGoldenM2_HappyPath(t *testing.T) {
 			if in.PlaytestId != createdID {
 				t.Errorf("upload playtest_id=%q, want %q", in.PlaytestId, createdID)
 			}
-			if !bytes.Contains(in.CsvContent, []byte("GOLDEN-M2-DEMO-FLOW-M2-0000")) {
-				t.Errorf("upload csv body=%q, want synthesised slug entry", string(in.CsvContent))
+			if !strings.Contains(in.CsvContent, "GOLDEN-M2-DEMO-FLOW-M2-0000") {
+				t.Errorf("upload csv body=%q, want synthesised slug entry", in.CsvContent)
 			}
 			return &pb.UploadCodesResponse{Inserted: 1}, nil
 		},

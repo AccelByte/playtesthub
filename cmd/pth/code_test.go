@@ -48,7 +48,7 @@ func TestRunCodeUpload_Success(t *testing.T) {
 			if in.Filename != "keys.csv" {
 				t.Errorf("filename=%q, want keys.csv", in.Filename)
 			}
-			if !bytes.Contains(in.CsvContent, []byte("ABCD-1234")) {
+			if !strings.Contains(in.CsvContent, "ABCD-1234") {
 				t.Errorf("csv body did not propagate: %q", in.CsvContent)
 			}
 			return &pb.UploadCodesResponse{Inserted: 2}, nil

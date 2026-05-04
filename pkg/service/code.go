@@ -41,7 +41,7 @@ var codeCharset = regexp.MustCompile(`^[A-Za-z0-9._\-]+$`)
 
 // utf8BOM is stripped from the head of the CSV before line-splitting
 // per PRD §4.3 ("UTF-8 only; leading BOM stripped").
-var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+const utf8BOM = "\xEF\xBB\xBF"
 
 // WithCodeStore attaches the Code repository required by UploadCodes
 // + GetCodePool (M2 phase 5). Calls fall back to Internal when nil so
@@ -104,7 +104,10 @@ func (s *PlaytesthubServiceServer) UploadCodes(ctx context.Context, req *pb.Uplo
 		return nil, status.Errorf(codes.InvalidArgument,
 			"csv_content exceeds %d bytes (got %d)", uploadCSVMaxBytes, len(csv))
 	}
-	if !utf8.Valid(csv) {
+	// proto3 string field, but protobuf-go does not strictly enforce
+	// UTF-8 on the wire — re-check so a non-UTF-8 binary upload still
+	// hits the documented audit row + error message.
+	if !utf8.ValidString(csv) {
 		s.recordUploadRejected(ctx, pt.ID, filename, uploadReasonNonUTF8, 0)
 		return nil, status.Error(codes.InvalidArgument,
 			"csv_content is not valid UTF-8")
@@ -153,7 +156,7 @@ func (s *PlaytesthubServiceServer) UploadCodes(ctx context.Context, req *pb.Uplo
 	}
 
 	if s.audit != nil {
-		sum := sha256.Sum256(csv)
+		sum := sha256.Sum256([]byte(csv))
 		if auditErr := repo.AppendCodeUpload(ctx, s.audit, s.namespace, pt.ID, actorID, inserted, hex.EncodeToString(sum[:]), filename); auditErr != nil {
 			return nil, status.Errorf(codes.Internal, "appending code.upload audit: %v", auditErr)
 		}
@@ -243,11 +246,8 @@ type uploadRejection struct {
 // Returns the surviving (parsedLine, []uploadRejection, totalRowCount)
 // triple. parseRowCount is the count of *content* rows considered (not
 // including the trailing empty line that comes from a final \n).
-func parseUploadCSV(b []byte) ([]parsedLine, []uploadRejection, int) {
-	if bytesHasBOMPrefix(b) {
-		b = b[len(utf8BOM):]
-	}
-	text := string(b)
+func parseUploadCSV(text string) ([]parsedLine, []uploadRejection, int) {
+	text = strings.TrimPrefix(text, utf8BOM)
 	// Split keeps empty trailing element when text ends in \n; we drop
 	// it so a normal "line\nline\n" file isn't penalised for the final
 	// newline.
@@ -286,18 +286,6 @@ func parseUploadCSV(b []byte) ([]parsedLine, []uploadRejection, int) {
 		parsed = append(parsed, parsedLine{line: line, value: v})
 	}
 	return parsed, rejections, len(rawLines)
-}
-
-func bytesHasBOMPrefix(b []byte) bool {
-	if len(b) < len(utf8BOM) {
-		return false
-	}
-	for i, v := range utf8BOM {
-		if b[i] != v {
-			return false
-		}
-	}
-	return true
 }
 
 // dominantReason picks the audit-row reason from a list of per-line

@@ -72,7 +72,7 @@ func runCodeUpload(ctx context.Context, stdout, stderr io.Writer, g *Globals, ar
 	req := &pb.UploadCodesRequest{
 		Namespace:  g.Namespace,
 		PlaytestId: *playtestID,
-		CsvContent: body,
+		CsvContent: string(body),
 		Filename:   filename,
 	}
 	return invokePlaytest(ctx, stdout, stderr, g, factory, "UploadCodes", req, *dryRun,

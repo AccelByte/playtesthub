@@ -254,7 +254,7 @@ func TestUploadCodes_HappyPath_InsertsAndAuditsCodeUpload(t *testing.T) {
 	pt := steamKeysPlaytest("upload-happy")
 	rig.playtests.rows = append(rig.playtests.rows, pt)
 
-	csv := []byte("KEY-A1\nKEY-B2\nKEY-C3\n")
+	csv := "KEY-A1\nKEY-B2\nKEY-C3\n"
 	resp, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
@@ -288,7 +288,7 @@ func TestUploadCodes_AuditPayloadCarriesNoRawValues(t *testing.T) {
 	rig.playtests.rows = append(rig.playtests.rows, pt)
 
 	canary := "REDACTION-CANARY-KEY"
-	csv := []byte(canary + "\n")
+	csv := canary + "\n"
 	if _, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
@@ -312,10 +312,7 @@ func TestUploadCodes_FileSizeExceededRejectsBeforeParse(t *testing.T) {
 	pt := steamKeysPlaytest("upload-size")
 	rig.playtests.rows = append(rig.playtests.rows, pt)
 
-	csv := make([]byte, 10*1024*1024+1)
-	for i := range csv {
-		csv[i] = 'A'
-	}
+	csv := strings.Repeat("A", 10*1024*1024+1)
 	_, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
@@ -340,7 +337,7 @@ func TestUploadCodes_NonUTF8Rejects(t *testing.T) {
 	_, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
-		CsvContent: []byte{0xFF, 0xFE, 'A'},
+		CsvContent: "\xFF\xFEA",
 	})
 	requireStatus(t, err, codes.InvalidArgument)
 	if got := uploadRejectedActions(rig.audit.rows); len(got) != 1 || got[0] != "non_utf8" {
@@ -365,7 +362,7 @@ func TestUploadCodes_TooManyCodesRejects(t *testing.T) {
 	_, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
-		CsvContent: []byte(b.String()),
+		CsvContent: b.String(),
 	})
 	requireStatus(t, err, codes.InvalidArgument)
 	if rig.code.uploadCalls != 0 {
@@ -384,13 +381,13 @@ func TestUploadCodes_PerLineCharsetAndLengthRejections(t *testing.T) {
 	pt := steamKeysPlaytest("upload-perline")
 	rig.playtests.rows = append(rig.playtests.rows, pt)
 
-	csv := []byte(strings.Join([]string{
+	csv := strings.Join([]string{
 		"GOODKEY-1",              // line 1: ok
 		"BAD KEY",                // line 2: charset (space)
 		"",                       // line 3: empty
 		strings.Repeat("X", 129), // line 4: length (>128)
 		"OK-KEY/2",               // line 5: charset (/)
-	}, "\n"))
+	}, "\n")
 
 	resp, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
@@ -444,7 +441,7 @@ func TestUploadCodes_DuplicateAgainstDBRejectsWithLineNumbers(t *testing.T) {
 		CreatedAt:  time.Now(),
 	})
 
-	csv := []byte("NEW-A\nOLD-KEY\nNEW-B\n")
+	csv := "NEW-A\nOLD-KEY\nNEW-B\n"
 	resp, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
@@ -476,7 +473,7 @@ func TestUploadCodes_StripsLeadingBOM(t *testing.T) {
 	pt := steamKeysPlaytest("upload-bom")
 	rig.playtests.rows = append(rig.playtests.rows, pt)
 
-	csv := append([]byte{0xEF, 0xBB, 0xBF}, []byte("KEY-1\nKEY-2\n")...)
+	csv := "\xEF\xBB\xBFKEY-1\nKEY-2\n"
 	resp, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
@@ -501,7 +498,7 @@ func TestUploadCodes_RejectsAGSCampaignPlaytest(t *testing.T) {
 	_, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
-		CsvContent: []byte("KEY-1\n"),
+		CsvContent: "KEY-1\n",
 	})
 	requireStatus(t, err, codes.FailedPrecondition)
 	if rig.code.uploadCalls != 0 {
@@ -521,7 +518,7 @@ func TestUploadCodes_SoftDeletedPlaytestNotFound(t *testing.T) {
 	_, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: pt.ID.String(),
-		CsvContent: []byte("KEY-1\n"),
+		CsvContent: "KEY-1\n",
 	})
 	requireStatus(t, err, codes.NotFound)
 }
@@ -531,7 +528,7 @@ func TestUploadCodes_RequiresActor(t *testing.T) {
 	_, err := rig.svr.UploadCodes(context.Background(), &pb.UploadCodesRequest{
 		Namespace:  testNamespace,
 		PlaytestId: uuid.New().String(),
-		CsvContent: []byte("KEY-1\n"),
+		CsvContent: "KEY-1\n",
 	})
 	requireStatus(t, err, codes.Unauthenticated)
 }
@@ -541,7 +538,7 @@ func TestUploadCodes_NamespaceMismatchPermissionDenied(t *testing.T) {
 	_, err := rig.svr.UploadCodes(authCtx(uuid.New()), &pb.UploadCodesRequest{
 		Namespace:  "wrong-namespace",
 		PlaytestId: uuid.New().String(),
-		CsvContent: []byte("KEY-1\n"),
+		CsvContent: "KEY-1\n",
 	})
 	requireStatus(t, err, codes.PermissionDenied)
 }

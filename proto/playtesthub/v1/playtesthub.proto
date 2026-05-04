@@ -723,8 +723,8 @@ message RetryDMResponse {
 message UploadCodesRequest {
   string namespace = 1;
   string playtest_id = 2;
-  // CSV file bytes. UTF-8, ≤10 MB. Server-side validation per PRD §4.3.
-  bytes csv_content = 3;
+  // CSV file contents. UTF-8, ≤10 MB. Server-side validation per PRD §4.3.
+  string csv_content = 3;
   // Original filename echoed into the code.upload / code.upload_rejected
   // audit rows (schema.md §"AuditLog — `action` enum"). Optional —
   // server treats absent as "" and the audit row records the empty

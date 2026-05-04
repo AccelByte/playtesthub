@@ -209,7 +209,7 @@ type goldenM2Inputs struct {
 	title         string
 	platforms     []pb.Platform
 	ndaProse      string
-	csvBody       []byte
+	csvBody       string
 	csvFilename   string
 	adminProfile  string
 	playerProfile string
@@ -466,26 +466,26 @@ func flowGoldenM2GetCode(ctx context.Context, stdout, stderr io.Writer, g *Globa
 // The synthesis path keeps the harness self-contained — callers can run
 // `pth flow golden-m2 --slug e2e-1 --admin-profile admin --player-profile p1`
 // without staging a CSV on disk.
-func resolveGoldenM2CSV(filePath string, count int, slug string) ([]byte, string, error) {
+func resolveGoldenM2CSV(filePath string, count int, slug string) (string, string, error) {
 	if filePath != "" {
 		body, err := readFile(filePath)
 		if err != nil {
-			return nil, "", err
+			return "", "", err
 		}
 		filename := ""
 		if filePath != "-" {
 			filename = filePath
 		}
-		return body, filename, nil
+		return string(body), filename, nil
 	}
 	if count <= 0 || count > 50 {
-		return nil, "", fmt.Errorf("--codes-count must be between 1 and 50 (got %d)", count)
+		return "", "", fmt.Errorf("--codes-count must be between 1 and 50 (got %d)", count)
 	}
 	var b strings.Builder
 	for i := range count {
 		fmt.Fprintf(&b, "GOLDEN-M2-%s-%04d\n", strings.ToUpper(slug), i)
 	}
-	return []byte(b.String()), fmt.Sprintf("golden-m2-%s.csv", slug), nil
+	return b.String(), fmt.Sprintf("golden-m2-%s.csv", slug), nil
 }
 
 // flowInvoke runs one step against the supplied factory, writes the step
