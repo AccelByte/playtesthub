@@ -255,9 +255,18 @@ If a test needs a time source, inject a `clock.Clock` (use `benbjohnson/clock` o
 - `npm install`.
 - `npm run codegen` → downloads `apidocs/api.json` from the running backend and regenerates `src/playtesthubapi/`. **Rerun every time proto HTTP annotations change.**
 - `npm run dev` → Vite on `http://localhost:5173`; `devProxyPlugin` auto-proxies `/ext-<namespace>-<app>` to AGS with auth.
-- `npm run build` → `tsc -b && vite build`. Output: `dist/`.
-- `extend-helper-cli appui upload --namespace $AB_NAMESPACE --name $AB_APPUI_NAME` → ships `dist/` to AccelByte.
+- `npm run build` → `tsc -b && vite build`. Output: `dist/`. **`BASE_URL` must be set at build time** — `vite.config.ts` bakes it into `mf-manifest.json` as `publicPath`, and the Admin Portal host loads `remoteEntry.js` from that absolute URL. Empty/wrong → `Failed to fetch dynamically imported module: …/remoteEntry.js`.
+- **AppUI asset host = parent namespace, not game namespace**: CSM serves the bundle from `<parent>.internal.gamingservices.accelbyte.io/csm/v1/admin/namespaces/<game-ns>/files/app-ui/<name>/<version>/`. The game-namespace host (`<parent>-<game>.internal…`) returns `404 data not found: subdomain mismatch` for the same path. The dev `extend-helper-cli appui upload` log line "Asset Base URL: …" prints the *wrong* host — ignore it, use the parent host.
+- Two-step deploy (pin a `$VERSION` so the `BASE_URL` path matches the upload path; bump `$VERSION` on every retry — CSM rejects re-upload with `GeneralError(20024): version already exists for this app UI`):
+  ```bash
+  VERSION=<short-tag>
+  BASE_URL="https://${AB_PARENT}.internal.gamingservices.accelbyte.io/csm/v1/admin/namespaces/${AB_NAMESPACE}/files/app-ui/${AB_APPUI_NAME}/${VERSION}/" \
+    npm run build
+  extend-helper-cli appui upload --namespace $AB_NAMESPACE --name $AB_APPUI_NAME \
+    --build-version $VERSION --no-build
+  ```
 - First-time registration only: `extend-helper-cli appui create --namespace $AB_NAMESPACE --name $AB_APPUI_NAME`.
+- **Verify in the browser, not with `curl`.** A client_credentials / IAM-admin Bearer token has different CSM visibility than the Admin Portal session cookie, so a 404 from `curl -H "Authorization: Bearer ..."` against the parent-host URL doesn't mean the bundle is broken, and a 200 against the game-ns host doesn't mean it works. The only authoritative check is browser DevTools → Network in the live Admin Portal: both `mf-manifest.json` and `remoteEntry.js` should return 200 from the parent host. The cross-origin cookie that makes those requests succeed is only present in the actual Admin Portal session.
 
 ### Player (Svelte, in `player/`)
 - `npm install && npm run dev` — Vite on `http://localhost:5173`.
