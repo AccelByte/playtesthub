@@ -65,6 +65,41 @@ code=$(curl -s -o /dev/null -w '%{http_code}' \
 [[ "$code" == "401" ]] \
     || fail "expected 401 from GetApplicantStatus, got $code"
 
+# M2 RPC reachability gate (STATUS.md M2 phase 15). Each probe is an
+# unauth call that must reach the auth interceptor — anything other
+# than 401 means the route never registered (404) or the interceptor
+# regressed (200/500). Body payloads are deliberately minimal because
+# the auth check fires before request-body binding.
+NS="${AGS_NAMESPACE}"
+PT="cloud-smoke-nonexistent"
+APP_ID="00000000-0000-0000-0000-000000000000"
+
+declare -a m2_probes=(
+    "AcceptNDA            POST ${BASE}/v1/player/playtests/${PT}:acceptNda                                  {}"
+    "GetGrantedCode       GET  ${BASE}/v1/player/playtests/${PT}/grantedCode                                -"
+    "ListApplicants       GET  ${BASE}/v1/admin/namespaces/${NS}/playtests/${PT}/applicants                 -"
+    "ApproveApplicant     POST ${BASE}/v1/admin/namespaces/${NS}/applicants/${APP_ID}:approve               {}"
+    "RejectApplicant      POST ${BASE}/v1/admin/namespaces/${NS}/applicants/${APP_ID}:reject                {}"
+    "RetryDM              POST ${BASE}/v1/admin/namespaces/${NS}/applicants/${APP_ID}:retryDm               {}"
+    "UploadCodes          POST ${BASE}/v1/admin/namespaces/${NS}/playtests/${PT}/codes:upload               {}"
+    "TopUpCodes           POST ${BASE}/v1/admin/namespaces/${NS}/playtests/${PT}/codes:topUp                {}"
+    "SyncFromAGS          POST ${BASE}/v1/admin/namespaces/${NS}/playtests/${PT}/codes:syncFromAgs          {}"
+    "GetCodePool          GET  ${BASE}/v1/admin/namespaces/${NS}/playtests/${PT}/codes                      -"
+)
+
+for probe in "${m2_probes[@]}"; do
+    read -r name method url body <<<"$probe"
+    log "M2 ${name} requires auth (expect 401)"
+    if [[ "$body" == "-" ]]; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" "$url")
+    else
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" \
+            -H 'Content-Type: application/json' -d "$body" "$url")
+    fi
+    [[ "$code" == "401" ]] \
+        || fail "expected 401 from ${name}, got ${code} (${method} ${url})"
+done
+
 # Phase 9.3 / verified end-to-end in 9.4: ExchangeDiscordCode is unauth
 # and posts a Discord OAuth code to AGS IAM's platform-token grant.
 # Bogus probe — sends an obviously-fake code, expects a 400 because the
