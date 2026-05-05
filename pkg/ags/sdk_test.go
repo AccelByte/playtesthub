@@ -81,6 +81,12 @@ func TestSDK_CreateItem_Success(t *testing.T) {
 			if got, want := p.StoreID, "test-store"; got != want {
 				t.Fatalf("storeID = %q, want %q", got, want)
 			}
+			if p.Body == nil {
+				t.Fatal("body is nil")
+			}
+			if got, want := p.Body.BoothName, "Pong"; got != want {
+				t.Fatalf("boothName = %q, want %q (AGS rejects null boothName for CODE items)", got, want)
+			}
 			return &platformclientmodels.FullItemInfo{ItemID: ptr("item-123")}, nil
 		},
 	}

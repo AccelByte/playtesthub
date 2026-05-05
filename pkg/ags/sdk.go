@@ -132,6 +132,12 @@ func (p *platformCampaignService) QueryCodesShort(input *campaign.QueryCodesPara
 // CreateItem provisions a CODE-type, DURABLE Item in the configured
 // store. Items are non-listable / non-purchasable — they exist only as
 // the redeem target for the campaign codes (PRD §4.6 step 2a).
+//
+// BoothName names the Campaign that owns the redeem codes for this
+// item. AGS validates it is non-null at item-create time even though
+// the linked Campaign hasn't been created yet — the link is resolved
+// at redeem time. We pass the same name we'll use for the Campaign so
+// the two stay paired.
 func (c *SDKClient) CreateItem(ctx context.Context, spec ItemSpec) (string, error) {
 	body := &platformclientmodels.ItemCreate{
 		Name:            ptrString(spec.Name),
@@ -139,6 +145,7 @@ func (c *SDKClient) CreateItem(ctx context.Context, spec ItemSpec) (string, erro
 		EntitlementType: ptrString("DURABLE"),
 		Status:          ptrString("ACTIVE"),
 		CategoryPath:    ptrString("/playtesthub"),
+		BoothName:       spec.Name,
 		Listable:        false,
 		Purchasable:     false,
 		Localizations: map[string]platformclientmodels.Localization{
