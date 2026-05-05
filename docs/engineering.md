@@ -288,6 +288,17 @@ The SDK-backed adapter assumes four pieces of state already exist in the AGS nam
 
 Verify in this order: store exists → category exists → currency exists → env vars are set on the deployment → bounce the app. The first AGS_CAMPAIGN playtest create after this surfaces a real Item + Campaign + codes under `Commerce → Items` and `Engagement → Campaigns` in the Admin Portal.
 
+#### AGS_CAMPAIGN provisioning sequence + SDK gotchas
+
+The order in `pkg/service/ags_campaign.go::createAGSCampaignPlaytest` is load-bearing — flipping any two steps will make AGS reject the create with a different error code. The order is:
+
+1. **CreateCampaign** (empty REDEMPTION campaign). AGS auto-derives `boothName` (observed: `"C_<campaign-name>"`). The Go SDK call returns `CampaignInfo.BoothName`; `pkg/ags.SDKClient` surfaces it via `CreatedCampaign.BoothName`. Reusing the raw campaign name as the Item's BoothName fails with HTTP 404 / errorCode `37041` "Ticket booth [...] does not exist" because the lookup is byte-exact.
+2. **CreateItem** with `BoothName = createdCampaign.BoothName` (NOT `spec.Name`). AGS validates the booth at create time, so the Campaign must exist first; reversing the order is impossible because `BoothName` is a required-at-create field on CODE items. Schema marks `boothName` `omitempty` but the runtime rejects null with HTTP 422 / errorCode `20002` for the field — treat it as required.
+3. **LinkItemToCampaign** — `UpdateCampaign` with `Items=[{itemID, qty:1}]`. Without this, codes redeem nothing. AGS has no DELETE on campaigns; the cleanup matrix uses `UpdateCampaign Status=INACTIVE` instead.
+4. **CreateCodes** in batches. The SDK's `CreateCodesShort` returns only `NumCreated`; `SDKClient.CreateCodes` then `QueryCodesShort` paginates by a unique batch name (`pth-<8-hex>`) to recover the values.
+
+**Token plumbing gotcha**: `auth.RefreshTokenScheduler` in `accelbyte-go-sdk` is gated by a process-global `sync.Once`. Whichever `OAuth20Service.LoginClient` runs first claims the goroutine; subsequent `LoginClient` calls store a token but never schedule a refresher. The inbound auth surface in `main.go` runs first at boot, so the platform-side `TokenRepository` (the one Item/Campaign services consume) never auto-refreshes — calls 401 after ~1h. `pkg/ags.SDKClient` compensates with a one-shot **login-on-401 retry**: any outbound call that returns HTTP 401 triggers `Login()` (closure passed via `SDKClientOptions.Login`, wired to the same `LoginClient` call) and retries once. Never skip the `Login` field; without it, the platform side wedges as soon as its first token expires.
+
 ### Admin (Extend App UI, in `admin/`)
 - `cp .env.local.example .env.local` once; fill in `VITE_AB_*` values pointing at your AGS namespace + deployed service extension. `extend-helper-cli appui setup-env` can populate these.
 - `npm install`.
