@@ -68,15 +68,17 @@ func (c *MemClient) CreateItem(_ context.Context, spec ItemSpec) (string, error)
 
 // CreateCampaign records the spec under a fresh hex id. The campaign
 // starts empty — tests can call LinkItemToCampaign to attach an Item.
-func (c *MemClient) CreateCampaign(_ context.Context, spec CampaignSpec) (string, error) {
+// BoothName mirrors AGS's "C_<name>" convention so production parity is
+// preserved on the test path.
+func (c *MemClient) CreateCampaign(_ context.Context, spec CampaignSpec) (CreatedCampaign, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := pop(&c.CreateCampaignErr); err != nil {
-		return "", err
+		return CreatedCampaign{}, err
 	}
 	id := "camp_" + randHex(8)
 	c.campaigns[id] = spec
-	return id, nil
+	return CreatedCampaign{ID: id, BoothName: "C_" + spec.Name}, nil
 }
 
 // LinkItemToCampaign records the (campaignID, itemID) link. Errors when

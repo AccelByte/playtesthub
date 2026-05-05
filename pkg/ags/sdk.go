@@ -152,13 +152,16 @@ func (p *platformCampaignService) QueryCodesShort(input *campaign.QueryCodesPara
 // at redeem time. We pass the same name we'll use for the Campaign so
 // the two stay paired.
 func (c *SDKClient) CreateItem(ctx context.Context, spec ItemSpec) (string, error) {
+	if spec.BoothName == "" {
+		return "", &ClientError{StatusCode: 500, Op: "CreateItem", Message: "ItemSpec.BoothName is required (AGS returns it as CreatedCampaign.BoothName)"}
+	}
 	body := &platformclientmodels.ItemCreate{
 		Name:            ptrString(spec.Name),
 		ItemType:        ptrString("CODE"),
 		EntitlementType: ptrString("DURABLE"),
 		Status:          ptrString("ACTIVE"),
 		CategoryPath:    ptrString("/playtesthub"),
-		BoothName:       spec.Name,
+		BoothName:       spec.BoothName,
 		Listable:        false,
 		Purchasable:     false,
 		Localizations: map[string]platformclientmodels.Localization{
@@ -193,7 +196,7 @@ func (c *SDKClient) CreateItem(ctx context.Context, spec ItemSpec) (string, erro
 // UpdateCampaign. AGS rejects CODE-type Items whose BoothName is null
 // or refers to a missing Campaign, so the Campaign-first ordering is
 // load-bearing — see Client interface docs.
-func (c *SDKClient) CreateCampaign(ctx context.Context, spec CampaignSpec) (string, error) {
+func (c *SDKClient) CreateCampaign(ctx context.Context, spec CampaignSpec) (CreatedCampaign, error) {
 	body := &platformclientmodels.CampaignCreate{
 		Name:                  ptrString(spec.Name),
 		Description:           spec.Description,
@@ -212,12 +215,15 @@ func (c *SDKClient) CreateCampaign(ctx context.Context, spec CampaignSpec) (stri
 		return c.campaignSvc.CreateCampaignShort(params)
 	})
 	if err != nil {
-		return "", err
+		return CreatedCampaign{}, err
 	}
 	if got == nil || got.ID == nil {
-		return "", &ClientError{StatusCode: 500, Op: "CreateCampaign", Message: "AGS returned empty campaign id"}
+		return CreatedCampaign{}, &ClientError{StatusCode: 500, Op: "CreateCampaign", Message: "AGS returned empty campaign id"}
 	}
-	return *got.ID, nil
+	if got.BoothName == nil || *got.BoothName == "" {
+		return CreatedCampaign{}, &ClientError{StatusCode: 500, Op: "CreateCampaign", Message: "AGS returned campaign without boothName"}
+	}
+	return CreatedCampaign{ID: *got.ID, BoothName: *got.BoothName}, nil
 }
 
 // LinkItemToCampaign updates the campaign's redeemable-items list to

@@ -237,7 +237,7 @@ func (p *partialFulfillClient) CreateItem(ctx context.Context, spec ags.ItemSpec
 	return p.mem.CreateItem(ctx, spec)
 }
 
-func (p *partialFulfillClient) CreateCampaign(ctx context.Context, spec ags.CampaignSpec) (string, error) {
+func (p *partialFulfillClient) CreateCampaign(ctx context.Context, spec ags.CampaignSpec) (ags.CreatedCampaign, error) {
 	p.ensure()
 	return p.mem.CreateCampaign(ctx, spec)
 }

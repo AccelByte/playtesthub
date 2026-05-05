@@ -95,14 +95,14 @@ func TestSDK_CreateItem_Success(t *testing.T) {
 			if p.Body == nil {
 				t.Fatal("body is nil")
 			}
-			if got, want := p.Body.BoothName, "Pong"; got != want {
-				t.Fatalf("boothName = %q, want %q (AGS rejects null boothName for CODE items)", got, want)
+			if got, want := p.Body.BoothName, "C_Pong"; got != want {
+				t.Fatalf("boothName = %q, want %q (must mirror CreatedCampaign.BoothName, AGS C_-prefixed)", got, want)
 			}
 			return &platformclientmodels.FullItemInfo{ItemID: ptr("item-123")}, nil
 		},
 	}
 	c := newSDKClient(t, svc, &fakeCampaignSvc{})
-	got, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "Pong", Description: "test"})
+	got, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "Pong", Description: "test", BoothName: "C_Pong"})
 	if err != nil {
 		t.Fatalf("CreateItem: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestSDK_CreateItem_4xxSurfacesClientError(t *testing.T) {
 		},
 	}
 	c := newSDKClient(t, svc, &fakeCampaignSvc{})
-	_, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "x"})
+	_, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "x", BoothName: "C_x"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -141,7 +141,7 @@ func TestSDK_CreateItem_429SurfacesRateLimited(t *testing.T) {
 		},
 	}
 	c := newSDKClient(t, svc, &fakeCampaignSvc{})
-	_, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "x"})
+	_, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "x", BoothName: "C_x"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -168,7 +168,7 @@ func TestSDK_CreateItem_5xxRetriedThenUnavailable(t *testing.T) {
 	policy.InitialBackoff = 0
 
 	mapped := policy.Run(context.Background(), "CreateItem", func(ctx context.Context) error {
-		_, err := c.CreateItem(ctx, ags.ItemSpec{Name: "x"})
+		_, err := c.CreateItem(ctx, ags.ItemSpec{Name: "x", BoothName: "C_x"})
 		return err
 	})
 	if !errors.Is(mapped, ags.ErrUnavailable) {
@@ -377,7 +377,7 @@ func TestSDK_CreateItem_401TriggersReloginAndRetry(t *testing.T) {
 		logins++
 		return nil
 	})
-	got, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "Pong"})
+	got, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "Pong", BoothName: "C_Pong"})
 	if err != nil {
 		t.Fatalf("CreateItem: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestSDK_CreateItem_401WithoutLoginSurfaces401(t *testing.T) {
 		},
 	}
 	c := newSDKClient(t, svc, &fakeCampaignSvc{})
-	_, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "x"})
+	_, err := c.CreateItem(context.Background(), ags.ItemSpec{Name: "x", BoothName: "C_x"})
 	if err == nil {
 		t.Fatal("expected error")
 	}

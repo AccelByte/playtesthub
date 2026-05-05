@@ -20,18 +20,21 @@ func TestMemClient_HappyPath(t *testing.T) {
 		t.Fatal("expected item to be registered")
 	}
 
-	campaignID, err := c.CreateCampaign(ctx, ags.CampaignSpec{Name: "Demo"})
+	camp, err := c.CreateCampaign(ctx, ags.CampaignSpec{Name: "Demo"})
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
-	if !c.HasCampaign(campaignID) {
+	if !c.HasCampaign(camp.ID) {
 		t.Fatal("expected campaign to be registered")
 	}
-	if err := c.LinkItemToCampaign(ctx, campaignID, itemID, "Demo"); err != nil {
+	if want := "C_Demo"; camp.BoothName != want {
+		t.Fatalf("BoothName = %q, want %q (must mirror AGS C_-prefixed convention)", camp.BoothName, want)
+	}
+	if err := c.LinkItemToCampaign(ctx, camp.ID, itemID, "Demo"); err != nil {
 		t.Fatalf("LinkItemToCampaign: %v", err)
 	}
 
-	res, err := c.CreateCodes(ctx, campaignID, 3)
+	res, err := c.CreateCodes(ctx, camp.ID, 3)
 	if err != nil {
 		t.Fatalf("CreateCodes: %v", err)
 	}
@@ -39,7 +42,7 @@ func TestMemClient_HappyPath(t *testing.T) {
 		t.Fatalf("CreateCodes shape: req=%d codes=%d", res.Requested, len(res.Codes))
 	}
 
-	codes, err := c.FetchCodes(ctx, campaignID)
+	codes, err := c.FetchCodes(ctx, camp.ID)
 	if err != nil {
 		t.Fatalf("FetchCodes: %v", err)
 	}
@@ -52,13 +55,13 @@ func TestMemClient_PartialFulfillment(t *testing.T) {
 	c := ags.NewMemClient()
 	ctx := context.Background()
 	itemID, _ := c.CreateItem(ctx, ags.ItemSpec{Name: "x"})
-	campID, _ := c.CreateCampaign(ctx, ags.CampaignSpec{Name: "x"})
-	if err := c.LinkItemToCampaign(ctx, campID, itemID, "x"); err != nil {
+	camp, _ := c.CreateCampaign(ctx, ags.CampaignSpec{Name: "x"})
+	if err := c.LinkItemToCampaign(ctx, camp.ID, itemID, "x"); err != nil {
 		t.Fatalf("LinkItemToCampaign: %v", err)
 	}
 
-	c.PartialFulfillment[campID] = 4
-	res, err := c.CreateCodes(ctx, campID, 10)
+	c.PartialFulfillment[camp.ID] = 4
+	res, err := c.CreateCodes(ctx, camp.ID, 10)
 	if err != nil {
 		t.Fatalf("CreateCodes: %v", err)
 	}
@@ -86,8 +89,8 @@ func TestMemClient_LinkItemToCampaign_UnknownIDs(t *testing.T) {
 	if err := c.LinkItemToCampaign(ctx, "missing-camp", "missing-item", "x"); !ags.IsClientError(err) {
 		t.Fatalf("expected ClientError for missing campaign, got %v", err)
 	}
-	campID, _ := c.CreateCampaign(ctx, ags.CampaignSpec{Name: "x"})
-	if err := c.LinkItemToCampaign(ctx, campID, "missing-item", "x"); !ags.IsClientError(err) {
+	camp, _ := c.CreateCampaign(ctx, ags.CampaignSpec{Name: "x"})
+	if err := c.LinkItemToCampaign(ctx, camp.ID, "missing-item", "x"); !ags.IsClientError(err) {
 		t.Fatalf("expected ClientError for missing item, got %v", err)
 	}
 }

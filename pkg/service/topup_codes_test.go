@@ -22,11 +22,11 @@ func agsCampaignPlaytest(slug string, mem *ags.MemClient) *repo.Playtest {
 	pt := openPlaytest(slug)
 	pt.DistributionModel = distModelAGSCampaign
 	ctx := context.Background()
-	campaignID, _ := mem.CreateCampaign(ctx, ags.CampaignSpec{Name: pt.Title})
-	itemID, _ := mem.CreateItem(ctx, ags.ItemSpec{Name: pt.Title})
-	_ = mem.LinkItemToCampaign(ctx, campaignID, itemID, pt.Title)
+	camp, _ := mem.CreateCampaign(ctx, ags.CampaignSpec{Name: pt.Title})
+	itemID, _ := mem.CreateItem(ctx, ags.ItemSpec{Name: pt.Title, BoothName: camp.BoothName})
+	_ = mem.LinkItemToCampaign(ctx, camp.ID, itemID, pt.Title)
 	pt.AGSItemID = &itemID
-	pt.AGSCampaignID = &campaignID
+	pt.AGSCampaignID = &camp.ID
 	return pt
 }
 

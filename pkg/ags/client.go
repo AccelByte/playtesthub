@@ -24,20 +24,24 @@ import (
 //
 // AGS rejects CODE-type Items whose BoothName does not refer to an
 // existing Campaign, so the Campaign must be created first. The
-// Campaign is then updated to redeem the just-created Item.
+// Campaign is then updated to redeem the just-created Item. AGS
+// auto-derives the campaign's boothName (e.g. "C_<name>"), so the
+// caller must pass through the value returned by CreateCampaign rather
+// than reusing the raw name.
 type Client interface {
 	// CreateItem provisions an ENTITLEMENT-type Item under the
 	// configured namespace and returns the AGS-assigned item id
-	// (PRD §4.6 step 2a). The Item's BoothName is set to spec.Name,
-	// which must already exist as a Campaign — call CreateCampaign
-	// first.
+	// (PRD §4.6 step 2a). spec.BoothName must equal the
+	// CreatedCampaign.BoothName returned from CreateCampaign — AGS
+	// rejects 404 / 37041 if the booth does not resolve.
 	CreateItem(ctx context.Context, spec ItemSpec) (string, error)
 
 	// CreateCampaign provisions an empty REDEMPTION campaign and
-	// returns the AGS-assigned campaign id (PRD §4.6 step 2b). The
-	// campaign is created without redeemable items; use
-	// LinkItemToCampaign to attach the Item once it has been created.
-	CreateCampaign(ctx context.Context, spec CampaignSpec) (string, error)
+	// returns the AGS-assigned campaign id + auto-derived boothName
+	// (PRD §4.6 step 2b). The campaign is created without redeemable
+	// items; use LinkItemToCampaign to attach the Item once it has been
+	// created.
+	CreateCampaign(ctx context.Context, spec CampaignSpec) (CreatedCampaign, error)
 
 	// LinkItemToCampaign sets the campaign's redeemable Items list to
 	// the single given (itemID, itemName) pair. Required after
@@ -70,10 +74,13 @@ type Client interface {
 }
 
 // ItemSpec is the input shape for CreateItem. Derived from playtest
-// title/description per PRD §4.6 step 2a.
+// title/description per PRD §4.6 step 2a. BoothName must be the value
+// AGS returned in CreatedCampaign.BoothName (AGS prefixes the campaign
+// name with "C_" so the raw name will not resolve).
 type ItemSpec struct {
 	Name        string
 	Description string
+	BoothName   string
 }
 
 // CampaignSpec is the input shape for CreateCampaign. The campaign is
@@ -82,6 +89,14 @@ type ItemSpec struct {
 type CampaignSpec struct {
 	Name        string
 	Description string
+}
+
+// CreatedCampaign is the output shape of CreateCampaign. BoothName is
+// the AGS-assigned ticket-booth identifier the next CreateItem call
+// must reference.
+type CreatedCampaign struct {
+	ID        string
+	BoothName string
 }
 
 // CodeBatchResult is the output shape of CreateCodes. Codes is the
