@@ -34,13 +34,13 @@ func runPlaytest(ctx context.Context, stdout, stderr io.Writer, g *Globals, args
 		return runPlaytestGetPublic(ctx, stdout, stderr, g, rest, factory)
 	case "get-player":
 		return runPlaytestGetPlayer(ctx, stdout, stderr, g, rest, factory)
-	case "get":
+	case actionGet:
 		return runPlaytestGet(ctx, stdout, stderr, g, rest, factory)
 	case "list":
 		return runPlaytestList(ctx, stdout, stderr, g, rest, factory)
-	case "create":
+	case actionCreate:
 		return runPlaytestCreate(ctx, stdout, stderr, g, rest, factory)
-	case "edit":
+	case actionEdit:
 		return runPlaytestEdit(ctx, stdout, stderr, g, rest, factory)
 	case "delete":
 		return runPlaytestDelete(ctx, stdout, stderr, g, rest, factory)

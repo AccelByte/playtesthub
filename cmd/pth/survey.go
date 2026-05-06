@@ -27,11 +27,11 @@ func runSurvey(ctx context.Context, stdout, stderr io.Writer, g *Globals, args [
 	}
 	action, rest := args[0], args[1:]
 	switch action {
-	case "create":
+	case actionCreate:
 		return runSurveyCreate(ctx, stdout, stderr, g, rest, factory)
-	case "edit":
+	case actionEdit:
 		return runSurveyEdit(ctx, stdout, stderr, g, rest, factory)
-	case "get":
+	case actionGet:
 		return runSurveyGet(ctx, stdout, stderr, g, rest, factory)
 	default:
 		fmt.Fprintf(stderr, "survey: unknown action %q\n", action)
@@ -156,4 +156,3 @@ func loadSurveyQuestions(stderr io.Writer, label, path string) ([]*pb.SurveyQues
 	}
 	return out, exitOK
 }
-
