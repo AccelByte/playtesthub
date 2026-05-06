@@ -90,6 +90,64 @@ func (s *PlaytesthubServiceServer) RetryDM(ctx context.Context, req *pb.RetryDMR
 	return &pb.RetryDMResponse{Applicant: adminApplicantToProto(a)}, nil
 }
 
+// RetryFailedDms walks every APPROVED applicant whose last_dm_status
+// is 'failed' for the playtest and enqueues each through the same
+// DM-queue path as approve. Bulk variant of RetryDM (PRD §5.5 /
+// dm-queue.md "Bulk retry RPC"). Not idempotent: calling twice
+// enqueues two jobs per still-failed applicant — operators are
+// expected to invoke this exactly once after a Discord outage.
+//
+// Overflow semantics mirror approve-time: the queue marks
+// `lastDmError='dm_queue_overflow'` synchronously inside Enqueue and
+// returns ErrQueueFull, which surfaces in the response as the
+// `overflow` count. Once overflow starts, every subsequent enqueue in
+// the same call is also rejected — Enqueue is non-blocking.
+func (s *PlaytesthubServiceServer) RetryFailedDms(ctx context.Context, req *pb.RetryFailedDmsRequest) (*pb.RetryFailedDmsResponse, error) {
+	if _, err := requireActor(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.checkNamespace(req.GetNamespace()); err != nil {
+		return nil, err
+	}
+	if s.dmQueue == nil {
+		return nil, status.Error(codes.Internal, "dm queue not wired")
+	}
+	playtestID, err := uuid.Parse(req.GetPlaytestId())
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "playtest_id is not a uuid: %v", err)
+	}
+
+	pt, err := s.playtest.GetByID(ctx, s.namespace, playtestID)
+	if errors.Is(err, repo.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "playtest not found")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "fetching playtest: %v", err)
+	}
+	if pt.DeletedAt != nil {
+		return nil, status.Error(codes.NotFound, "playtest not found")
+	}
+
+	rows, err := s.applicant.ListDMFailedByPlaytest(ctx, pt.ID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "listing dm-failed applicants: %v", err)
+	}
+
+	var enqueued, overflow int32
+	for _, a := range rows {
+		enqErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true))
+		if errors.Is(enqErr, dmqueue.ErrQueueFull) {
+			overflow++
+			continue
+		}
+		if enqErr != nil {
+			return nil, status.Errorf(codes.Internal, "enqueuing dm: %v", enqErr)
+		}
+		enqueued++
+	}
+	return &pb.RetryFailedDmsResponse{Enqueued: enqueued, Overflow: overflow}, nil
+}
+
 // buildDMJob assembles the queue Job from an applicant + playtest.
 // The recipient is applicant.discord_user_id (the Discord snowflake
 // stamped at signup from the IAM `platform_user_id` claim per

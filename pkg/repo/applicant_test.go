@@ -303,6 +303,85 @@ func TestApplicantRejectCAS_PendingToRejected(t *testing.T) {
 	}
 }
 
+// TestApplicantListDMFailedByPlaytest_ReturnsApprovedFailedOnly pins
+// the M3 phase 8 contract: only APPROVED applicants whose
+// last_dm_status='failed' for the playtest are returned. Pending
+// rows, sent rows, and rows from other playtests are excluded.
+func TestApplicantListDMFailedByPlaytest_ReturnsApprovedFailedOnly(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "apl-dm-failed-bulk")
+	other := seedPlaytest(t, "apl-dm-failed-other")
+	store := repo.NewPgApplicantStore(testPool)
+	ctx := context.Background()
+
+	// Approve helper: inserts + approves with a freshly seeded code.
+	codeStore := repo.NewPgCodeStore(testPool)
+	approve := func(playtestID uuid.UUID, codeValue string) *repo.Applicant {
+		t.Helper()
+		a, err := store.Insert(ctx, newApplicant(playtestID, uuid.New()))
+		if err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		if _, err := codeStore.BulkInsert(ctx, playtestID, []string{codeValue}); err != nil {
+			t.Fatalf("BulkInsert: %v", err)
+		}
+		var codeID uuid.UUID
+		if err := testPool.QueryRow(ctx, `SELECT id FROM code WHERE playtest_id=$1 AND value=$2`, playtestID, codeValue).Scan(&codeID); err != nil {
+			t.Fatalf("look up code id: %v", err)
+		}
+		if _, err := store.ApproveCAS(ctx, testPool, a.ID, codeID, time.Now()); err != nil {
+			t.Fatalf("ApproveCAS: %v", err)
+		}
+		got, err := store.GetByID(ctx, a.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		return got
+	}
+
+	mark := func(applicantID uuid.UUID, status, errMsg string) {
+		t.Helper()
+		var msg *string
+		if errMsg != "" {
+			msg = &errMsg
+		}
+		if _, err := store.UpdateDMStatus(ctx, applicantID, status, time.Now(), msg); err != nil {
+			t.Fatalf("UpdateDMStatus: %v", err)
+		}
+	}
+
+	failed1 := approve(pt.ID, "BULK-FAIL-1")
+	failed2 := approve(pt.ID, "BULK-FAIL-2")
+	sent := approve(pt.ID, "BULK-SENT")
+	otherFailed := approve(other.ID, "BULK-OTHER")
+
+	mark(failed1.ID, "failed", "discord: 500")
+	mark(failed2.ID, "failed", "discord: 502")
+	mark(sent.ID, "sent", "")
+	mark(otherFailed.ID, "failed", "discord: 500")
+
+	// Pending row in the same playtest — must be excluded by the
+	// status='APPROVED' clause.
+	if _, err := store.Insert(ctx, newApplicant(pt.ID, uuid.New())); err != nil {
+		t.Fatalf("Insert pending: %v", err)
+	}
+
+	got, err := store.ListDMFailedByPlaytest(ctx, pt.ID)
+	if err != nil {
+		t.Fatalf("ListDMFailedByPlaytest: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2 (failed1 + failed2)", len(got))
+	}
+	gotIDs := map[uuid.UUID]bool{got[0].ID: true, got[1].ID: true}
+	if !gotIDs[failed1.ID] || !gotIDs[failed2.ID] {
+		t.Errorf("missing rows: gotIDs=%v want %v + %v", gotIDs, failed1.ID, failed2.ID)
+	}
+	if gotIDs[otherFailed.ID] || gotIDs[sent.ID] {
+		t.Errorf("leaked rows: %v", gotIDs)
+	}
+}
+
 // PRD §5.4 / dm-queue.md: lastDmError is byte-truncated to 500 bytes
 // preserving valid UTF-8 codepoint boundaries. Build a string whose
 // untruncated length straddles the 500th byte mid-codepoint and assert

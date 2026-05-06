@@ -308,6 +308,14 @@ status_dry=$("$PTH_BIN" applicant status --slug demo-01 --dry-run)
 [[ "$(jq -r '.slug' <<<"$status_dry")" == "demo-01" ]] \
     || fail "applicant status dry-run slug mismatch: $status_dry"
 
+log "pth applicant retry-failed-dms --dry-run prints the request body"
+retry_failed_dry=$("$PTH_BIN" --namespace smoke --profile smoke-pth \
+    applicant retry-failed-dms --playtest p-smoke --dry-run)
+[[ "$(jq -r '.namespace' <<<"$retry_failed_dry")" == "smoke" ]] \
+    || fail "applicant retry-failed-dms dry-run namespace mismatch: $retry_failed_dry"
+[[ "$(jq -r '.playtest_id' <<<"$retry_failed_dry")" == "p-smoke" ]] \
+    || fail "applicant retry-failed-dms dry-run playtest_id mismatch: $retry_failed_dry"
+
 # --- pth survey (dry-run; unconditional) ------------------------------
 # Phase 3 (docs/STATUS.md M3): assert the create/edit/get wrappers wire
 # the right namespace + playtest_id + questions body without dialling.
@@ -495,6 +503,7 @@ m3_required=(
     "survey submit"
     "survey responses"
     "audit list"
+    "applicant retry-failed-dms"
 )
 for name in "${m3_required[@]}"; do
     jq -e --arg n "$name" '.commands[] | select(.name == $n)' <<<"$describe_out" >/dev/null \

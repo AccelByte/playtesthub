@@ -128,6 +128,8 @@ Commands (M1 phase 10 + M2 phase 12):
   applicant reject --id <id>       Admin: reject an applicant.
     [--reason <text>]
   applicant retry-dm --id <id>     Admin: re-enqueue the Discord DM for an applicant.
+  applicant retry-failed-dms --playtest <id>
+                                   Admin: bulk-enqueue every dm-failed applicant for a playtest (M3 phase 8).
   code upload --playtest <id> --file <csv>
                                    Admin: upload a CSV of codes (STEAM_KEYS only).
   code top-up --playtest <id> --quantity <n>

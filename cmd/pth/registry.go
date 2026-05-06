@@ -98,6 +98,14 @@ var catalogue = []commandSpec{
 		Example:       "pth --namespace mygame --profile admin applicant retry-dm --id 01J0...",
 	},
 	{
+		Name:          "applicant retry-failed-dms",
+		Milestone:     "M3",
+		Description:   "Admin: bulk-enqueue every applicant whose last DM is in the failed state for a playtest (cli.md §6.3, PRD §5.5).",
+		RequiredFlags: []flagSpec{playtestFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin applicant retry-failed-dms --playtest 01J0...",
+	},
+	{
 		Name:          "applicant signup",
 		Milestone:     "M1",
 		Description:   "Sign up the calling player to a playtest. Requires a player token (cli.md §6.1).",

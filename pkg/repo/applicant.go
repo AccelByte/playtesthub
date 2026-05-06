@@ -120,6 +120,12 @@ type ApplicantStore interface {
 	// 'failed' are deliberately excluded so the original error reason
 	// (e.g. dm_queue_overflow) is preserved across restarts.
 	ListLostDMOnRestart(ctx context.Context, namespace string) ([]*Applicant, error)
+	// ListDMFailedByPlaytest returns every APPROVED applicant for the
+	// playtest whose last_dm_status is 'failed'. Used by RetryFailedDms
+	// (PRD §5.5) — the bulk variant of RetryDM. Non-paginated: the
+	// failed cohort is bounded by the queue cap (10k) which is also the
+	// upper bound on what can be re-enqueued in one call.
+	ListDMFailedByPlaytest(ctx context.Context, playtestID uuid.UUID) ([]*Applicant, error)
 }
 
 type PgApplicantStore struct {
@@ -461,6 +467,40 @@ func (s *PgApplicantStore) ListLostDMOnRestart(ctx context.Context, namespace st
 	rows, err := s.pool.Query(ctx, sql, namespace)
 	if err != nil {
 		return nil, fmt.Errorf("listing lost-on-restart applicants: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*Applicant, 0)
+	for rows.Next() {
+		a, scanErr := scanApplicant(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scanning applicant row: %w", scanErr)
+		}
+		out = append(out, a)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("iterating applicant rows: %w", rowsErr)
+	}
+	return out, nil
+}
+
+// ListDMFailedByPlaytest returns every APPROVED applicant whose
+// last_dm_status is 'failed' for the playtest. Backs RetryFailedDms
+// (PRD §5.5 / dm-queue.md "Bulk retry RPC"). Soft-deleted playtest
+// rows have already been gated by the service layer; this query does
+// not filter on it.
+func (s *PgApplicantStore) ListDMFailedByPlaytest(ctx context.Context, playtestID uuid.UUID) ([]*Applicant, error) {
+	sql := `
+		SELECT ` + applicantColumns + `
+		  FROM applicant
+		 WHERE playtest_id = $1
+		   AND status = 'APPROVED'
+		   AND last_dm_status = 'failed'
+		 ORDER BY created_at DESC, id DESC`
+
+	rows, err := s.pool.Query(ctx, sql, playtestID)
+	if err != nil {
+		return nil, fmt.Errorf("listing dm-failed applicants: %w", err)
 	}
 	defer rows.Close()
 

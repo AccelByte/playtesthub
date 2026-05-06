@@ -147,6 +147,26 @@
       "example": "pth --namespace mygame --profile admin applicant retry-dm --id 01J0..."
     },
     {
+      "name": "applicant retry-failed-dms",
+      "milestone": "M3",
+      "description": "Admin: bulk-enqueue every applicant whose last DM is in the failed state for a playtest (cli.md §6.3, PRD §5.5).",
+      "requiredFlags": [
+        {
+          "name": "--playtest",
+          "description": "playtest id (ULID)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin applicant retry-failed-dms --playtest 01J0..."
+    },
+    {
       "name": "applicant signup",
       "milestone": "M1",
       "description": "Sign up the calling player to a playtest. Requires a player token (cli.md §6.1).",

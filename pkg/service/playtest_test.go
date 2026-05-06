@@ -386,6 +386,32 @@ func (f *fakeApplicantStore) ListLostDMOnRestart(_ context.Context, _ string) ([
 	return out, nil
 }
 
+// ListDMFailedByPlaytest mirrors the SQL contract: APPROVED applicants
+// for the playtest with last_dm_status='failed', newest-first.
+func (f *fakeApplicantStore) ListDMFailedByPlaytest(_ context.Context, playtestID uuid.UUID) ([]*repo.Applicant, error) {
+	out := make([]*repo.Applicant, 0)
+	for _, a := range f.rows {
+		if a.PlaytestID != playtestID {
+			continue
+		}
+		if a.Status != applicantStatusApproved {
+			continue
+		}
+		if a.LastDMStatus == nil || *a.LastDMStatus != dmStatusFailed {
+			continue
+		}
+		clone := *a
+		out = append(out, &clone)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return bytesGreater(out[i].ID[:], out[j].ID[:])
+	})
+	return out, nil
+}
+
 // ---------------- test helpers ----------------------------------------------
 
 const testNamespace = "playtesthub-test"

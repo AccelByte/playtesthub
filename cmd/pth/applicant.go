@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const applicantUsage = `applicant: action required (one of: signup, status, accept-nda, list, approve, reject, retry-dm, get-code)`
+const applicantUsage = `applicant: action required (one of: signup, status, accept-nda, list, approve, reject, retry-dm, retry-failed-dms, get-code)`
 
 // runApplicant dispatches `pth applicant <action> ...`. M1 actions
 // (signup, status) take a slug rather than a playtest id — the proto
@@ -40,6 +40,8 @@ func runApplicant(ctx context.Context, stdout, stderr io.Writer, g *Globals, arg
 		return runApplicantReject(ctx, stdout, stderr, g, rest, factory)
 	case "retry-dm":
 		return runApplicantRetryDM(ctx, stdout, stderr, g, rest, factory)
+	case "retry-failed-dms":
+		return runApplicantRetryFailedDms(ctx, stdout, stderr, g, rest, factory)
 	case "get-code":
 		return runApplicantGetCode(ctx, stdout, stderr, g, rest, factory)
 	default:
@@ -231,6 +233,29 @@ func runApplicantRetryDM(ctx context.Context, stdout, stderr io.Writer, g *Globa
 	return invokePlaytest(ctx, stdout, stderr, g, factory, "RetryDM", req, *dryRun,
 		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
 			return c.RetryDM(cctx, req)
+		})
+}
+
+func runApplicantRetryFailedDms(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
+	fs := flag.NewFlagSet("applicant retry-failed-dms", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	playtestID := fs.String("playtest", "", "playtest id (required)")
+	dryRun := fs.Bool("dry-run", false, "print the request JSON and exit without dialling")
+	if err := fs.Parse(args); err != nil {
+		return exitLocalError
+	}
+	if *playtestID == "" {
+		fmt.Fprintln(stderr, "applicant retry-failed-dms: --playtest is required")
+		return exitLocalError
+	}
+	if g.Namespace == "" {
+		fmt.Fprintln(stderr, "applicant retry-failed-dms: --namespace (or PTH_NAMESPACE) is required")
+		return exitLocalError
+	}
+	req := &pb.RetryFailedDmsRequest{Namespace: g.Namespace, PlaytestId: *playtestID}
+	return invokePlaytest(ctx, stdout, stderr, g, factory, "RetryFailedDms", req, *dryRun,
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.RetryFailedDms(cctx, req)
 		})
 }
 
