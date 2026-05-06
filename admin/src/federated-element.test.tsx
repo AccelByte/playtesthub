@@ -30,6 +30,7 @@ const mockCreateSurveyMutation = vi.fn()
 const mockEditSurveyMutation = vi.fn()
 const mockGetSurveyResponses = vi.fn()
 const mockGetSurveyPlayer = vi.fn()
+const mockGetAuditLog = vi.fn()
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -58,7 +59,8 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation: (...args: unknown[]) => mockSyncMutation(...args),
   usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockCreateSurveyMutation(...args),
   usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockEditSurveyMutation(...args),
-  usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId: (...args: unknown[]) => mockGetSurveyResponses(...args)
+  usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId: (...args: unknown[]) => mockGetSurveyResponses(...args),
+  usePlaytesthubServiceAdminApi_GetAuditLog_ByPlaytestId: (...args: unknown[]) => mockGetAuditLog(...args)
 }))
 
 vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
@@ -97,6 +99,7 @@ beforeEach(() => {
   mockEditSurveyMutation.mockReset()
   mockGetSurveyResponses.mockReset()
   mockGetSurveyPlayer.mockReset()
+  mockGetAuditLog.mockReset()
 
   // Default: empty list + no-op mutations.
   mockGetPlaytests.mockReturnValue({ data: { playtests: [] }, isLoading: false, error: null, refetch: vi.fn() })
@@ -117,6 +120,7 @@ beforeEach(() => {
   mockEditSurveyMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
   mockGetSurveyResponses.mockReturnValue({ data: { responses: [] }, isLoading: false, error: null, refetch: vi.fn() })
   mockGetSurveyPlayer.mockReturnValue({ data: undefined, isLoading: false, isError: false, error: null })
+  mockGetAuditLog.mockReturnValue({ data: { entries: [], nextPageToken: '' }, isLoading: false, error: null, refetch: vi.fn() })
 })
 
 describe('PlaytestsListPage', () => {
@@ -719,5 +723,161 @@ describe('SurveyResponsesPage', () => {
     expect(screen.getByTestId('option-bar-q1-o1')).toBeInTheDocument()
     expect(screen.getByTestId('option-bar-q1-o2')).toBeInTheDocument()
     expect(screen.getByTestId('rating-bar-q2-5')).toBeInTheDocument()
+  })
+})
+
+describe('AuditLogPage', () => {
+  beforeEach(() => {
+    mockGetPlaytest.mockReturnValue({
+      data: { playtest: { id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha' } },
+      isLoading: false,
+      error: null
+    })
+  })
+
+  it('renders the audit page header and the actor + action filters', () => {
+    renderAt('/pt_1/audit')
+    expect(screen.getByRole('heading', { name: /audit log/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/actor filter/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/action filter/i)).toBeInTheDocument()
+  })
+
+  it('renders rows with system actor as a tag and admin actor as code', () => {
+    mockGetAuditLog.mockReturnValue({
+      data: {
+        entries: [
+          {
+            id: 'a_1',
+            action: 'applicant.approve',
+            actorUserId: 'user-uuid-1',
+            createdAt: '2026-05-01T10:00:00Z',
+            beforeJson: '{}',
+            afterJson: '{"applicantId":"app_1","grantedCodeId":"c_1"}'
+          },
+          {
+            id: 'a_2',
+            action: 'code.upload',
+            actorUserId: null,
+            createdAt: '2026-05-01T11:00:00Z',
+            beforeJson: '{}',
+            afterJson: '{"count":42,"sha256":"deadbeef","filename":"keys.csv"}'
+          }
+        ],
+        nextPageToken: ''
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/pt_1/audit')
+    expect(screen.getByText('user-uuid-1')).toBeInTheDocument()
+    expect(screen.getAllByText('system').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('applicant.approve')).toBeInTheDocument()
+    expect(screen.getByText('code.upload')).toBeInTheDocument()
+  })
+
+  it('passes the action filter to the query when chosen from the dropdown', async () => {
+    renderAt('/pt_1/audit')
+    const user = userEvent.setup()
+    const actionSelect = screen.getByLabelText(/action filter/i)
+    await user.click(actionSelect)
+    const option = await screen.findByText('applicant.approve')
+    await user.click(option)
+    await waitFor(() => {
+      const lastCall = mockGetAuditLog.mock.calls.at(-1)
+      expect(lastCall?.[1].queryParams.actionFilter).toBe('applicant.approve')
+    })
+  })
+
+  it('passes actorFilter=system when System is chosen', async () => {
+    renderAt('/pt_1/audit')
+    const user = userEvent.setup()
+    const actorSelect = screen.getByLabelText(/actor filter/i)
+    await user.click(actorSelect)
+    const option = await screen.findByText('System')
+    await user.click(option)
+    await waitFor(() => {
+      const lastCall = mockGetAuditLog.mock.calls.at(-1)
+      expect(lastCall?.[1].queryParams.actorFilter).toBe('system')
+    })
+  })
+
+  it('only commits the typed actor user id on Enter (not on every keystroke)', async () => {
+    renderAt('/pt_1/audit')
+    const user = userEvent.setup()
+    const actorSelect = screen.getByLabelText(/actor filter/i)
+    await user.click(actorSelect)
+    await user.click(await screen.findByText(/admin user/i))
+    const input = await screen.findByLabelText(/actor user id/i)
+    await user.type(input, 'abc-123')
+    // Pre-Enter: keystrokes should not flow into the query as a populated actorFilter
+    const callsMidType = mockGetAuditLog.mock.calls.filter(
+      c => c[1]?.queryParams?.actorFilter && c[1].queryParams.actorFilter !== 'system'
+    )
+    expect(callsMidType).toHaveLength(0)
+    await user.keyboard('{Enter}')
+    await waitFor(() => {
+      const lastCall = mockGetAuditLog.mock.calls.at(-1)
+      expect(lastCall?.[1].queryParams.actorFilter).toBe('abc-123')
+    })
+  })
+
+  it('expanding a row renders the JSON before/after diff and tags changed keys', async () => {
+    mockGetAuditLog.mockReturnValue({
+      data: {
+        entries: [
+          {
+            id: 'a_1',
+            action: 'survey.edit',
+            actorUserId: 'admin-1',
+            createdAt: '2026-05-01T10:00:00Z',
+            beforeJson: '{"surveyId":"sur_1","questions":1}',
+            afterJson: '{"surveyId":"sur_2","questions":1}'
+          }
+        ],
+        nextPageToken: ''
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/pt_1/audit')
+    const user = userEvent.setup()
+    const expandBtn = screen.getByRole('button', { name: /expand row/i })
+    await user.click(expandBtn)
+    expect(await screen.findByTestId('audit-diff')).toBeInTheDocument()
+    expect(screen.getByTestId('audit-diff-key-surveyId')).toBeInTheDocument()
+    expect(screen.queryByTestId('audit-diff-key-questions')).not.toBeInTheDocument()
+  })
+
+  it('Next button is disabled when there is no next page token', () => {
+    mockGetAuditLog.mockReturnValue({
+      data: { entries: [{ id: 'a_1', action: 'playtest.edit', createdAt: '2026-05-01T10:00:00Z', beforeJson: '{}', afterJson: '{}' }], nextPageToken: '' },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/pt_1/audit')
+    const nextBtn = screen.getByRole('button', { name: /^next$/i })
+    expect(nextBtn).toBeDisabled()
+  })
+
+  it('clicking Next advances the cursor to the returned next_page_token', async () => {
+    mockGetAuditLog.mockReturnValue({
+      data: {
+        entries: [{ id: 'a_1', action: 'playtest.edit', createdAt: '2026-05-01T10:00:00Z', beforeJson: '{}', afterJson: '{}' }],
+        nextPageToken: 'cursor-page-2'
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/pt_1/audit')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+    await waitFor(() => {
+      const lastCall = mockGetAuditLog.mock.calls.at(-1)
+      expect(lastCall?.[1].queryParams.pageToken).toBe('cursor-page-2')
+    })
   })
 })
