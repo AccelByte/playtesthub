@@ -27,7 +27,12 @@ import { Route, Routes, useNavigate, useParams } from 'react-router'
 import type { V1Applicant } from './playtesthubapi/generated-definitions/V1Applicant'
 import type { V1Code } from './playtesthubapi/generated-definitions/V1Code'
 import type { V1CodePoolStats } from './playtesthubapi/generated-definitions/V1CodePoolStats'
+import type { V1MultiChoiceOption } from './playtesthubapi/generated-definitions/V1MultiChoiceOption'
 import type { V1Playtest } from './playtesthubapi/generated-definitions/V1Playtest'
+import type { V1Survey } from './playtesthubapi/generated-definitions/V1Survey'
+import type { V1SurveyAnswer } from './playtesthubapi/generated-definitions/V1SurveyAnswer'
+import type { V1SurveyQuestion } from './playtesthubapi/generated-definitions/V1SurveyQuestion'
+import type { V1SurveyResponse } from './playtesthubapi/generated-definitions/V1SurveyResponse'
 import type { V1UploadCodesRejection } from './playtesthubapi/generated-definitions/V1UploadCodesRejection'
 import {
   Key_PlaytesthubServiceAdmin,
@@ -39,13 +44,17 @@ import {
   usePlaytesthubServiceAdminApi_CreateCodesUpload_ByPlaytestIdMutation,
   usePlaytesthubServiceAdminApi_CreatePlaytestMutation,
   usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation,
+  usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation,
   usePlaytesthubServiceAdminApi_DeletePlaytest_ByPlaytestIdMutation,
   usePlaytesthubServiceAdminApi_GetApplicants_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetPlaytests,
-  usePlaytesthubServiceAdminApi_PatchPlaytest_ByPlaytestIdMutation
+  usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId,
+  usePlaytesthubServiceAdminApi_PatchPlaytest_ByPlaytestIdMutation,
+  usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation
 } from './playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
+import { usePlaytesthubServiceApi_GetSurveyPlayer_ByPlaytestId } from './playtesthubapi/generated-public/queries/PlaytesthubService.query'
 
 const PLATFORMS = [
   { value: 'PLATFORM_STEAM', label: 'Steam' },
@@ -75,6 +84,8 @@ export function FederatedElement() {
         <Route path=":playtestId/edit" element={<PlaytestEditPage />} />
         <Route path=":playtestId/applicants" element={<ApplicantsPage />} />
         <Route path=":playtestId/codes" element={<CodePoolPage />} />
+        <Route path=":playtestId/survey" element={<SurveyBuilderPage />} />
+        <Route path=":playtestId/survey/responses" element={<SurveyResponsesPage />} />
       </Routes>
     </div>
   )
@@ -143,6 +154,12 @@ function PlaytestsListPage() {
             </Button>
             <Button size="small" onClick={() => navigate(`${row.id}/codes`)}>
               Codes
+            </Button>
+            <Button size="small" onClick={() => navigate(`${row.id}/survey`)}>
+              Survey
+            </Button>
+            <Button size="small" onClick={() => navigate(`${row.id}/survey/responses`)}>
+              Responses
             </Button>
             {isDraft && (
               <Popconfirm
@@ -960,3 +977,551 @@ function CodePoolPage() {
     </>
   )
 }
+
+const QUESTION_TYPE_TEXT = 'SURVEY_QUESTION_TYPE_TEXT'
+const QUESTION_TYPE_RATING = 'SURVEY_QUESTION_TYPE_RATING'
+const QUESTION_TYPE_MULTI_CHOICE = 'SURVEY_QUESTION_TYPE_MULTI_CHOICE'
+const QUESTION_TYPE_LABEL: Record<string, string> = {
+  [QUESTION_TYPE_TEXT]: 'Text',
+  [QUESTION_TYPE_RATING]: 'Rating (1–5)',
+  [QUESTION_TYPE_MULTI_CHOICE]: 'Multi-choice'
+}
+const MAX_QUESTIONS = 50
+const MAX_PROMPT = 1000
+const MIN_OPTIONS = 2
+const MAX_OPTIONS = 20
+const MAX_OPTION_LABEL = 200
+
+type DraftOption = { id?: string; label: string }
+type DraftQuestion = {
+  key: string
+  id?: string
+  type: string
+  prompt: string
+  required: boolean
+  allowMultiple: boolean
+  options: DraftOption[]
+}
+
+let draftKeyCounter = 0
+const nextDraftKey = (): string => {
+  draftKeyCounter += 1
+  return `q-${draftKeyCounter}-${Date.now()}`
+}
+
+function questionToDraft(q: V1SurveyQuestion): DraftQuestion {
+  return {
+    key: nextDraftKey(),
+    id: q.id ?? undefined,
+    type: typeof q.type === 'string' ? q.type : QUESTION_TYPE_TEXT,
+    prompt: q.prompt ?? '',
+    required: q.required ?? false,
+    allowMultiple: q.allowMultiple ?? false,
+    options: (q.options ?? []).map(o => ({ id: o.id ?? undefined, label: o.label ?? '' }))
+  }
+}
+
+function draftToWire(q: DraftQuestion): V1SurveyQuestion {
+  const base: V1SurveyQuestion = {
+    type: q.type,
+    prompt: q.prompt,
+    required: q.required
+  }
+  if (q.id) base.id = q.id
+  if (q.type === QUESTION_TYPE_MULTI_CHOICE) {
+    base.allowMultiple = q.allowMultiple
+    base.options = q.options.map<V1MultiChoiceOption>(o => (o.id ? { id: o.id, label: o.label } : { label: o.label }))
+  }
+  return base
+}
+
+function freshTextQuestion(): DraftQuestion {
+  return { key: nextDraftKey(), type: QUESTION_TYPE_TEXT, prompt: '', required: false, allowMultiple: false, options: [] }
+}
+
+function validateDraft(questions: DraftQuestion[]): string | null {
+  if (questions.length === 0) return 'Add at least one question'
+  if (questions.length > MAX_QUESTIONS) return `At most ${MAX_QUESTIONS} questions`
+  for (const [i, q] of questions.entries()) {
+    const label = `Question ${i + 1}`
+    if (!q.prompt.trim()) return `${label}: prompt is required`
+    if (q.prompt.length > MAX_PROMPT) return `${label}: prompt exceeds ${MAX_PROMPT} chars`
+    if (q.type === QUESTION_TYPE_MULTI_CHOICE) {
+      if (q.options.length < MIN_OPTIONS || q.options.length > MAX_OPTIONS) {
+        return `${label}: multi-choice needs ${MIN_OPTIONS}–${MAX_OPTIONS} options`
+      }
+      for (const [j, opt] of q.options.entries()) {
+        if (!opt.label.trim()) return `${label} option ${j + 1}: label is required`
+        if (opt.label.length > MAX_OPTION_LABEL) return `${label} option ${j + 1}: label exceeds ${MAX_OPTION_LABEL} chars`
+      }
+    }
+  }
+  return null
+}
+
+function SurveyBuilderPage() {
+  const { sdk } = useAppUIContext()
+  const { playtestId = '' } = useParams<{ playtestId: string }>()
+
+  const playtestQuery = usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId(sdk, { playtestId })
+  const playtest = playtestQuery.data?.playtest as V1Playtest | undefined
+  const hasSurvey = Boolean(playtest?.surveyId)
+
+  // Player GetSurvey is the authoritative read path (no admin GET in proto).
+  // Returns NotFound for DRAFT playtests — render the warning + blank form in
+  // that case so first-version edits still work.
+  const surveyQuery = usePlaytesthubServiceApi_GetSurveyPlayer_ByPlaytestId(
+    sdk,
+    { playtestId },
+    { enabled: hasSurvey, retry: false }
+  )
+
+  if (playtestQuery.isLoading) return <Spin description="Loading playtest..." />
+  if (playtestQuery.error || !playtest) return <Alert type="error" message="Failed to load playtest." />
+  if (hasSurvey && surveyQuery.isLoading) return <Spin description="Loading existing survey..." />
+
+  const initialSurvey = (hasSurvey && surveyQuery.data?.survey ? surveyQuery.data.survey : null) as V1Survey | null
+  const draftPreloadFailed = hasSurvey && surveyQuery.isError && playtest.status === 'PLAYTEST_STATUS_DRAFT'
+  // Mounting a fresh form per data shape avoids the cascading-effect anti-pattern.
+  const formKey = `${playtestId}-${initialSurvey?.id ?? 'new'}-${draftPreloadFailed ? 'draft-blank' : 'ok'}`
+
+  return (
+    <SurveyBuilderForm
+      key={formKey}
+      playtestId={playtestId}
+      playtest={playtest}
+      initialSurvey={initialSurvey}
+      hasSurvey={hasSurvey}
+      draftPreloadFailed={draftPreloadFailed}
+    />
+  )
+}
+
+type SurveyBuilderFormProps = {
+  playtestId: string
+  playtest: V1Playtest
+  initialSurvey: V1Survey | null
+  hasSurvey: boolean
+  draftPreloadFailed: boolean
+}
+
+function SurveyBuilderForm({ playtestId, playtest, initialSurvey, hasSurvey, draftPreloadFailed }: SurveyBuilderFormProps) {
+  const { sdk } = useAppUIContext()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+
+  const [questions, setQuestions] = useState<DraftQuestion[]>(() => {
+    if (initialSurvey?.questions?.length) return initialSurvey.questions.map(questionToDraft)
+    return [freshTextQuestion()]
+  })
+  const version = initialSurvey?.version ?? null
+
+  const createMutation = usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation(sdk, {
+    onSuccess: () => {
+      message.success('Survey created')
+      queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtest_ByPlaytestId] })
+      navigate('/')
+    },
+    onError: err => message.error(err.response?.data?.errorMessage ?? 'Failed to create survey')
+  })
+  const editMutation = usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation(sdk, {
+    onSuccess: () => {
+      message.success('Survey updated (new version)')
+      queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtest_ByPlaytestId] })
+      queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Survey_ByPlaytestId] })
+      navigate('/')
+    },
+    onError: err => message.error(err.response?.data?.errorMessage ?? 'Failed to update survey')
+  })
+
+  const updateQuestion = (key: string, patch: Partial<DraftQuestion>) => {
+    setQuestions(prev => prev.map(q => (q.key === key ? { ...q, ...patch } : q)))
+  }
+  const moveQuestion = (key: string, direction: -1 | 1) => {
+    setQuestions(prev => {
+      const idx = prev.findIndex(q => q.key === key)
+      if (idx < 0) return prev
+      const target = idx + direction
+      if (target < 0 || target >= prev.length) return prev
+      const next = prev.slice()
+      const tmp = next[idx]
+      next[idx] = next[target]
+      next[target] = tmp
+      return next
+    })
+  }
+  const removeQuestion = (key: string) => setQuestions(prev => prev.filter(q => q.key !== key))
+  const addQuestion = () => setQuestions(prev => [...prev, freshTextQuestion()])
+  const setQuestionType = (key: string, type: string) =>
+    updateQuestion(key, {
+      type,
+      options: type === QUESTION_TYPE_MULTI_CHOICE ? [{ label: '' }, { label: '' }] : [],
+      allowMultiple: type === QUESTION_TYPE_MULTI_CHOICE ? false : false
+    })
+  const updateOption = (qKey: string, oIndex: number, label: string) => {
+    setQuestions(prev =>
+      prev.map(q => {
+        if (q.key !== qKey) return q
+        const next = q.options.slice()
+        next[oIndex] = { ...next[oIndex], label }
+        return { ...q, options: next }
+      })
+    )
+  }
+  const addOption = (qKey: string) => {
+    setQuestions(prev =>
+      prev.map(q => (q.key === qKey && q.options.length < MAX_OPTIONS ? { ...q, options: [...q.options, { label: '' }] } : q))
+    )
+  }
+  const removeOption = (qKey: string, oIndex: number) => {
+    setQuestions(prev =>
+      prev.map(q => (q.key === qKey && q.options.length > MIN_OPTIONS ? { ...q, options: q.options.filter((_, i) => i !== oIndex) } : q))
+    )
+  }
+
+  const onSave = () => {
+    const error = validateDraft(questions)
+    if (error) {
+      message.error(error)
+      return
+    }
+    const wireQuestions = questions.map(draftToWire)
+    if (hasSurvey) {
+      editMutation.mutate({ playtestId, data: { questions: wireQuestions } })
+      return
+    }
+    createMutation.mutate({ playtestId, data: { questions: wireQuestions } })
+  }
+
+  const saving = createMutation.isPending || editMutation.isPending
+
+  return (
+    <>
+      <div style={{ marginBottom: 16 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          Survey — {playtest.title ?? playtest.slug}
+        </Typography.Title>
+        <Typography.Text type="secondary">
+          {hasSurvey ? `Editing existing survey` : 'Configure the post-playtest survey for approved players.'}
+          {version != null && ` · current version v${version} (saving creates v${version + 1})`}
+        </Typography.Text>
+      </div>
+
+      {draftPreloadFailed && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="DRAFT playtest survey can't be previewed"
+          description="Loading existing survey questions requires the playtest to be OPEN. Saving here will create a new version that won't preserve question/option ids — only safe before any responses exist."
+        />
+      )}
+
+      <Space direction="vertical" size="middle" style={{ display: 'flex' }}>
+        {questions.map((q, i) => (
+          <div
+            key={q.key}
+            data-testid="survey-question"
+            style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Typography.Text strong>Question {i + 1}</Typography.Text>
+              <Space size={4}>
+                <Button size="small" onClick={() => moveQuestion(q.key, -1)} disabled={i === 0} aria-label={`Move question ${i + 1} up`}>
+                  ↑
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => moveQuestion(q.key, 1)}
+                  disabled={i === questions.length - 1}
+                  aria-label={`Move question ${i + 1} down`}>
+                  ↓
+                </Button>
+                <Popconfirm title="Remove this question?" okText="Remove" okButtonProps={{ danger: true }} onConfirm={() => removeQuestion(q.key)}>
+                  <Button size="small" danger aria-label={`Remove question ${i + 1}`}>
+                    Remove
+                  </Button>
+                </Popconfirm>
+              </Space>
+            </div>
+            <Form layout="vertical">
+              <Form.Item label="Type">
+                <Select
+                  value={q.type}
+                  onChange={val => setQuestionType(q.key, val)}
+                  options={Object.entries(QUESTION_TYPE_LABEL).map(([value, label]) => ({ value, label }))}
+                />
+              </Form.Item>
+              <Form.Item label="Prompt">
+                <Input.TextArea
+                  value={q.prompt}
+                  maxLength={MAX_PROMPT}
+                  showCount
+                  onChange={e => updateQuestion(q.key, { prompt: e.target.value })}
+                  rows={2}
+                  placeholder="What did you think of the build?"
+                />
+              </Form.Item>
+              <Form.Item>
+                <Checkbox checked={q.required} onChange={e => updateQuestion(q.key, { required: e.target.checked })}>
+                  Required
+                </Checkbox>
+              </Form.Item>
+              {q.type === QUESTION_TYPE_MULTI_CHOICE && (
+                <>
+                  <Form.Item>
+                    <Checkbox checked={q.allowMultiple} onChange={e => updateQuestion(q.key, { allowMultiple: e.target.checked })}>
+                      Allow multiple selections
+                    </Checkbox>
+                  </Form.Item>
+                  <Form.Item label={`Options (${q.options.length}/${MAX_OPTIONS})`}>
+                    <Space direction="vertical" style={{ display: 'flex' }}>
+                      {q.options.map((opt, oIdx) => (
+                        <Space key={oIdx} style={{ width: '100%' }}>
+                          <Input
+                            value={opt.label}
+                            maxLength={MAX_OPTION_LABEL}
+                            onChange={e => updateOption(q.key, oIdx, e.target.value)}
+                            placeholder={`Option ${oIdx + 1}`}
+                          />
+                          <Button onClick={() => removeOption(q.key, oIdx)} disabled={q.options.length <= MIN_OPTIONS}>
+                            ×
+                          </Button>
+                        </Space>
+                      ))}
+                      <Button onClick={() => addOption(q.key)} disabled={q.options.length >= MAX_OPTIONS}>
+                        Add option
+                      </Button>
+                    </Space>
+                  </Form.Item>
+                </>
+              )}
+            </Form>
+          </div>
+        ))}
+        <Button onClick={addQuestion} disabled={questions.length >= MAX_QUESTIONS}>
+          Add question
+        </Button>
+      </Space>
+
+      <div style={{ marginTop: 24, display: 'flex', gap: 8 }}>
+        <Button type="primary" onClick={onSave} loading={saving} disabled={questions.length === 0}>
+          {hasSurvey ? 'Save new version' : 'Create survey'}
+        </Button>
+        <Button onClick={() => navigate('/')} disabled={saving}>
+          Cancel
+        </Button>
+      </div>
+    </>
+  )
+}
+
+type AnswerAggregate = {
+  questionId: string
+  prompt: string
+  type: string
+  textCount: number
+  ratingCounts: Record<number, number>
+  optionCounts: Record<string, number>
+  optionLabels: Record<string, string>
+}
+
+function buildAggregate(survey: V1Survey | undefined, responses: V1SurveyResponse[]): AnswerAggregate[] {
+  const questions = survey?.questions ?? []
+  return questions.map(q => {
+    const agg: AnswerAggregate = {
+      questionId: q.id ?? '',
+      prompt: q.prompt ?? '',
+      type: typeof q.type === 'string' ? q.type : '',
+      textCount: 0,
+      ratingCounts: {},
+      optionCounts: {},
+      optionLabels: Object.fromEntries((q.options ?? []).map(o => [o.id ?? '', o.label ?? '']))
+    }
+    for (const resp of responses) {
+      const answers = (resp.answers ?? []) as V1SurveyAnswer[]
+      const a = answers.find(x => x.questionId === q.id)
+      if (!a) continue
+      if (q.type === QUESTION_TYPE_TEXT && a.text) agg.textCount += 1
+      if (q.type === QUESTION_TYPE_RATING && typeof a.rating === 'number') {
+        agg.ratingCounts[a.rating] = (agg.ratingCounts[a.rating] ?? 0) + 1
+      }
+      if (q.type === QUESTION_TYPE_MULTI_CHOICE && a.multiChoice?.optionIds) {
+        for (const id of a.multiChoice.optionIds) agg.optionCounts[id] = (agg.optionCounts[id] ?? 0) + 1
+      }
+    }
+    return agg
+  })
+}
+
+function SurveyResponsesPage() {
+  const { sdk } = useAppUIContext()
+  const navigate = useNavigate()
+  const { playtestId = '' } = useParams<{ playtestId: string }>()
+
+  const playtestQuery = usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId(sdk, { playtestId })
+  const playtest = playtestQuery.data?.playtest as V1Playtest | undefined
+  const hasSurvey = Boolean(playtest?.surveyId)
+
+  const surveyQuery = usePlaytesthubServiceApi_GetSurveyPlayer_ByPlaytestId(
+    sdk,
+    { playtestId },
+    { enabled: hasSurvey, retry: false }
+  )
+  const survey = surveyQuery.data?.survey as V1Survey | undefined
+
+  const [surveyIdFilter, setSurveyIdFilter] = useState<string | undefined>(undefined)
+
+  const responsesQuery = usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId(sdk, {
+    playtestId,
+    queryParams: { surveyIdFilter, pageSize: 200 }
+  })
+  const responses = useMemo(() => (responsesQuery.data?.responses ?? []) as V1SurveyResponse[], [responsesQuery.data])
+
+  const versions = useMemo(() => {
+    const seen = new Set<string>()
+    for (const r of responses) {
+      if (r.surveyId) seen.add(r.surveyId)
+    }
+    if (survey?.id) seen.add(survey.id)
+    return Array.from(seen)
+  }, [responses, survey])
+
+  const grouped = useMemo(() => {
+    const m = new Map<string, V1SurveyResponse[]>()
+    for (const r of responses) {
+      const key = r.surveyId ?? 'unknown'
+      const arr = m.get(key) ?? []
+      arr.push(r)
+      m.set(key, arr)
+    }
+    return m
+  }, [responses])
+
+  const aggregate = useMemo(() => buildAggregate(survey, responses), [survey, responses])
+
+  if (playtestQuery.isLoading) return <Spin description="Loading playtest..." />
+  if (playtestQuery.error || !playtest) return <Alert type="error" message="Failed to load playtest." />
+
+  const responseColumns = [
+    { title: 'Submitted', dataIndex: 'submittedAt', key: 'submittedAt', render: (v: string | null | undefined) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—') },
+    { title: 'User', dataIndex: 'userId', key: 'userId' },
+    {
+      title: 'Answers',
+      key: 'answers',
+      render: (_: unknown, row: V1SurveyResponse) => {
+        const answers = (row.answers ?? []) as V1SurveyAnswer[]
+        return (
+          <Space direction="vertical" size={2}>
+            {answers.map((a, i) => {
+              if (a.text) return <Typography.Text key={i}>“{a.text}”</Typography.Text>
+              if (typeof a.rating === 'number') return <Typography.Text key={i}>★ {a.rating}/5</Typography.Text>
+              if (a.multiChoice?.optionIds?.length) return <Typography.Text key={i}>✓ {a.multiChoice.optionIds.length} option(s)</Typography.Text>
+              return null
+            })}
+          </Space>
+        )
+      }
+    }
+  ]
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+        <div>
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            Survey responses — {playtest.title ?? playtest.slug}
+          </Typography.Title>
+          <Typography.Text type="secondary">{responses.length} response(s) total · {versions.length} version(s)</Typography.Text>
+        </div>
+        <Space>
+          <Select
+            allowClear
+            placeholder="All versions"
+            style={{ minWidth: 240 }}
+            value={surveyIdFilter}
+            onChange={val => setSurveyIdFilter(val ?? undefined)}
+            options={versions.map(v => ({ value: v, label: v === survey?.id ? `${v} (current)` : v }))}
+          />
+          <Button onClick={() => navigate('/')}>Back</Button>
+        </Space>
+      </div>
+
+      {!hasSurvey && <Alert type="info" showIcon message="No survey configured for this playtest." />}
+
+      {hasSurvey && (
+        <>
+          <Typography.Title level={4}>Aggregates</Typography.Title>
+          {aggregate.length === 0 && <Typography.Text type="secondary">No survey questions to aggregate.</Typography.Text>}
+          <Space direction="vertical" size="middle" style={{ display: 'flex', marginBottom: 24 }}>
+            {aggregate.map(a => (
+              <div key={a.questionId} data-testid="survey-aggregate" style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: 12 }}>
+                <Typography.Text strong>{a.prompt}</Typography.Text>
+                <div style={{ marginTop: 8 }}>
+                  {a.type === QUESTION_TYPE_TEXT && <Typography.Text>{a.textCount} text answer(s) — see rows below for content</Typography.Text>}
+                  {a.type === QUESTION_TYPE_RATING && (
+                    <Space direction="vertical" size={2} style={{ display: 'flex' }}>
+                      {[1, 2, 3, 4, 5].map(n => (
+                        <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 32 }}>★ {n}</span>
+                          <span data-testid={`rating-bar-${a.questionId}-${n}`} style={{ flex: 1 }}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                height: 8,
+                                background: '#1677ff',
+                                width: `${Math.min(100, (a.ratingCounts[n] ?? 0) * 20)}%`
+                              }}
+                            />
+                          </span>
+                          <span style={{ width: 32, textAlign: 'right' }}>{a.ratingCounts[n] ?? 0}</span>
+                        </div>
+                      ))}
+                    </Space>
+                  )}
+                  {a.type === QUESTION_TYPE_MULTI_CHOICE && (
+                    <Space direction="vertical" size={2} style={{ display: 'flex' }}>
+                      {Object.entries(a.optionLabels).map(([id, label]) => (
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 200 }}>{label}</span>
+                          <span data-testid={`option-bar-${a.questionId}-${id}`} style={{ flex: 1 }}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                height: 8,
+                                background: '#1677ff',
+                                width: `${Math.min(100, (a.optionCounts[id] ?? 0) * 10)}%`
+                              }}
+                            />
+                          </span>
+                          <span style={{ width: 32, textAlign: 'right' }}>{a.optionCounts[id] ?? 0}</span>
+                        </div>
+                      ))}
+                    </Space>
+                  )}
+                </div>
+              </div>
+            ))}
+          </Space>
+
+          <Typography.Title level={4}>Responses</Typography.Title>
+          {Array.from(grouped.entries()).map(([surveyVersionId, rows]) => (
+            <div key={surveyVersionId} style={{ marginBottom: 24 }}>
+              <Typography.Text strong>
+                Survey {surveyVersionId === survey?.id ? `${surveyVersionId} (current)` : surveyVersionId}
+              </Typography.Text>
+              <Table<V1SurveyResponse>
+                rowKey={row => row.id ?? ''}
+                dataSource={rows}
+                columns={responseColumns}
+                pagination={{ pageSize: 50 }}
+                size="small"
+                style={{ marginTop: 8 }}
+              />
+            </div>
+          ))}
+        </>
+      )}
+    </>
+  )
+}
+

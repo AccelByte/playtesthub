@@ -26,6 +26,10 @@ const mockRetryDmMutation = vi.fn()
 const mockUploadMutation = vi.fn()
 const mockTopUpMutation = vi.fn()
 const mockSyncMutation = vi.fn()
+const mockCreateSurveyMutation = vi.fn()
+const mockEditSurveyMutation = vi.fn()
+const mockGetSurveyResponses = vi.fn()
+const mockGetSurveyPlayer = vi.fn()
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -34,7 +38,9 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
     Playtest_ByPlaytestId: 'playtest-by-id',
     Playtest_ByPlaytestIdTransitionStatu: 'playtest-by-id-transition',
     Codes_ByPlaytestId: 'codes-by-playtest-id',
-    Applicants_ByPlaytestId: 'applicants-by-playtest-id'
+    Applicants_ByPlaytestId: 'applicants-by-playtest-id',
+    Survey_ByPlaytestId: 'survey-by-playtest-id',
+    SurveyResponses_ByPlaytestId: 'survey-responses-by-playtest-id'
   },
   usePlaytesthubServiceAdminApi_GetPlaytests: (...args: unknown[]) => mockGetPlaytests(...args),
   usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId: (...args: unknown[]) => mockGetPlaytest(...args),
@@ -49,7 +55,14 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRetryDmMutation: (...args: unknown[]) => mockRetryDmMutation(...args),
   usePlaytesthubServiceAdminApi_CreateCodesUpload_ByPlaytestIdMutation: (...args: unknown[]) => mockUploadMutation(...args),
   usePlaytesthubServiceAdminApi_CreateCodesTopUp_ByPlaytestIdMutation: (...args: unknown[]) => mockTopUpMutation(...args),
-  usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation: (...args: unknown[]) => mockSyncMutation(...args)
+  usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation: (...args: unknown[]) => mockSyncMutation(...args),
+  usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockCreateSurveyMutation(...args),
+  usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockEditSurveyMutation(...args),
+  usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId: (...args: unknown[]) => mockGetSurveyResponses(...args)
+}))
+
+vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
+  usePlaytesthubServiceApi_GetSurveyPlayer_ByPlaytestId: (...args: unknown[]) => mockGetSurveyPlayer(...args)
 }))
 
 import { FederatedElement } from './federated-element'
@@ -80,6 +93,10 @@ beforeEach(() => {
   mockUploadMutation.mockReset()
   mockTopUpMutation.mockReset()
   mockSyncMutation.mockReset()
+  mockCreateSurveyMutation.mockReset()
+  mockEditSurveyMutation.mockReset()
+  mockGetSurveyResponses.mockReset()
+  mockGetSurveyPlayer.mockReset()
 
   // Default: empty list + no-op mutations.
   mockGetPlaytests.mockReturnValue({ data: { playtests: [] }, isLoading: false, error: null, refetch: vi.fn() })
@@ -96,6 +113,10 @@ beforeEach(() => {
   mockUploadMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
   mockTopUpMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
   mockSyncMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockCreateSurveyMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockEditSurveyMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockGetSurveyResponses.mockReturnValue({ data: { responses: [] }, isLoading: false, error: null, refetch: vi.fn() })
+  mockGetSurveyPlayer.mockReturnValue({ data: undefined, isLoading: false, isError: false, error: null })
 })
 
 describe('PlaytestsListPage', () => {
@@ -455,5 +476,248 @@ describe('CodePoolPage', () => {
         data: { csvContent: csv, filename: 'dummycodes.txt' }
       })
     )
+  })
+})
+
+describe('SurveyBuilderPage', () => {
+  it('renders a fresh blank text question for a playtest with no survey', async () => {
+    mockGetPlaytest.mockReturnValue({
+      data: { playtest: { id: 'pt_1', slug: 'a', title: 'Alpha' } },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/pt_1/survey')
+    await waitFor(() => expect(screen.getAllByTestId('survey-question')).toHaveLength(1))
+    expect(screen.getByRole('button', { name: /create survey/i })).toBeInTheDocument()
+  })
+
+  it('preloads existing survey questions and renders Save new version', async () => {
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_1', status: 'PLAYTEST_STATUS_OPEN' }
+      },
+      isLoading: false,
+      error: null
+    })
+    mockGetSurveyPlayer.mockReturnValue({
+      data: {
+        survey: {
+          id: 'sur_1',
+          version: 2,
+          questions: [
+            { id: 'q1', type: 'SURVEY_QUESTION_TYPE_TEXT', prompt: 'Tell us', required: true },
+            {
+              id: 'q2',
+              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
+              prompt: 'Which platforms?',
+              required: false,
+              allowMultiple: true,
+              options: [
+                { id: 'o1', label: 'Steam' },
+                { id: 'o2', label: 'Xbox' }
+              ]
+            }
+          ]
+        }
+      },
+      isLoading: false,
+      isError: false,
+      error: null
+    })
+    renderAt('/pt_1/survey')
+    await waitFor(() => expect(screen.getAllByTestId('survey-question')).toHaveLength(2))
+    expect(screen.getByDisplayValue('Tell us')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Which platforms?')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Steam')).toBeInTheDocument()
+    expect(screen.getByText(/current version v2 \(saving creates v3\)/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /save new version/i })).toBeInTheDocument()
+  })
+
+  it('submits CreateSurvey with the typed question on a fresh playtest', async () => {
+    const mutate = vi.fn()
+    mockCreateSurveyMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    mockGetPlaytest.mockReturnValue({
+      data: { playtest: { id: 'pt_1', slug: 'a', title: 'Alpha' } },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/pt_1/survey')
+    const user = userEvent.setup()
+    const prompts = await screen.findAllByPlaceholderText(/what did you think of the build/i)
+    await user.type(prompts[0], 'Did you like it?')
+    await user.click(screen.getByRole('button', { name: /create survey/i }))
+    await waitFor(() =>
+      expect(mutate).toHaveBeenCalledWith({
+        playtestId: 'pt_1',
+        data: {
+          questions: [{ type: 'SURVEY_QUESTION_TYPE_TEXT', prompt: 'Did you like it?', required: false }]
+        }
+      })
+    )
+  })
+
+  it('preserves question + option ids when editing an existing survey', async () => {
+    const mutate = vi.fn()
+    mockEditSurveyMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_1', status: 'PLAYTEST_STATUS_OPEN' }
+      },
+      isLoading: false,
+      error: null
+    })
+    mockGetSurveyPlayer.mockReturnValue({
+      data: {
+        survey: {
+          id: 'sur_1',
+          version: 1,
+          questions: [
+            {
+              id: 'q1',
+              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
+              prompt: 'Which?',
+              required: false,
+              allowMultiple: false,
+              options: [
+                { id: 'o1', label: 'Steam' },
+                { id: 'o2', label: 'Xbox' }
+              ]
+            }
+          ]
+        }
+      },
+      isLoading: false,
+      isError: false,
+      error: null
+    })
+    renderAt('/pt_1/survey')
+    const user = userEvent.setup()
+    await screen.findByDisplayValue('Which?')
+    await user.click(screen.getByRole('button', { name: /save new version/i }))
+    await waitFor(() =>
+      expect(mutate).toHaveBeenCalledWith({
+        playtestId: 'pt_1',
+        data: {
+          questions: [
+            {
+              id: 'q1',
+              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
+              prompt: 'Which?',
+              required: false,
+              allowMultiple: false,
+              options: [
+                { id: 'o1', label: 'Steam' },
+                { id: 'o2', label: 'Xbox' }
+              ]
+            }
+          ]
+        }
+      })
+    )
+  })
+
+  it('warns about DRAFT preload when GetSurvey errors and the playtest is DRAFT', async () => {
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_1', status: 'PLAYTEST_STATUS_DRAFT' }
+      },
+      isLoading: false,
+      error: null
+    })
+    mockGetSurveyPlayer.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: null })
+    renderAt('/pt_1/survey')
+    expect(await screen.findByText(/draft playtest survey can't be previewed/i)).toBeInTheDocument()
+  })
+})
+
+describe('SurveyResponsesPage', () => {
+  it('shows an empty-state info banner when the playtest has no survey configured', () => {
+    mockGetPlaytest.mockReturnValue({
+      data: { playtest: { id: 'pt_1', slug: 'a', title: 'Alpha' } },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/pt_1/survey/responses')
+    expect(screen.getByText(/no survey configured for this playtest/i)).toBeInTheDocument()
+  })
+
+  it('groups responses by survey version and renders a histogram bucket per option id', async () => {
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_2', status: 'PLAYTEST_STATUS_OPEN' }
+      },
+      isLoading: false,
+      error: null
+    })
+    mockGetSurveyPlayer.mockReturnValue({
+      data: {
+        survey: {
+          id: 'sur_2',
+          version: 2,
+          questions: [
+            {
+              id: 'q1',
+              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
+              prompt: 'Which platforms?',
+              options: [
+                { id: 'o1', label: 'Steam' },
+                { id: 'o2', label: 'Xbox' }
+              ]
+            },
+            { id: 'q2', type: 'SURVEY_QUESTION_TYPE_RATING', prompt: 'Rate it' }
+          ]
+        }
+      },
+      isLoading: false,
+      isError: false,
+      error: null
+    })
+    mockGetSurveyResponses.mockReturnValue({
+      data: {
+        responses: [
+          {
+            id: 'r1',
+            surveyId: 'sur_2',
+            userId: 'u1',
+            submittedAt: '2026-05-01T10:00:00Z',
+            answers: [
+              { questionId: 'q1', multiChoice: { optionIds: ['o1'] } },
+              { questionId: 'q2', rating: 5 }
+            ]
+          },
+          {
+            id: 'r2',
+            surveyId: 'sur_2',
+            userId: 'u2',
+            submittedAt: '2026-05-01T11:00:00Z',
+            answers: [
+              { questionId: 'q1', multiChoice: { optionIds: ['o1', 'o2'] } },
+              { questionId: 'q2', rating: 4 }
+            ]
+          },
+          {
+            id: 'r3',
+            surveyId: 'sur_1',
+            userId: 'u3',
+            submittedAt: '2026-04-30T10:00:00Z',
+            answers: [{ questionId: 'q1', multiChoice: { optionIds: ['o2'] } }]
+          }
+        ]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/pt_1/survey/responses')
+    await waitFor(() => expect(screen.getAllByTestId('survey-aggregate')).toHaveLength(2))
+    expect(screen.getByText(/3 response\(s\) total/)).toBeInTheDocument()
+    // Two surveys: sur_1 + sur_2
+    expect(screen.getByText(/sur_2 \(current\)/)).toBeInTheDocument()
+    expect(screen.getByText('sur_1', { exact: false })).toBeInTheDocument()
+    // Histogram aggregates only the current-version responses (filter empty → all rows are
+    // counted for q1 across 3 responses: o1=2, o2=2). Bars are testid-keyed by option id.
+    expect(screen.getByTestId('option-bar-q1-o1')).toBeInTheDocument()
+    expect(screen.getByTestId('option-bar-q1-o2')).toBeInTheDocument()
+    expect(screen.getByTestId('rating-bar-q2-5')).toBeInTheDocument()
   })
 })
