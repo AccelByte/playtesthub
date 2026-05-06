@@ -262,6 +262,25 @@ var catalogue = []commandSpec{
 		Example: "pth --namespace mygame flow golden-m2 --slug e2e-1234 --admin-profile admin --player-profile player",
 	},
 	{
+		Name:        "flow golden-m3",
+		Milestone:   "M3",
+		Description: "Composite: golden-m2 → create-survey → submit-response → list-responses. Ten NDJSON lines, stop-on-first-failure (cli.md §6.4, STATUS M3 phase 12).",
+		RequiredFlags: []flagSpec{
+			slugFlag(),
+			{Name: "--admin-profile", Description: "credential profile for admin steps (create, transition, upload, approve, create-survey, list-responses)", ValueType: "string"},
+			{Name: "--player-profile", Description: "credential profile for player steps (signup, accept-nda, get-code, submit-response)", ValueType: "string"},
+		},
+		OptionalFlags: []flagSpec{
+			{Name: "--title", Description: "playtest title (default: 'Playtest <slug>')", ValueType: "string"},
+			platformsFlag("platforms for both create and signup (default STEAM)"),
+			{Name: "--nda-text", Description: "NDA prose; @file to load from disk", ValueType: "string"},
+			{Name: "--codes-file", Description: "CSV path to upload (overrides --codes-count; '-' reads stdin)", ValueType: "string"},
+			{Name: "--codes-count", Description: "number of synthetic codes when --codes-file is empty (1..50, default 1)", ValueType: "int"},
+			{Name: "--dry-run", Description: "print every step's request JSON and exit without dialling", ValueType: "bool"},
+		},
+		Example: "pth --namespace mygame flow golden-m3 --slug e2e-m3 --admin-profile admin --player-profile player",
+	},
+	{
 		Name:          "playtest create",
 		Milestone:     "M1",
 		Description:   "Create a playtest. Admin token required. Mutable fields are PRD-whitelisted (cli.md §6.1, PRD §5.1).",

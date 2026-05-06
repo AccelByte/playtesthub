@@ -468,6 +468,27 @@ while IFS= read -r line; do
     i=$((i+1))
 done <<<"$flow_dry_m2"
 
+# --- pth flow golden-m3 --dry-run (unconditional) ---------------------
+# Phase 12 (docs/STATUS.md M3): ten NDJSON steps with status=DRY_RUN.
+# Adds the M3 survey surface (create-survey, submit-response,
+# list-responses) to the golden-m2 flow.
+log "pth flow golden-m3 --dry-run emits 10 NDJSON steps without dialling"
+flow_dry_m3=$("$PTH_BIN" --namespace smoke flow golden-m3 --slug demo-flow-m3 --dry-run)
+flow_dry_m3_lines=$(printf '%s\n' "$flow_dry_m3" | wc -l | tr -d ' ')
+[[ "$flow_dry_m3_lines" -eq 10 ]] \
+    || { printf '%s\n' "$flow_dry_m3" >&2; fail "flow golden-m3 dry-run lines=$flow_dry_m3_lines, want 10"; }
+expected_steps_m3=("create-playtest" "transition-open" "signup" "accept-nda" "upload-codes" "approve" "get-code" "create-survey" "submit-response" "list-responses")
+i=0
+while IFS= read -r line; do
+    step=$(jq -r '.step' <<<"$line")
+    status=$(jq -r '.status' <<<"$line")
+    [[ "$step" == "${expected_steps_m3[$i]}" ]] \
+        || fail "flow golden-m3 dry-run line $((i+1)) step=$step, want ${expected_steps_m3[$i]}"
+    [[ "$status" == "DRY_RUN" ]] \
+        || fail "flow golden-m3 dry-run line $((i+1)) status=$status, want DRY_RUN"
+    i=$((i+1))
+done <<<"$flow_dry_m3"
+
 # --- pth M2 subcommand catalogue presence -----------------------------
 # Phase 12 commits the §6.2 surface to the catalogue. The byte-exact
 # diff lives in cmd/pth/testdata/describe.golden.json — this probe is a

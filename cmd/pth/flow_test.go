@@ -509,6 +509,199 @@ func TestRunFlowGoldenM2_RequiresProfilesWhenNotDryRun(t *testing.T) {
 	}
 }
 
+func TestRunFlowGoldenM3_HappyPath(t *testing.T) {
+	createdID := testFlowPlaytestID
+	applicantID := "01J0M3APP"
+	surveyID := "01J0M3SURVEY"
+	textQID := "01J0M3QT"
+	ratingQID := "01J0M3QR"
+
+	adminStub := &stubPlaytestClient{
+		createFunc: func(_ context.Context, in *pb.CreatePlaytestRequest, _ ...grpc.CallOption) (*pb.CreatePlaytestResponse, error) {
+			return &pb.CreatePlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Slug: in.Slug, Namespace: in.Namespace}}, nil
+		},
+		transitionFunc: func(_ context.Context, _ *pb.TransitionPlaytestStatusRequest, _ ...grpc.CallOption) (*pb.TransitionPlaytestStatusResponse, error) {
+			return &pb.TransitionPlaytestStatusResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN}}, nil
+		},
+		uploadCodesFunc: func(_ context.Context, _ *pb.UploadCodesRequest, _ ...grpc.CallOption) (*pb.UploadCodesResponse, error) {
+			return &pb.UploadCodesResponse{Inserted: 1}, nil
+		},
+		approveFunc: func(_ context.Context, _ *pb.ApproveApplicantRequest, _ ...grpc.CallOption) (*pb.ApproveApplicantResponse, error) {
+			return &pb.ApproveApplicantResponse{Applicant: &pb.Applicant{Id: applicantID, Status: pb.ApplicantStatus_APPLICANT_STATUS_APPROVED}}, nil
+		},
+		createSurveyFunc: func(_ context.Context, in *pb.CreateSurveyRequest, _ ...grpc.CallOption) (*pb.CreateSurveyResponse, error) {
+			if in.PlaytestId != createdID {
+				t.Errorf("create-survey playtest_id=%q, want %q", in.PlaytestId, createdID)
+			}
+			if got := len(in.Questions); got != 2 {
+				t.Errorf("create-survey questions len=%d, want 2", got)
+			}
+			// Server normally assigns ids; the stub mints them so the
+			// follow-up submit-response can address each question.
+			questions := []*pb.SurveyQuestion{
+				{Id: textQID, Type: pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_TEXT, Prompt: in.Questions[0].Prompt, Required: true},
+				{Id: ratingQID, Type: pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_RATING, Prompt: in.Questions[1].Prompt, Required: true},
+			}
+			return &pb.CreateSurveyResponse{Survey: &pb.Survey{Id: surveyID, PlaytestId: createdID, Version: 1, Questions: questions}}, nil
+		},
+		listSurveyRespFunc: func(_ context.Context, in *pb.ListSurveyResponsesRequest, _ ...grpc.CallOption) (*pb.ListSurveyResponsesResponse, error) {
+			if in.PlaytestId != createdID {
+				t.Errorf("list-responses playtest_id=%q, want %q", in.PlaytestId, createdID)
+			}
+			return &pb.ListSurveyResponsesResponse{Responses: []*pb.SurveyResponse{{
+				Id: "01J0M3RESP", PlaytestId: createdID, SurveyId: surveyID,
+			}}}, nil
+		},
+	}
+	playerStub := &stubPlaytestClient{
+		signupFunc: func(_ context.Context, _ *pb.SignupRequest, _ ...grpc.CallOption) (*pb.SignupResponse, error) {
+			return &pb.SignupResponse{Applicant: &pb.Applicant{Id: applicantID, PlaytestId: createdID, Status: pb.ApplicantStatus_APPLICANT_STATUS_PENDING}}, nil
+		},
+		acceptNDAFunc: func(_ context.Context, _ *pb.AcceptNDARequest, _ ...grpc.CallOption) (*pb.AcceptNDAResponse, error) {
+			return &pb.AcceptNDAResponse{Acceptance: &pb.NDAAcceptance{NdaVersionHash: "h"}}, nil
+		},
+		getGrantedCodeFunc: func(_ context.Context, _ *pb.GetGrantedCodeRequest, _ ...grpc.CallOption) (*pb.GetGrantedCodeResponse, error) {
+			return &pb.GetGrantedCodeResponse{Value: "STEAM-KEY-1", DistributionModel: pb.DistributionModel_DISTRIBUTION_MODEL_STEAM_KEYS}, nil
+		},
+		submitSurveyFunc: func(_ context.Context, in *pb.SubmitSurveyResponseRequest, _ ...grpc.CallOption) (*pb.SubmitSurveyResponseResponse, error) {
+			if in.SurveyId != surveyID {
+				t.Errorf("submit survey_id=%q, want %q", in.SurveyId, surveyID)
+			}
+			if got := len(in.Answers); got != 2 {
+				t.Fatalf("submit answers len=%d, want 2", got)
+			}
+			if in.Answers[0].QuestionId != textQID || in.Answers[0].GetText() == "" {
+				t.Errorf("answers[0]=%+v, want text answer for %q", in.Answers[0], textQID)
+			}
+			if in.Answers[1].QuestionId != ratingQID || in.Answers[1].GetRating() != 5 {
+				t.Errorf("answers[1]=%+v, want rating 5 for %q", in.Answers[1], ratingQID)
+			}
+			return &pb.SubmitSurveyResponseResponse{Response: &pb.SurveyResponse{Id: "01J0M3RESP", PlaytestId: createdID, SurveyId: surveyID}}, nil
+		},
+	}
+	rec := &flowFactoryRecorder{byProfile: map[string]*stubPlaytestClient{"admin": adminStub, "player": playerStub}}
+
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m3", "--slug", "demo-flow-m3", "--admin-profile", "admin", "--player-profile", "player"}, rec.factory)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q stdout=%q)", code, exitOK, stderr.String(), stdout.String())
+	}
+
+	lines := splitNDJSON(stdout.Bytes())
+	wantSteps := []string{"create-playtest", "transition-open", "signup", "accept-nda", "upload-codes", "approve", "get-code", "create-survey", "submit-response", "list-responses"}
+	if got, want := len(lines), len(wantSteps); got != want {
+		t.Fatalf("emitted %d lines, want %d (stdout=%q)", got, want, stdout.String())
+	}
+	for i, raw := range lines {
+		var got struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("line %d unmarshal: %v: %q", i, err, raw)
+		}
+		if got.Step != wantSteps[i] {
+			t.Errorf("line %d step=%q, want %q", i, got.Step, wantSteps[i])
+		}
+		if got.Status != "OK" {
+			t.Errorf("line %d status=%q, want OK", i, got.Status)
+		}
+	}
+}
+
+func TestRunFlowGoldenM3_StopsOnEmptyResponses(t *testing.T) {
+	createdID := testFlowPlaytestID
+	applicantID := "01J0M3APP"
+	surveyID := "01J0M3SURVEY"
+	textQID := "01J0M3QT"
+	ratingQID := "01J0M3QR"
+
+	adminStub := &stubPlaytestClient{
+		createFunc: func(_ context.Context, in *pb.CreatePlaytestRequest, _ ...grpc.CallOption) (*pb.CreatePlaytestResponse, error) {
+			return &pb.CreatePlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Slug: in.Slug}}, nil
+		},
+		transitionFunc: func(_ context.Context, _ *pb.TransitionPlaytestStatusRequest, _ ...grpc.CallOption) (*pb.TransitionPlaytestStatusResponse, error) {
+			return &pb.TransitionPlaytestStatusResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN}}, nil
+		},
+		uploadCodesFunc: func(_ context.Context, _ *pb.UploadCodesRequest, _ ...grpc.CallOption) (*pb.UploadCodesResponse, error) {
+			return &pb.UploadCodesResponse{Inserted: 1}, nil
+		},
+		approveFunc: func(_ context.Context, _ *pb.ApproveApplicantRequest, _ ...grpc.CallOption) (*pb.ApproveApplicantResponse, error) {
+			return &pb.ApproveApplicantResponse{Applicant: &pb.Applicant{Id: applicantID, Status: pb.ApplicantStatus_APPLICANT_STATUS_APPROVED}}, nil
+		},
+		createSurveyFunc: func(_ context.Context, in *pb.CreateSurveyRequest, _ ...grpc.CallOption) (*pb.CreateSurveyResponse, error) {
+			questions := []*pb.SurveyQuestion{
+				{Id: textQID, Type: pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_TEXT, Prompt: in.Questions[0].Prompt, Required: true},
+				{Id: ratingQID, Type: pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_RATING, Prompt: in.Questions[1].Prompt, Required: true},
+			}
+			return &pb.CreateSurveyResponse{Survey: &pb.Survey{Id: surveyID, Questions: questions}}, nil
+		},
+		listSurveyRespFunc: func(_ context.Context, _ *pb.ListSurveyResponsesRequest, _ ...grpc.CallOption) (*pb.ListSurveyResponsesResponse, error) {
+			// The server returns OK but with zero rows — the flow's
+			// post-condition should reject this as the submit step
+			// should have produced exactly one row.
+			return &pb.ListSurveyResponsesResponse{}, nil
+		},
+	}
+	playerStub := &stubPlaytestClient{
+		signupFunc: func(_ context.Context, _ *pb.SignupRequest, _ ...grpc.CallOption) (*pb.SignupResponse, error) {
+			return &pb.SignupResponse{Applicant: &pb.Applicant{Id: applicantID, PlaytestId: createdID, Status: pb.ApplicantStatus_APPLICANT_STATUS_PENDING}}, nil
+		},
+		acceptNDAFunc: func(_ context.Context, _ *pb.AcceptNDARequest, _ ...grpc.CallOption) (*pb.AcceptNDAResponse, error) {
+			return &pb.AcceptNDAResponse{Acceptance: &pb.NDAAcceptance{NdaVersionHash: "h"}}, nil
+		},
+		getGrantedCodeFunc: func(_ context.Context, _ *pb.GetGrantedCodeRequest, _ ...grpc.CallOption) (*pb.GetGrantedCodeResponse, error) {
+			return &pb.GetGrantedCodeResponse{Value: "STEAM-KEY-1"}, nil
+		},
+		submitSurveyFunc: func(_ context.Context, _ *pb.SubmitSurveyResponseRequest, _ ...grpc.CallOption) (*pb.SubmitSurveyResponseResponse, error) {
+			return &pb.SubmitSurveyResponseResponse{Response: &pb.SurveyResponse{Id: "01J0M3RESP"}}, nil
+		},
+	}
+	rec := &flowFactoryRecorder{byProfile: map[string]*stubPlaytestClient{"admin": adminStub, "player": playerStub}}
+
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m3", "--slug", "demo-flow-m3", "--admin-profile", "admin", "--player-profile", "player"}, rec.factory)
+	if code != exitClientError {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitClientError, stderr.String())
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	// The list-responses RPC itself succeeded (OK line emitted by
+	// flowInvoke), but the flow's post-condition rejects the empty
+	// responses array and writes a synthesised FAILED line — 11 total.
+	if got, want := len(lines), 11; got != want {
+		t.Fatalf("emitted %d lines, want %d (stdout=%q)", got, want, stdout.String())
+	}
+	var last struct {
+		Step   string `json:"step"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(lines[10], &last); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if last.Step != "list-responses" || last.Status != statusFailed {
+		t.Errorf("got %q/%q, want list-responses/%s", last.Step, last.Status, statusFailed)
+	}
+}
+
+func TestRunFlowGoldenM3_DryRun(t *testing.T) {
+	rec := &flowFactoryRecorder{}
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m3", "--slug", "demo-flow-m3", "--dry-run"}, rec.factory)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	if got, want := len(lines), 10; got != want {
+		t.Fatalf("dry-run emitted %d lines, want %d", got, want)
+	}
+	if len(rec.requested) != 0 {
+		t.Errorf("dry-run must not request profiles: %v", rec.requested)
+	}
+}
+
 // splitNDJSON splits stdout on '\n', drops the trailing empty record, and
 // returns each line as a raw byte slice. NDJSON readers don't tolerate an
 // empty trailing line, but writeFlowSuccess emits one trailing newline

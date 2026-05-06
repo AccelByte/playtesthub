@@ -34,7 +34,7 @@ func defaultFlowProfileFactory(getenv envSnapshot) flowProfileFactory {
 	}
 }
 
-const flowUsage = `flow: action required (one of: golden-m1, golden-m2)`
+const flowUsage = `flow: action required (one of: golden-m1, golden-m2, golden-m3)`
 
 func runFlow(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, mk flowProfileFactory) int {
 	if len(args) == 0 {
@@ -47,6 +47,8 @@ func runFlow(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []s
 		return runFlowGoldenM1(ctx, stdout, stderr, g, rest, mk)
 	case "golden-m2":
 		return runFlowGoldenM2(ctx, stdout, stderr, g, rest, mk)
+	case "golden-m3":
+		return runFlowGoldenM3(ctx, stdout, stderr, g, rest, mk)
 	default:
 		fmt.Fprintf(stderr, "flow: unknown action %q\n", action)
 		return exitLocalError
@@ -486,6 +488,204 @@ func resolveGoldenM2CSV(filePath string, count int, slug string) (string, string
 		fmt.Fprintf(&b, "GOLDEN-M2-%s-%04d\n", strings.ToUpper(slug), i)
 	}
 	return b.String(), fmt.Sprintf("golden-m2-%s.csv", slug), nil
+}
+
+// goldenM3SurveyQuestions are the two questions golden-m3 seeds in
+// create-survey. One required TEXT + one required RATING. Inline so
+// the harness has no external file to manage; bounds match the
+// schema.md "Survey entity spec" gates (prompt ≤ 1,000 chars).
+func goldenM3SurveyQuestions() []*pb.SurveyQuestion {
+	return []*pb.SurveyQuestion{
+		{Type: pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_TEXT, Prompt: "How was the matchmaking?", Required: true},
+		{Type: pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_RATING, Prompt: "Rate the build (1-5)", Required: true},
+	}
+}
+
+// runFlowGoldenM3 extends golden-m2 with the three survey steps.
+// Ten NDJSON lines in total: M2's seven (create-playtest →
+// transition-open → signup → accept-nda → upload-codes → approve →
+// get-code) plus create-survey → submit-response → list-responses.
+// Stops on the first failure with the cli.md §8 exit code.
+func runFlowGoldenM3(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, mk flowProfileFactory) int {
+	in, code := parseGoldenM2Flags(stderr, g, args)
+	if code != exitOK {
+		return code
+	}
+	createReq := &pb.CreatePlaytestRequest{
+		Namespace:         g.Namespace,
+		Slug:              in.slug,
+		Title:             in.title,
+		Platforms:         in.platforms,
+		DistributionModel: pb.DistributionModel_DISTRIBUTION_MODEL_STEAM_KEYS,
+		NdaRequired:       true,
+		NdaText:           in.ndaProse,
+	}
+	if in.dryRun {
+		return runFlowGoldenM3DryRun(stdout, stderr, g, &in, createReq)
+	}
+	return runFlowGoldenM3Live(ctx, stdout, stderr, g, &in, createReq, mk)
+}
+
+// runFlowGoldenM3DryRun emits the ten-step request shape catalogue.
+// Survey ids are placeholders since they only resolve after a real
+// CreateSurvey round-trip.
+func runFlowGoldenM3DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest) int {
+	const placeholder = "<resolved-after-create>"
+	const surveyPlaceholder = "<resolved-after-create-survey>"
+	dryRunSteps := []struct {
+		label string
+		msg   proto.Message
+	}{
+		{"create-playtest", createReq},
+		{"transition-open", &pb.TransitionPlaytestStatusRequest{
+			Namespace:    g.Namespace,
+			PlaytestId:   placeholder,
+			TargetStatus: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN,
+		}},
+		{"signup", &pb.SignupRequest{Slug: in.slug, Platforms: in.platforms}},
+		{"accept-nda", &pb.AcceptNDARequest{PlaytestId: placeholder}},
+		{"upload-codes", &pb.UploadCodesRequest{
+			Namespace:  g.Namespace,
+			PlaytestId: placeholder,
+			CsvContent: in.csvBody,
+			Filename:   in.csvFilename,
+		}},
+		{"approve", &pb.ApproveApplicantRequest{
+			Namespace:   g.Namespace,
+			ApplicantId: "<resolved-after-signup>",
+		}},
+		{"get-code", &pb.GetGrantedCodeRequest{PlaytestId: placeholder}},
+		{"create-survey", &pb.CreateSurveyRequest{
+			Namespace:  g.Namespace,
+			PlaytestId: placeholder,
+			Questions:  goldenM3SurveyQuestions(),
+		}},
+		{"submit-response", &pb.SubmitSurveyResponseRequest{
+			PlaytestId: placeholder,
+			SurveyId:   surveyPlaceholder,
+			Answers: []*pb.SurveyAnswer{
+				{QuestionId: "<resolved-from-create-survey>", Value: &pb.SurveyAnswer_Text{Text: "Smooth, no hiccups."}},
+				{QuestionId: "<resolved-from-create-survey>", Value: &pb.SurveyAnswer_Rating{Rating: 5}},
+			},
+		}},
+		{"list-responses", &pb.ListSurveyResponsesRequest{
+			Namespace:  g.Namespace,
+			PlaytestId: placeholder,
+		}},
+	}
+	for _, s := range dryRunSteps {
+		if !writeFlowDryRun(stdout, stderr, s.label, s.msg) {
+			return exitLocalError
+		}
+	}
+	return exitOK
+}
+
+// runFlowGoldenM3Live drives the ten RPCs in sequence, halting on the
+// first failure. Reuses every M2 step then layers the three survey
+// steps on top — the only state threaded between is the playtest_id
+// (from create-playtest), the applicant_id (from signup), and the
+// survey + question ids (from create-survey).
+func runFlowGoldenM3Live(ctx context.Context, stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest, mk flowProfileFactory) int {
+	adminFactory, _ := mk(g, in.adminProfile)
+	playerFactory, _ := mk(g, in.playerProfile)
+
+	playtestID, code := flowGoldenM2CreateAndOpen(ctx, stdout, stderr, g, adminFactory, createReq)
+	if code != exitOK {
+		return code
+	}
+	applicantID, code := flowGoldenM2SignupAndAccept(ctx, stdout, stderr, g, playerFactory, in, playtestID)
+	if code != exitOK {
+		return code
+	}
+	if code := flowGoldenM2UploadAndApprove(ctx, stdout, stderr, g, adminFactory, in, playtestID, applicantID); code != exitOK {
+		return code
+	}
+	if code := flowGoldenM2GetCode(ctx, stdout, stderr, g, playerFactory, playtestID); code != exitOK {
+		return code
+	}
+
+	survey, code := flowGoldenM3CreateSurvey(ctx, stdout, stderr, g, adminFactory, playtestID)
+	if code != exitOK {
+		return code
+	}
+	if code := flowGoldenM3SubmitResponse(ctx, stdout, stderr, g, playerFactory, playtestID, survey); code != exitOK {
+		return code
+	}
+	return flowGoldenM3ListResponses(ctx, stdout, stderr, g, adminFactory, playtestID)
+}
+
+func flowGoldenM3CreateSurvey(ctx context.Context, stdout, stderr io.Writer, g *Globals, admin playtestClientFactory, playtestID string) (*pb.Survey, int) {
+	resp, code := flowInvoke(ctx, stdout, stderr, g, admin, "create-survey",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.CreateSurvey(cctx, &pb.CreateSurveyRequest{
+				Namespace:  g.Namespace,
+				PlaytestId: playtestID,
+				Questions:  goldenM3SurveyQuestions(),
+			})
+		})
+	if code != exitOK {
+		return nil, code
+	}
+	cs, ok := resp.(*pb.CreateSurveyResponse)
+	if !ok || cs.Survey == nil || cs.Survey.Id == "" || len(cs.Survey.Questions) != 2 {
+		writeFlowFailure(stdout, stderr, "create-survey", "Internal", "CreateSurvey response missing survey.id or expected 2 questions")
+		return nil, exitClientError
+	}
+	return cs.Survey, exitOK
+}
+
+func flowGoldenM3SubmitResponse(ctx context.Context, stdout, stderr io.Writer, g *Globals, player playtestClientFactory, playtestID string, survey *pb.Survey) int {
+	answers := make([]*pb.SurveyAnswer, 0, len(survey.Questions))
+	for _, q := range survey.Questions {
+		switch q.GetType() {
+		case pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_TEXT:
+			answers = append(answers, &pb.SurveyAnswer{
+				QuestionId: q.GetId(),
+				Value:      &pb.SurveyAnswer_Text{Text: "Smooth, no hiccups."},
+			})
+		case pb.SurveyQuestionType_SURVEY_QUESTION_TYPE_RATING:
+			answers = append(answers, &pb.SurveyAnswer{
+				QuestionId: q.GetId(),
+				Value:      &pb.SurveyAnswer_Rating{Rating: 5},
+			})
+		default:
+			writeFlowFailure(stdout, stderr, "submit-response", "Internal",
+				fmt.Sprintf("unexpected question type %s for golden-m3 (expected TEXT or RATING)", q.GetType()))
+			return exitClientError
+		}
+	}
+	if _, code := flowInvoke(ctx, stdout, stderr, g, player, "submit-response",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.SubmitSurveyResponse(cctx, &pb.SubmitSurveyResponseRequest{
+				PlaytestId: playtestID,
+				SurveyId:   survey.GetId(),
+				Answers:    answers,
+			})
+		}); code != exitOK {
+		return code
+	}
+	return exitOK
+}
+
+func flowGoldenM3ListResponses(ctx context.Context, stdout, stderr io.Writer, g *Globals, admin playtestClientFactory, playtestID string) int {
+	resp, code := flowInvoke(ctx, stdout, stderr, g, admin, "list-responses",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.ListSurveyResponses(cctx, &pb.ListSurveyResponsesRequest{
+				Namespace:  g.Namespace,
+				PlaytestId: playtestID,
+			})
+		})
+	if code != exitOK {
+		return code
+	}
+	lr, ok := resp.(*pb.ListSurveyResponsesResponse)
+	if !ok || len(lr.Responses) == 0 {
+		writeFlowFailure(stdout, stderr, "list-responses", "FailedPrecondition",
+			"ListSurveyResponses returned an empty responses array (expected the just-submitted row)")
+		return exitClientError
+	}
+	return exitOK
 }
 
 // flowInvoke runs one step against the supplied factory, writes the step

@@ -96,6 +96,7 @@ Commands (M1 phase 10 + M2 phase 12):
   flow golden-m1 --slug <s>        Composite: create → transition OPEN → signup → assert PENDING.
     --admin-profile <p> --player-profile <p> [--title <t>] [--platforms <csv>] [--dry-run]
   flow golden-m2 --slug <s>        Composite: golden-m1 → accept-nda → upload codes → approve → assert APPROVED + code visible.
+  flow golden-m3 --slug <s>        Composite: golden-m2 → create-survey → submit-response → list-responses (M3 phase 12).
     --admin-profile <p> --player-profile <p> [--title <t>] [--platforms <csv>] [--nda-text <s>|@file]
     [--codes-file <csv>] [--codes-count N] [--dry-run]
   playtest get-public --slug <s>   Fetch the public view of a playtest (unauth).

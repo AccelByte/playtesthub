@@ -49,6 +49,12 @@ type stubPlaytestClient struct {
 	syncFromAGSFunc     func(ctx context.Context, in *pb.SyncFromAGSRequest, opts ...grpc.CallOption) (*pb.SyncFromAGSResponse, error)
 	getCodePoolFunc     func(ctx context.Context, in *pb.GetCodePoolRequest, opts ...grpc.CallOption) (*pb.GetCodePoolResponse, error)
 	listAuditLogFunc    func(ctx context.Context, in *pb.ListAuditLogRequest, opts ...grpc.CallOption) (*pb.ListAuditLogResponse, error)
+	createSurveyFunc    func(ctx context.Context, in *pb.CreateSurveyRequest, opts ...grpc.CallOption) (*pb.CreateSurveyResponse, error)
+	editSurveyFunc      func(ctx context.Context, in *pb.EditSurveyRequest, opts ...grpc.CallOption) (*pb.EditSurveyResponse, error)
+	getSurveyFunc       func(ctx context.Context, in *pb.GetSurveyRequest, opts ...grpc.CallOption) (*pb.GetSurveyResponse, error)
+	submitSurveyFunc    func(ctx context.Context, in *pb.SubmitSurveyResponseRequest, opts ...grpc.CallOption) (*pb.SubmitSurveyResponseResponse, error)
+	listSurveyRespFunc  func(ctx context.Context, in *pb.ListSurveyResponsesRequest, opts ...grpc.CallOption) (*pb.ListSurveyResponsesResponse, error)
+	retryFailedDmsFunc  func(ctx context.Context, in *pb.RetryFailedDmsRequest, opts ...grpc.CallOption) (*pb.RetryFailedDmsResponse, error)
 
 	calls int
 }
@@ -156,6 +162,36 @@ func (s *stubPlaytestClient) GetCodePool(ctx context.Context, in *pb.GetCodePool
 func (s *stubPlaytestClient) ListAuditLog(ctx context.Context, in *pb.ListAuditLogRequest, opts ...grpc.CallOption) (*pb.ListAuditLogResponse, error) {
 	s.calls++
 	return s.listAuditLogFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) CreateSurvey(ctx context.Context, in *pb.CreateSurveyRequest, opts ...grpc.CallOption) (*pb.CreateSurveyResponse, error) {
+	s.calls++
+	return s.createSurveyFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) EditSurvey(ctx context.Context, in *pb.EditSurveyRequest, opts ...grpc.CallOption) (*pb.EditSurveyResponse, error) {
+	s.calls++
+	return s.editSurveyFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) GetSurvey(ctx context.Context, in *pb.GetSurveyRequest, opts ...grpc.CallOption) (*pb.GetSurveyResponse, error) {
+	s.calls++
+	return s.getSurveyFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) SubmitSurveyResponse(ctx context.Context, in *pb.SubmitSurveyResponseRequest, opts ...grpc.CallOption) (*pb.SubmitSurveyResponseResponse, error) {
+	s.calls++
+	return s.submitSurveyFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) ListSurveyResponses(ctx context.Context, in *pb.ListSurveyResponsesRequest, opts ...grpc.CallOption) (*pb.ListSurveyResponsesResponse, error) {
+	s.calls++
+	return s.listSurveyRespFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) RetryFailedDms(ctx context.Context, in *pb.RetryFailedDmsRequest, opts ...grpc.CallOption) (*pb.RetryFailedDmsResponse, error) {
+	s.calls++
+	return s.retryFailedDmsFunc(ctx, in, opts...)
 }
 
 func factoryFor(client pb.PlaytesthubServiceClient) playtestClientFactory {
