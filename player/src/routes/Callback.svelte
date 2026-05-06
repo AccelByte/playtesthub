@@ -3,6 +3,7 @@
   import { ApiError, fetchApplicantStatus } from '../lib/api';
   import {
     clearPendingLogin,
+    discordRedirectUri,
     exchangeDiscordCode,
     IamError,
     readPendingLogin,
@@ -37,7 +38,7 @@
     // MUST byte-exactly match what Landing.svelte sent to
     // discord.com/oauth2/authorize. Discord rejects mismatches with
     // invalid_grant; AGS forwards that error verbatim.
-    const redirectUri = `${window.location.origin}/callback`;
+    const redirectUri = discordRedirectUri();
     try {
       await exchangeDiscordCode(config, {
         code: params.code,

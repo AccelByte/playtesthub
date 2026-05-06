@@ -3,6 +3,7 @@ import type { Config } from '../src/lib/config';
 import {
   buildDiscordAuthorizeUrl,
   clearPendingLogin,
+  discordRedirectUri,
   DISCORD_LOGIN_SCOPE,
   exchangeDiscordCode,
   GENERIC_LOGIN_FAILED_MESSAGE,
@@ -46,6 +47,18 @@ describe('buildDiscordAuthorizeUrl', () => {
     );
     expect(url.searchParams.get('state')).toBe('state-abc');
     expect(url.searchParams.get('scope')).toBe(DISCORD_LOGIN_SCOPE);
+  });
+
+  it('builds discordRedirectUri from origin + Vite BASE_URL — root deploy', () => {
+    expect(discordRedirectUri({ origin: 'http://localhost:5173' }, '/')).toBe(
+      'http://localhost:5173/callback',
+    );
+  });
+
+  it('builds discordRedirectUri from origin + Vite BASE_URL — Pages subpath deploy', () => {
+    expect(
+      discordRedirectUri({ origin: 'https://anggorodewanto.github.io' }, '/playtesthub/'),
+    ).toBe('https://anggorodewanto.github.io/playtesthub/callback');
   });
 
   it('forwards a custom scope when provided', () => {

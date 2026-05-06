@@ -6,6 +6,7 @@
   import { platformLabel } from '../lib/platforms';
   import {
     buildDiscordAuthorizeUrl,
+    discordRedirectUri,
     clearPendingLogin,
     storePendingLogin,
   } from '../lib/auth';
@@ -39,7 +40,7 @@
   function handleSignup() {
     redirecting = true;
     const state = crypto.randomUUID();
-    const redirectUri = `${window.location.origin}/callback`;
+    const redirectUri = discordRedirectUri();
     clearPendingLogin();
     storePendingLogin({ state, slug });
     window.location.href = buildDiscordAuthorizeUrl({

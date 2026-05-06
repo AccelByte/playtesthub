@@ -63,6 +63,23 @@ export function logout(): void {
   clearPendingLogin();
 }
 
+// discordRedirectUri returns the byte-exact URL Discord must allowlist
+// AND the player must send to /oauth2/authorize AND AGS Admin Portal's
+// Discord platform RedirectUri must equal — see runbooks/setup-ags-discord.md
+// § Three URLs that must agree byte-for-byte. Built from `loc.origin`
+// (scheme + host) plus Vite's compile-time BASE_URL (with trailing
+// slash — `/` for a root deploy, `/<repo>/` for GitHub Pages project
+// sites). Fed by the same source through the round-trip — Landing
+// uses it to build the authorize URL, Callback uses it to populate
+// the `redirect_uri` form-body to the exchange RPC — so the two
+// sides cannot drift.
+export function discordRedirectUri(
+  loc: { origin: string } = window.location,
+  basePath: string = import.meta.env.BASE_URL,
+): string {
+  return `${loc.origin}${basePath}callback`;
+}
+
 // buildDiscordAuthorizeUrl composes the URL the player navigates to to
 // start Discord OAuth. The Discord developer portal owns the redirect
 // URI allowlist — AGS IAM is not involved until ExchangeDiscordCode.
