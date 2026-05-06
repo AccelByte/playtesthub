@@ -59,6 +59,9 @@ test:
 	go test $$(go list ./... | grep -v /admin/)
 
 smoke:
+	./scripts/smoke/pth.sh
+
+smoke-boot:
 	./scripts/smoke/boot.sh
 
 lint:

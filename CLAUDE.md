@@ -43,16 +43,14 @@ This repo is TDD-first. Every production change follows the loop:
 
 ### Smoke harness lands with the code that introduces it
 
-Unit + integration tests prove correctness of individual layers. The **smoke harness** (`scripts/smoke/` today — bash + `grpcurl` + `curl`; `pth` CLI once phase 10 ships) proves the real binary, wired through every layer, still works end-to-end. It is the only cheap check that catches "the types line up but the service doesn't actually boot" and "this RPC returns 501 because I forgot to register the handler" — things unit tests by construction cannot see.
+Unit + integration tests prove correctness of individual layers. The **smoke harness** (`scripts/smoke/pth.sh` — the `pth` CLI booting its own backend + ephemeral Postgres) proves the real binary, wired through every layer, still works end-to-end. It is the only cheap check that catches "the types line up but the service doesn't actually boot" and "this RPC returns 501 because I forgot to register the handler" — things unit tests by construction cannot see.
 
 **Rule**: any task that adds user-visible behavior (a new RPC, a new HTTP path, a new boot-time dependency, a new failure mode in main.go) **lands with smoke-harness coverage in the same PR**. No follow-up "I'll add the smoke test next phase" — the smoke script and the code that needs it are one deliverable.
 
-- Adding a new RPC → extend `scripts/smoke/boot.sh` (or add a sibling script in `scripts/smoke/`) with an invocation that asserts a representative success case and, where trivial, one error case.
+- Adding a new RPC → add a `pth` subcommand wrapping it (or extend an existing one) and a `pth.sh` dry-run probe; if the RPC is part of a milestone flow, extend the matching `pth flow golden-m*` step too. For backend-only changes that pre-date a `pth` wrapper, fall back to extending `scripts/smoke/boot.sh` (run via `make smoke-boot`).
 - Adding a new env-var dependency → the smoke script must export a valid value and assert the binary boots with it set, so missing-variable failures surface here instead of in prod.
 - Adding a new background worker / goroutine → the smoke script must observe an expected side effect (log line, DB row, metric tick) within a bounded time.
 - Pure refactors with no external surface change need no new smoke coverage but must keep the existing harness green.
-
-Once `pth flow golden-m1` (M1 phase 10) exists, new RPCs extend the CLI's per-RPC subcommand coverage instead of bash — same rule, new harness.
 
 ### Before marking any task done
 
@@ -62,8 +60,7 @@ Run the **full verification checklist** — not just the parts you touched. Part
 2. **Lint clean**: `golangci-lint run`.
 3. **Proto changes**: `buf lint` + regenerated stubs committed.
 4. **New RPC**: the `docs/errors.md` row for every new error condition exists and matches the code byte-for-byte.
-5. **Smoke harness extended + green**: if the task adds user-visible behavior per the rule above, the smoke-harness extension is in the same commit. Then `scripts/smoke/boot.sh` (or `make smoke`) exits 0 against a clean checkout.
-6. **CLI smoke** (once `pth` ships in M1 phase 10): `pth flow golden-m1` (or the most applicable composite command) exits 0 against a local stack. Replaces the bash smoke harness as the authoritative e2e verification.
+5. **Smoke green — `make smoke` is mandatory after every implementation, no exceptions**: run `make smoke` (= `scripts/smoke/pth.sh`) against a clean checkout and confirm exit 0 before declaring any task done — refactors and one-line fixes included. It builds `cmd/pth`, boots its own Postgres + auth-disabled backend, and runs every dry-run probe plus (when `PTH_E2E_*` secrets are present) the live login → flow round-trip. If the task added user-visible behavior, the smoke-harness extension lands in the same commit. `make smoke-boot` (= `scripts/smoke/boot.sh`) remains as the pure-backend reflection/auth fallback for changes that do not touch `pth`, but it does not substitute for `make smoke`. Treat a red smoke run the same as a red test run: stop and fix before moving on.
 
 Do not commit code whose tests were skipped, or tests that pass without actually asserting the behavior in their name. If a test is hard to write, the design is probably wrong — pause and discuss.
 
