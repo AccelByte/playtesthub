@@ -67,10 +67,10 @@ func newLogger(level string) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: parseSlogLevel(level)}))
 }
 
-func serveGateway(grpcGateway http.Handler, logger *slog.Logger, basePath string) {
+func serveGateway(grpcGateway http.Handler, logger *slog.Logger, basePath string, corsAllowedOrigins []string) {
 	swaggerDir := "gateway/apidocs"
-	srv := newGRPCGatewayHTTPServer(fmt.Sprintf(":%d", grpcGatewayHTTPPort), grpcGateway, logger, swaggerDir, basePath)
-	logger.Info("starting gRPC-Gateway HTTP server", "port", grpcGatewayHTTPPort)
+	srv := newGRPCGatewayHTTPServer(fmt.Sprintf(":%d", grpcGatewayHTTPPort), grpcGateway, logger, swaggerDir, basePath, corsAllowedOrigins)
+	logger.Info("starting gRPC-Gateway HTTP server", "port", grpcGatewayHTTPPort, "corsAllowedOrigins", corsAllowedOrigins)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("failed to run gRPC-Gateway HTTP server", "error", err)
 		os.Exit(1)
@@ -172,7 +172,7 @@ func main() {
 		logger.Error("failed to create gRPC-Gateway", "error", err)
 		os.Exit(1)
 	}
-	go serveGateway(grpcGateway, logger, cfg.BasePath)
+	go serveGateway(grpcGateway, logger, cfg.BasePath, cfg.CORSAllowedOrigins)
 
 	go serveMetrics(logger, newPrometheusRegistry())
 	logger.Info("serving prometheus metrics", "port", metricsPort, "endpoint", metricsEndpoint)
@@ -269,7 +269,7 @@ func holderIDFromEnv() string {
 }
 
 func newGRPCGatewayHTTPServer(
-	addr string, handler http.Handler, logger *slog.Logger, swaggerDir, basePath string,
+	addr string, handler http.Handler, logger *slog.Logger, swaggerDir, basePath string, corsAllowedOrigins []string,
 ) *http.Server {
 	// Create a new ServeMux
 	mux := http.NewServeMux()
@@ -281,8 +281,13 @@ func newGRPCGatewayHTTPServer(
 	serveSwaggerUI(mux, basePath)
 	serveSwaggerJSON(mux, swaggerDir, basePath)
 
+	// CORS wraps the whole mux so OPTIONS preflights are answered before
+	// they hit the gateway (vanilla grpc-gateway returns 501 on OPTIONS,
+	// which fails browsers cross-origin). Empty allow-list is a no-op.
+	corsMux := common.CORSMiddleware(corsAllowedOrigins, mux)
+
 	// Add logging middleware
-	loggedMux := loggingMiddleware(logger, mux)
+	loggedMux := loggingMiddleware(logger, corsMux)
 
 	return &http.Server{
 		Addr:     addr,

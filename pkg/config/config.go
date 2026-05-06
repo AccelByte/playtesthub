@@ -70,6 +70,16 @@ type Config struct {
 	AuthEnabled            bool
 	RefreshIntervalSeconds int
 	OtelServiceName        string
+
+	// CORSAllowedOrigins is the comma-separated allowlist of browser
+	// origins permitted to call the grpc-gateway HTTP surface. Empty →
+	// no CORS handling (server returns 501 on OPTIONS, same as the
+	// vanilla grpc-gateway). Set this when the player Svelte bundle is
+	// hosted off-origin (e.g. GitHub Pages: "https://<user>.github.io")
+	// — the middleware reflects the matched origin and sets
+	// `Access-Control-Allow-Credentials: true` so cookie-based admin
+	// auth keeps working.
+	CORSAllowedOrigins []string
 }
 
 // MissingRequiredError lists every required env var that was unset or
@@ -155,8 +165,23 @@ func Load() (*Config, error) {
 	cfg.LogLevel = getString("LOG_LEVEL", "info")
 	cfg.AuthEnabled = getBool("PLUGIN_GRPC_SERVER_AUTH_ENABLED", true)
 	cfg.OtelServiceName = os.Getenv("OTEL_SERVICE_NAME")
+	cfg.CORSAllowedOrigins = parseCSV(os.Getenv("CORS_ALLOWED_ORIGINS"))
 
 	return cfg, nil
+}
+
+func parseCSV(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func collectMissing(required map[string]string) []string {

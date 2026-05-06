@@ -87,6 +87,22 @@ func TestLoad_OptionalDefaults(t *testing.T) {
 	if cfg.RefreshIntervalSeconds != 600 {
 		t.Errorf("RefreshIntervalSeconds = %d, want 600", cfg.RefreshIntervalSeconds)
 	}
+	if len(cfg.CORSAllowedOrigins) != 0 {
+		t.Errorf("CORSAllowedOrigins = %v, want empty (no CORS handling by default)", cfg.CORSAllowedOrigins)
+	}
+}
+
+func TestLoad_CORSAllowedOriginsParsed(t *testing.T) {
+	setRequired(t)
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://anggorodewanto.github.io, http://localhost:5173 ,, ")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	want := []string{"https://anggorodewanto.github.io", "http://localhost:5173"}
+	if !slices.Equal(cfg.CORSAllowedOrigins, want) {
+		t.Errorf("CORSAllowedOrigins = %v, want %v (whitespace + empty entries trimmed)", cfg.CORSAllowedOrigins, want)
+	}
 }
 
 func TestLoad_OptionalOverrides(t *testing.T) {
