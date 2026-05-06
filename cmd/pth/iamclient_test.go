@@ -245,9 +245,9 @@ func TestIAMClientAdminGetUserByIDHappyPath(t *testing.T) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"userId":    testIAMUserID,
-			"userName":  "ags-name",
-			"namespace": "ns",
+			"userId":       testIAMUserID,
+			"emailAddress": "ab_test_1@accelbyte.net",
+			"namespace":    "ns",
 		})
 	}))
 	defer srv.Close()
@@ -259,12 +259,12 @@ func TestIAMClientAdminGetUserByIDHappyPath(t *testing.T) {
 	if gotMethod != http.MethodGet || gotPath != "/iam/v3/admin/namespaces/ns/users/u-1" || gotAuth != "Bearer BEARER" {
 		t.Errorf("method=%s path=%s auth=%s", gotMethod, gotPath, gotAuth)
 	}
-	if out.Username != "ags-name" {
-		t.Errorf("username=%q", out.Username)
+	if out.EmailAddress != "ab_test_1@accelbyte.net" {
+		t.Errorf("emailAddress=%q", out.EmailAddress)
 	}
 }
 
-func TestIAMClientAdminGetUserByIDMissingUserName(t *testing.T) {
+func TestIAMClientAdminGetUserByIDMissingEmailAddress(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"userId": testIAMUserID})
@@ -272,7 +272,7 @@ func TestIAMClientAdminGetUserByIDMissingUserName(t *testing.T) {
 	defer srv.Close()
 	c := &iamClient{BaseURL: srv.URL, ClientID: "cli", HTTPClient: srv.Client()}
 	_, err := c.adminGetUserByID(context.Background(), "BEARER", "ns", testIAMUserID)
-	if err == nil || !strings.Contains(err.Error(), "missing userName") {
+	if err == nil || !strings.Contains(err.Error(), "missing emailAddress") {
 		t.Errorf("err=%v", err)
 	}
 }

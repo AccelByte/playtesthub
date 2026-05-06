@@ -209,7 +209,7 @@ func runUserLoginAs(ctx context.Context, stdout, stderr io.Writer, g *Globals, a
 	if err != nil {
 		return reportAuthFailure(stderr, "user login-as", err)
 	}
-	pw, err := readLoginPassword(deps, *stdinPw, user.Username)
+	pw, err := readLoginPassword(deps, *stdinPw, user.EmailAddress)
 	if err != nil {
 		fmt.Fprintf(stderr, "user login-as: %v\n", err)
 		return exitLocalError
@@ -218,7 +218,7 @@ func runUserLoginAs(ctx context.Context, stdout, stderr io.Writer, g *Globals, a
 		fmt.Fprintln(stderr, "user login-as: empty password")
 		return exitLocalError
 	}
-	tok, err := deps.iam.passwordLogin(ctx, g.Namespace, user.Username, pw, deps.now)
+	tok, err := deps.iam.passwordLogin(ctx, g.Namespace, user.EmailAddress, pw, deps.now)
 	if err != nil {
 		return reportAuthFailure(stderr, "user login-as", err)
 	}
@@ -235,12 +235,12 @@ func runUserLoginAs(ctx context.Context, stdout, stderr io.Writer, g *Globals, a
 		return exitLocalError
 	}
 	if err := writeJSONValue(stdout, map[string]any{
-		"profile":   g.Profile,
-		"userId":    firstNonEmpty(tok.UserID, *id),
-		"username":  user.Username,
-		"namespace": g.Namespace,
-		"loginMode": loginModePassword,
-		"expiresAt": tok.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		"profile":      g.Profile,
+		"userId":       firstNonEmpty(tok.UserID, *id),
+		"emailAddress": user.EmailAddress,
+		"namespace":    g.Namespace,
+		"loginMode":    loginModePassword,
+		"expiresAt":    tok.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}); err != nil {
 		fmt.Fprintf(stderr, "user login-as: %v\n", err)
 		return exitLocalError

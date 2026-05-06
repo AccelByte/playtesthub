@@ -247,11 +247,15 @@ type adminCreateTestUserResponse struct {
 }
 
 // adminGetUserResponse covers the v3 admin GET-user fields login-as needs
-// (just the username; UserID is round-tripped to surface mismatches).
+// to drive ROPC. AGS-generated test users carry an empty `username` field
+// in the v4 create response and the v3 GET-by-id payload omits any
+// username key at all (verified against ISC abtestdewa-pong, 2026-05).
+// EmailAddress is the only stable round-trip surface we can hand to the
+// password-grant — AGS accepts it as the `username` form-field.
 type adminGetUserResponse struct {
-	UserID    string `json:"userId"`
-	Username  string `json:"userName"`
-	Namespace string `json:"namespace"`
+	UserID       string `json:"userId"`
+	EmailAddress string `json:"emailAddress"`
+	Namespace    string `json:"namespace"`
 }
 
 // adminCreateTestUsers POSTs a test-user creation request as the supplied
@@ -302,8 +306,8 @@ func (c *iamClient) adminGetUserByID(ctx context.Context, bearer, namespace, use
 	if err := json.Unmarshal(respBody, &out); err != nil {
 		return nil, fmt.Errorf("decoding admin get-user response: %w", err)
 	}
-	if out.Username == "" {
-		return nil, fmt.Errorf("admin get-user response missing userName")
+	if out.EmailAddress == "" {
+		return nil, fmt.Errorf("admin get-user response missing emailAddress")
 	}
 	return &out, nil
 }

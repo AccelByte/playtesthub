@@ -313,9 +313,9 @@ func TestUserLoginAsHappyPath(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/iam/v3/admin/namespaces/"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"userId":    "u-target",
-				"userName":  "ags-gen-name",
-				"namespace": "test-ns",
+				"userId":       "u-target",
+				"emailAddress": "ab_test_target@accelbyte.net",
+				"namespace":    "test-ns",
 			})
 		case r.URL.Path == iamTokenPath:
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -358,7 +358,7 @@ func TestUserLoginAsHappyPath(t *testing.T) {
 	if calls[1].method != http.MethodPost || calls[1].path != iamTokenPath {
 		t.Errorf("token call=%+v", calls[1])
 	}
-	if !strings.Contains(string(calls[1].body), "username=ags-gen-name") {
+	if !strings.Contains(string(calls[1].body), "username=ab_test_target%40accelbyte.net") {
 		t.Errorf("token body=%s", calls[1].body)
 	}
 	if !strings.Contains(string(calls[1].body), "password=stdin-pw") {
