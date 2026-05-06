@@ -28,9 +28,11 @@ export default defineConfig({
     // `npm run build` is run separately by CI / scripts so a bad build
     // surfaces as a build failure (not a Playwright timeout). Locally
     // a stale dist/ is the dev's problem; the smoke harness rebuilds.
-    command: 'npx vite preview --port 4173 --strictPort',
+    // --host 127.0.0.1 forces IPv4 binding so the readiness probe (also
+    // 127.0.0.1) doesn't race against a v6-only listen on slow runners.
+    command: 'npx vite preview --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173/',
     reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
+    timeout: 120_000,
   },
 });
