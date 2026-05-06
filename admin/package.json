@@ -16,8 +16,9 @@
     "cg:prettify": "prettier --write --no-error-on-unmatched-pattern src/playtesthubapi/**/*",
     "cg:generate": "accelbyte-codegen generate-code --config swaggers.json --swaggersOutput swaggers --output src/playtesthubapi",
     "cg:download": "accelbyte-codegen download-swaggers --config swaggers.json --swaggersOutput swaggers && npm run format:swaggers",
+    "cg:seed-from-proto": "node -e \"require('node:fs').mkdirSync('swaggers',{recursive:true});require('node:fs').copyFileSync('../gateway/apidocs/api.swagger.json','swaggers/playtesthub.json')\"",
     "cg:clean-and-generate": "rimraf src/playtesthubapi && npm run cg:generate && npm run cg:prettify",
-    "codegen": "npm run cg:download && npm run cg:clean-and-generate"
+    "codegen": "npm run cg:seed-from-proto && npm run cg:clean-and-generate"
   },
   "dependencies": {
     "@accelbyte/sdk": "4.3.0",

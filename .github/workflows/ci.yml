@@ -97,7 +97,7 @@ jobs:
           fi
 
   player:
-    name: player (build + test)
+    name: player (build + test + a11y)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -112,14 +112,47 @@ jobs:
       - run: npm ci
       - run: npm run test
       - run: npm run build
+      # PRD §6 Accessibility — @axe-core/playwright over six player pages
+      # (landing, signup, NDA accept, approved code view, survey form,
+      # post-submit thanks). Zero-critical-violations, scoped to wcag2a/2aa/21a/21aa.
+      - name: Install Playwright (chromium)
+        run: npx playwright install --with-deps chromium
+      - name: Run a11y suite
+        run: npm run test:a11y
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-a11y-playwright-report
+          path: player/playwright-report
+          retention-days: 7
 
-  # The admin job from engineering.md §5 (codegen-fresh + build + test) is
-  # intentionally absent today. The job's two prerequisites — the OpenAPI
-  # spec at admin/swaggers/playtesthub.json and the generated TS clients
-  # at admin/src/playtesthubapi/ — are both gitignored (.gitignore lines
-  # 251 & 252), and neither can be regenerated in CI without reach to
-  # the private deployed-namespace URL that `cg:download` targets. Until
-  # phase 12.1 either commits the generated artefacts or rewires codegen
-  # to consume the proto-derived gateway/apidocs/api.swagger.json, the
-  # admin frontend is exercised only by maintainers running
-  # `npm run test && npm run build` locally before merging.
+  admin:
+    name: admin (codegen-fresh + lint + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - run: npm ci
+      # Codegen-fresh gate (engineering.md §5): regenerate swaggers/playtesthub.json
+      # from gateway/apidocs/api.swagger.json (already CI-deterministic via
+      # proto-fresh) plus src/playtesthubapi/ from that, then assert no drift —
+      # catches a backend HTTP-annotation change the admin UI hasn't regenerated
+      # against.
+      - run: npm run codegen
+      - name: Assert no codegen drift
+        run: |
+          if ! git diff --exit-code -- swaggers src/playtesthubapi; then
+            echo "::error::Admin codegen drift. Run 'npm run codegen' in admin/ and commit." >&2
+            exit 1
+          fi
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build

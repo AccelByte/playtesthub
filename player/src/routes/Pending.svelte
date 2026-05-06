@@ -123,6 +123,7 @@
           readonly
           value={grantedCode.value}
           data-testid="granted-code-value"
+          aria-label="Your playtest key"
           class="flex-1 rounded border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-sm"
           onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
         />

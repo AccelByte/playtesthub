@@ -238,6 +238,7 @@
               class="w-full rounded border border-slate-300 p-2 text-sm"
               rows="4"
               maxlength="4000"
+              aria-label={q.prompt}
               bind:value={textAnswers[q.id]}
             ></textarea>
           {:else if q.type === 'SURVEY_QUESTION_TYPE_RATING'}

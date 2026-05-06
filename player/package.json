@@ -10,10 +10,14 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:a11y": "playwright test",
+    "test:a11y:install": "playwright install --with-deps chromium",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,svelte,css}\" \"tests/**/*.{ts,svelte}\""
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.10.2",
+    "@playwright/test": "1.59.1",
     "@sveltejs/vite-plugin-svelte": "5.0.3",
     "@tailwindcss/vite": "4.0.17",
     "@testing-library/jest-dom": "6.6.3",

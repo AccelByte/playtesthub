@@ -248,7 +248,14 @@ github.com/anggorodewanto/playtesthub
 # Node / admin UI
 node_modules/
 admin/dist/
-admin/swaggers/
-admin/src/playtesthubapi/
 admin/.vite/
 admin/coverage/
+
+# Playwright (player a11y suite — M3 phase 15)
+player/test-results/
+player/playwright-report/
+player/playwright/.cache/
+# admin/swaggers/ + admin/src/playtesthubapi/ are intentionally checked in.
+# The codegen-fresh CI gate (npm run codegen + git diff --exit-code in admin/)
+# treats them as canonical artefacts derived from gateway/apidocs/api.swagger.json
+# (proto-fresh keeps that swagger in sync with .proto).
