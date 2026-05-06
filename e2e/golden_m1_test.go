@@ -84,7 +84,24 @@ func TestGoldenM1Flow(t *testing.T) {
 		})
 	})
 
-	// 3. Login-as the test user under its own profile -------------------
+	// 3. Login-as the test user under its own profile.
+	//
+	// `pth user login-as` reads the admin bearer from the same --profile
+	// it later writes the player token to, so we seed an admin login on
+	// playerProfile first; login-as overwrites it with the player ROPC
+	// token in the next step. adminProfile stays admin-only so the
+	// flow's admin steps still authenticate.
+	runPTH(t, h, runOpts{
+		stdin: h.env.AdminPassword,
+		args: []string{
+			"--addr", h.addr, "--insecure",
+			"--namespace", h.env.AGSNamespace,
+			"--profile", playerProfile,
+			"auth", "login", "--password",
+			"--username", h.env.AdminUsername,
+			"--password-stdin",
+		},
+	})
 	loginAsOut := runPTH(t, h, runOpts{
 		stdin: testPassword,
 		args: []string{
