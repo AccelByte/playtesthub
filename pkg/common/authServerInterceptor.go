@@ -235,8 +235,8 @@ func checkAuthorizationMetadata(ctx context.Context, permission *iam.Permission)
 		return ctx, status.Error(codes.Unauthenticated, "invalid token subject: jwt: missing sub claim")
 	}
 	ctx = iampkg.WithActorUserID(ctx, claims.Sub)
-	if did := iampkg.DiscordIDFromClaims(claims); did != "" {
-		ctx = iampkg.WithDiscordID(ctx, did)
+	if iampkg.IsDiscordFederated(claims) {
+		ctx = iampkg.WithDiscordFederation(ctx)
 	}
 	return ctx, nil
 }

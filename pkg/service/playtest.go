@@ -63,6 +63,7 @@ type PlaytesthubServiceServer struct {
 	surveyResponse   repo.SurveyResponseStore
 	txRunner         repo.TxRunner
 	discord          discord.HandleLookup
+	platformLookup   iampkg.PlatformLookup
 	discordExchange  DiscordExchangeProxy
 	dmQueue          DMEnqueuer
 	agsClient        ags.Client

@@ -95,25 +95,44 @@ func TestDiscordID_EmptyIgnored(t *testing.T) {
 	}
 }
 
-func TestDecodeClaims_PullsPlatformFields(t *testing.T) {
-	token := makeJWT(t, `{"sub":"user-1","platform_id":"discord","platform_user_id":"999"}`)
+func TestIsDiscordFederated_TrueForDiscordIPF(t *testing.T) {
+	token := makeJWT(t, `{"sub":"user-1","ipf":"discord"}`)
 	c, err := iam.DecodeClaims(token)
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if got := iam.DiscordIDFromClaims(c); got != "999" {
-		t.Errorf("discord id = %q, want 999", got)
+	if !iam.IsDiscordFederated(c) {
+		t.Errorf("ipf=discord should report federated")
 	}
 }
 
-func TestDiscordIDFromClaims_NonDiscordPlatform_Empty(t *testing.T) {
-	token := makeJWT(t, `{"sub":"user-1","platform_id":"steam","platform_user_id":"76561"}`)
+func TestIsDiscordFederated_FalseForOtherIPF(t *testing.T) {
+	token := makeJWT(t, `{"sub":"user-1","ipf":"steam"}`)
 	c, err := iam.DecodeClaims(token)
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if got := iam.DiscordIDFromClaims(c); got != "" {
-		t.Errorf("discord id = %q, want empty (platform=steam)", got)
+	if iam.IsDiscordFederated(c) {
+		t.Errorf("ipf=steam should not report federated")
+	}
+}
+
+func TestIsDiscordFederated_NilSafe(t *testing.T) {
+	if iam.IsDiscordFederated(nil) {
+		t.Errorf("nil claims should not report federated")
+	}
+}
+
+func TestDiscordFederationContext_RoundTrip(t *testing.T) {
+	ctx := iam.WithDiscordFederation(context.Background())
+	if !iam.IsDiscordFederatedFromContext(ctx) {
+		t.Errorf("expected ctx flag set")
+	}
+}
+
+func TestDiscordFederationContext_AbsentByDefault(t *testing.T) {
+	if iam.IsDiscordFederatedFromContext(context.Background()) {
+		t.Errorf("bare ctx should not report federated")
 	}
 }
 

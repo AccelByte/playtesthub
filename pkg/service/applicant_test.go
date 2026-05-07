@@ -35,6 +35,28 @@ func (f *fakeHandleLookup) LookupHandle(_ context.Context, discordID string) (st
 
 var _ discord.HandleLookup = (*fakeHandleLookup)(nil)
 
+// fakePlatformLookup mimics AGS IAM's distinctPlatforms response. Tests
+// drive the M3 Discord-federated signup path through it: Signup calls
+// it with the AGS user id, the fake returns whatever snowflake it was
+// configured with.
+type fakePlatformLookup struct {
+	called    bool
+	withUser  string
+	discordID string
+	err       error
+}
+
+func (f *fakePlatformLookup) GetDiscordID(_ context.Context, agsUserID string) (string, error) {
+	f.called = true
+	f.withUser = agsUserID
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.discordID, nil
+}
+
+var _ iampkg.PlatformLookup = (*fakePlatformLookup)(nil)
+
 // signupCtx wires both the AGS actor id and the Discord snowflake the
 // auth interceptor would normally plumb for a Discord-federated player.
 func signupCtx(userID uuid.UUID, discordID string) context.Context {
@@ -138,6 +160,75 @@ func TestSignup_PersistsDiscordSnowflakeFromContext(t *testing.T) {
 	got := applicants.rows[0].DiscordUserID
 	if got == nil || *got != "1234567890" {
 		t.Errorf("discord_user_id = %v, want 1234567890", got)
+	}
+}
+
+// TestSignup_DiscordFederated_ResolvesSnowflakeViaPlatformLookup covers
+// the production path: the AGS JWT carries `ipf=discord` (the auth
+// interceptor stashes WithDiscordFederation) but no snowflake, so
+// Signup must hit the AGS IAM platform-link endpoint to get one. The
+// fixture in 0-of-14 production rows came from this gap; this test
+// pins the wiring shut.
+func TestSignup_DiscordFederated_ResolvesSnowflakeViaPlatformLookup(t *testing.T) {
+	svr, store, applicants := newTestServer()
+	handle := &fakeHandleLookup{handle: "Bob"}
+	platform := &fakePlatformLookup{discordID: "1089351036650668143"}
+	svr = svr.WithDiscordLookup(handle).WithPlatformLookup(platform)
+
+	store.rows = append(store.rows, openPlaytest("game"))
+
+	userID := uuid.New()
+	ctx := iampkg.WithActorUserID(context.Background(), userID.String())
+	ctx = iampkg.WithDiscordFederation(ctx)
+
+	_, err := svr.Signup(ctx, &pb.SignupRequest{
+		Slug:      "game",
+		Platforms: []pb.Platform{pb.Platform_PLATFORM_STEAM},
+	})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !platform.called {
+		t.Fatal("expected platform lookup to run for Discord-federated caller")
+	}
+	if platform.withUser != userID.String() {
+		t.Errorf("lookup user = %q, want %q", platform.withUser, userID.String())
+	}
+	got := applicants.rows[0].DiscordUserID
+	if got == nil || *got != "1089351036650668143" {
+		t.Errorf("discord_user_id = %v, want 1089351036650668143", got)
+	}
+	if !handle.called || handle.withID != "1089351036650668143" {
+		t.Errorf("handle lookup not called with platform-resolved snowflake; called=%v id=%q", handle.called, handle.withID)
+	}
+	if applicants.rows[0].DiscordHandle != "Bob" {
+		t.Errorf("discord_handle = %q, want Bob", applicants.rows[0].DiscordHandle)
+	}
+}
+
+func TestSignup_DiscordFederated_LookupFails_FallsBackToUserID(t *testing.T) {
+	svr, store, applicants := newTestServer()
+	platform := &fakePlatformLookup{err: errors.New("ags 503")}
+	svr = svr.WithDiscordLookup(&fakeHandleLookup{handle: "shouldnt-run"}).
+		WithPlatformLookup(platform)
+
+	store.rows = append(store.rows, openPlaytest("game"))
+
+	userID := uuid.New()
+	ctx := iampkg.WithActorUserID(context.Background(), userID.String())
+	ctx = iampkg.WithDiscordFederation(ctx)
+
+	if _, err := svr.Signup(ctx, &pb.SignupRequest{
+		Slug:      "game",
+		Platforms: []pb.Platform{pb.Platform_PLATFORM_STEAM},
+	}); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if got := applicants.rows[0].DiscordUserID; got != nil {
+		t.Errorf("discord_user_id = %v, want nil on lookup failure", got)
+	}
+	if got := applicants.rows[0].DiscordHandle; got != userID.String() {
+		t.Errorf("discord_handle = %q, want %s (uuid fallback)", got, userID)
 	}
 }
 

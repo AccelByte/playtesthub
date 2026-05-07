@@ -20,8 +20,9 @@ import (
 )
 
 type (
-	actorCtxKey     struct{}
-	discordIDCtxKey struct{}
+	actorCtxKey            struct{}
+	discordIDCtxKey        struct{}
+	discordFederatedCtxKey struct{}
 )
 
 // WithActorUserID returns a child context tagged with the given AGS user
@@ -45,10 +46,12 @@ func ActorUserIDFromContext(ctx context.Context) (string, bool) {
 	return v, true
 }
 
-// WithDiscordID tags the context with the Discord snowflake the caller
-// federated in as. Signup uses it for the bot-token handle lookup
-// (PRD §10 M1). Empty input is a no-op so a Discord-less token (service
-// account, non-federated login) just leaves the key absent.
+// WithDiscordID tags the context with the caller's Discord snowflake.
+// AGS IAM does not include the snowflake in the JWT — the auth path
+// only knows the caller is Discord-federated (see WithDiscordFederation).
+// Signup looks up the snowflake via PlatformLookup and stashes it here
+// so resolveDiscordHandle and the DM enqueue can read a single source.
+// Empty input is a no-op.
 func WithDiscordID(ctx context.Context, discordID string) context.Context {
 	if discordID == "" {
 		return ctx
@@ -56,8 +59,8 @@ func WithDiscordID(ctx context.Context, discordID string) context.Context {
 	return context.WithValue(ctx, discordIDCtxKey{}, discordID)
 }
 
-// DiscordIDFromContext returns the caller's Discord snowflake if the
-// auth interceptor extracted one from the AGS IAM token.
+// DiscordIDFromContext returns the caller's Discord snowflake if one has
+// been stashed via WithDiscordID.
 func DiscordIDFromContext(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(discordIDCtxKey{}).(string)
 	if !ok || v == "" {
@@ -66,16 +69,31 @@ func DiscordIDFromContext(ctx context.Context) (string, bool) {
 	return v, true
 }
 
+// WithDiscordFederation tags the context as belonging to a caller whose
+// AGS token's `ipf` claim is "discord" — i.e. they federated in via
+// Discord OAuth. The snowflake itself is not in the token and must be
+// fetched separately (see PlatformLookup).
+func WithDiscordFederation(ctx context.Context) context.Context {
+	return context.WithValue(ctx, discordFederatedCtxKey{}, true)
+}
+
+// IsDiscordFederatedFromContext reports whether the auth interceptor
+// flagged the caller as Discord-federated for this request.
+func IsDiscordFederatedFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(discordFederatedCtxKey{}).(bool)
+	return v
+}
+
 // Claims is the narrow slice of JWT claims we care about. The AGS token
 // carries many more fields; we only parse what the service consumes.
 //
-// Discord federation populates `platform_id` ("discord") and
-// `platform_user_id` (the Discord snowflake); non-federated logins leave
-// both empty.
+// `ipf` (identity provider flag) is set to "discord" when the caller
+// federated in via Discord OAuth. The Discord snowflake itself is NOT
+// in the JWT — the AGS IAM admin endpoint
+// `/users/{userId}/distinctPlatforms` is the source of truth.
 type Claims struct {
-	Sub            string `json:"sub"`
-	PlatformID     string `json:"platform_id"`
-	PlatformUserID string `json:"platform_user_id"`
+	Sub string `json:"sub"`
+	IPF string `json:"ipf"`
 }
 
 // DecodeClaims parses the payload segment of a JWT without verifying its
@@ -115,15 +133,12 @@ func DecodeSubject(token string) (string, error) {
 	return c.Sub, nil
 }
 
-// DiscordIDFromClaims returns the Discord snowflake when the token came
-// from a Discord-federated login. Returns "" if the user authenticated
-// through any other IdP.
-func DiscordIDFromClaims(c *Claims) string {
+// IsDiscordFederated reports whether the AGS token's `ipf` claim marks
+// the caller as Discord-federated. The snowflake is not in the JWT;
+// callers that need it must hit AGS IAM (PlatformLookup).
+func IsDiscordFederated(c *Claims) bool {
 	if c == nil {
-		return ""
+		return false
 	}
-	if !strings.EqualFold(c.PlatformID, "discord") {
-		return ""
-	}
-	return c.PlatformUserID
+	return strings.EqualFold(c.IPF, "discord")
 }

@@ -39,6 +39,7 @@ import (
 	"github.com/anggorodewanto/playtesthub/pkg/config"
 	"github.com/anggorodewanto/playtesthub/pkg/discord"
 	"github.com/anggorodewanto/playtesthub/pkg/dmqueue"
+	iampkg "github.com/anggorodewanto/playtesthub/pkg/iam"
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
 	"github.com/anggorodewanto/playtesthub/pkg/repo"
 	"github.com/anggorodewanto/playtesthub/pkg/service"
@@ -357,6 +358,15 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 		WithLogger(logger)
 	if botClient != nil {
 		svcServer = svcServer.WithDiscordLookup(botClient)
+	}
+	if cfg.AGSBaseURL != "" && cfg.AGSIAMClientID != "" && cfg.AGSIAMClientSecret != "" {
+		svcServer = svcServer.WithPlatformLookup(&iampkg.AGSAdminPlatformLookup{
+			HTTPClient:   httpClient,
+			BaseURL:      cfg.AGSBaseURL,
+			Namespace:    cfg.AGSNamespace,
+			ClientID:     cfg.AGSIAMClientID,
+			ClientSecret: cfg.AGSIAMClientSecret,
+		})
 	}
 	return svcServer.WithDiscordExchangeProxy(service.DiscordExchangeProxy{
 		AGSBaseURL:   cfg.AGSBaseURL,

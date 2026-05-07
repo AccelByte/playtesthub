@@ -24,6 +24,17 @@ func (s *PlaytesthubServiceServer) WithDiscordLookup(l discord.HandleLookup) *Pl
 	return s
 }
 
+// WithPlatformLookup wires the AGS IAM platform-link lookup signup uses
+// to fetch the caller's Discord snowflake. AGS does not include the
+// snowflake in the JWT (only `ipf=discord`), so this lookup is the
+// source of truth for `applicant.discord_user_id`. Passing nil leaves
+// signup falling back to the UUID — matches local/dev where AGS is
+// unreachable.
+func (s *PlaytesthubServiceServer) WithPlatformLookup(p iampkg.PlatformLookup) *PlaytesthubServiceServer {
+	s.platformLookup = p
+	return s
+}
+
 // Signup creates a PENDING applicant for the authenticated player on the
 // referenced playtest. Idempotent on (playtestId, userId) per PRD §5.2:
 // a re-post by the same user returns the existing applicant rather than
@@ -63,6 +74,8 @@ func (s *PlaytesthubServiceServer) Signup(ctx context.Context, req *pb.SignupReq
 	if pt.Status == statusClosed {
 		return nil, status.Error(codes.NotFound, "playtest not found")
 	}
+
+	ctx = s.resolveDiscordSnowflake(ctx, userID)
 
 	a := &repo.Applicant{
 		PlaytestID:    pt.ID,
@@ -230,9 +243,9 @@ func (s *PlaytesthubServiceServer) lookupExistingApplicant(ctx context.Context, 
 	return got, true, nil
 }
 
-// discordSnowflakePtr returns the Discord snowflake from the IAM
-// `platform_user_id` claim threaded through the auth interceptor, or
-// nil when the caller is not Discord-federated. Persisted as
+// discordSnowflakePtr returns the Discord snowflake stashed on ctx by
+// resolveDiscordSnowflake, or nil when the caller is not
+// Discord-federated or the AGS platform lookup failed. Persisted as
 // applicant.discord_user_id (migration 0004) so the DM worker has a
 // routable identifier independent of the human-readable
 // applicant.discord_handle. Per docs/dm-queue.md: NULL → the queue
@@ -243,6 +256,35 @@ func discordSnowflakePtr(ctx context.Context) *string {
 		return nil
 	}
 	return &id
+}
+
+// resolveDiscordSnowflake fetches the caller's Discord snowflake from
+// AGS IAM and stashes it on ctx via WithDiscordID, so downstream
+// helpers (resolveDiscordHandle + discordSnowflakePtr) consume a single
+// source. AGS does not surface the snowflake in the JWT — only the
+// `ipf=discord` claim — so without this lookup the DM worker has no
+// recipient and approve fails with `missing_recipient`.
+//
+// No-op when the caller did not federate via Discord, the lookup is
+// not wired (dev / smoke), or AGS errors. On lookup failure we log a
+// warn and proceed with the UUID fallback (PRD §10 M1).
+func (s *PlaytesthubServiceServer) resolveDiscordSnowflake(ctx context.Context, userID uuid.UUID) context.Context {
+	if !iampkg.IsDiscordFederatedFromContext(ctx) {
+		return ctx
+	}
+	if s.platformLookup == nil {
+		return ctx
+	}
+	id, err := s.platformLookup.GetDiscordID(ctx, userID.String())
+	if err != nil {
+		slog.WarnContext(ctx, "ags platform lookup failed; signup proceeds without discord snowflake",
+			"userId", userID.String(), "error", err.Error())
+		return ctx
+	}
+	if id == "" {
+		return ctx
+	}
+	return iampkg.WithDiscordID(ctx, id)
 }
 
 // resolveDiscordHandle calls the bot-token lookup with the Discord
