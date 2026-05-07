@@ -255,6 +255,16 @@ admin/coverage/
 player/test-results/
 player/playwright-report/
 player/playwright/.cache/
+
+# Loadtest harness (M3 phase 16). .cache/ holds AGS test-user creds +
+# access tokens + intermediate k6 summaries — never commit. results/
+# *is* tracked; per-run Markdown reports land there.
+scripts/loadtest/.cache/
+
+# /bin — local artefacts, e.g. the pth binary built by Makefile or by
+# scripts/loadtest/prepare.sh.
+/bin/
+
 # admin/swaggers/ + admin/src/playtesthubapi/ are intentionally checked in.
 # The codegen-fresh CI gate (npm run codegen + git diff --exit-code in admin/)
 # treats them as canonical artefacts derived from gateway/apidocs/api.swagger.json
