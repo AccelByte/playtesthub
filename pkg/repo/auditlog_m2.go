@@ -198,4 +198,3 @@ func appendAction(ctx context.Context, store AuditLogStore, namespace string, pl
 	}
 	return nil
 }
-
