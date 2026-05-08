@@ -162,26 +162,33 @@ type agsErrorBody struct {
 // Unavailable.
 func mapAGSExchangeError(statusCode int, body []byte) error {
 	var e agsErrorBody
-	_ = json.Unmarshal(body, &e)
+	parseErr := json.Unmarshal(body, &e)
 
-	if e.Error == "invalid_grant" || isWrappedDiscordInvalidGrant(e) {
-		desc := e.ErrorDescription
-		if desc == "" {
-			desc = "Discord authorization code rejected by AGS IAM"
+	// Body parsed cleanly: route on AGS error fields. The wrapped-
+	// Discord-invalid_grant case (5xx with embedded Discord 400) is
+	// detected here before the 5xx fallthrough, so we *must* attempt
+	// the parse on 5xx — short-circuiting on statusCode would miss it.
+	if parseErr == nil {
+		if e.Error == "invalid_grant" || isWrappedDiscordInvalidGrant(e) {
+			desc := e.ErrorDescription
+			if desc == "" {
+				desc = "Discord authorization code rejected by AGS IAM"
+			}
+			return status.Error(codes.InvalidArgument, desc)
 		}
-		return status.Error(codes.InvalidArgument, desc)
+		if e.Error == "unauthorized_client" {
+			return status.Error(codes.Internal, "backend Discord federation misconfigured")
+		}
+		if e.ErrorMessage != "" {
+			return status.Error(codes.Internal, fmt.Sprintf("AGS IAM error: %s", e.ErrorMessage))
+		}
 	}
 
 	if statusCode >= 500 {
 		return status.Errorf(codes.Unavailable, "AGS IAM returned %d", statusCode)
 	}
-
-	if e.Error == "unauthorized_client" {
-		return status.Error(codes.Internal, "backend Discord federation misconfigured")
-	}
-
-	if e.ErrorMessage != "" {
-		return status.Error(codes.Internal, fmt.Sprintf("AGS IAM error: %s", e.ErrorMessage))
+	if parseErr != nil {
+		return status.Errorf(codes.Internal, "AGS IAM error body unparseable (%d): %v", statusCode, parseErr)
 	}
 	return status.Error(codes.Internal, "AGS IAM token exchange failed")
 }

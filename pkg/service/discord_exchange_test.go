@@ -237,6 +237,22 @@ func TestExchangeDiscordCode_AgsWrappedDiscordInvalidGrant_InvalidArgument(t *te
 	requireMsgContains(t, err, "invalid_grant")
 }
 
+// Unparseable 4xx body (e.g. AGS returns HTML behind a proxy) used to
+// fall through to a flat "AGS IAM token exchange failed" — which made
+// the failure indistinguishable from a real semantic error and lost
+// the parse failure entirely. Now surfaces the unmarshal reason so
+// the 4xx path doesn't silently swallow upstream-shape changes.
+func TestExchangeDiscordCode_4xxUnparseableBody_InternalIncludesReason(t *testing.T) {
+	rt := &fakeRoundTripper{
+		resp: newJSONResponse(http.StatusBadRequest, `<html>bad gateway</html>`),
+	}
+	svr := exchangeSvr(rt)
+
+	_, err := svr.ExchangeDiscordCode(t.Context(), validExchangeReq())
+	requireStatus(t, err, codes.Internal)
+	requireMsgContains(t, err, "unparseable")
+}
+
 func TestExchangeDiscordCode_NetworkError_Unavailable(t *testing.T) {
 	rt := &fakeRoundTripper{err: io.ErrUnexpectedEOF}
 	svr := exchangeSvr(rt)
