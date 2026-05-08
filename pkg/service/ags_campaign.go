@@ -186,9 +186,17 @@ func (s *PlaytesthubServiceServer) createAGSCampaignPlaytest(ctx context.Context
 // with a step-naming `error` field; the caller surfaces a mapped gRPC
 // status.
 func (s *PlaytesthubServiceServer) ensureAGSBootstrap(ctx context.Context) error {
+	// Fast path: bootstrap already succeeded once on this process.
+	// Lock-free atomic load; ~99% of AGS_CAMPAIGN creates land here.
+	if s.agsBootstrap.done.Load() {
+		return nil
+	}
 	s.agsBootstrap.mu.Lock()
 	defer s.agsBootstrap.mu.Unlock()
-	if s.agsBootstrap.done {
+	// Double-check under the lock so only one of N concurrent first-
+	// callers actually runs Bootstrap. The others see done=true after
+	// the winner releases mu and return without re-running.
+	if s.agsBootstrap.done.Load() {
 		return nil
 	}
 	params := ags.BootstrapParams{
@@ -208,7 +216,7 @@ func (s *PlaytesthubServiceServer) ensureAGSBootstrap(ctx context.Context) error
 		)
 		return err
 	}
-	s.agsBootstrap.done = true
+	s.agsBootstrap.done.Store(true)
 	s.loggerOrDefault().Info(
 		"ags namespace bootstrap ok",
 		"event", "ags_bootstrap_ok",

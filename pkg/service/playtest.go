@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,9 +78,14 @@ type PlaytesthubServiceServer struct {
 	// next AGS_CAMPAIGN create rather than caching the failure: a
 	// transient AGS hiccup at boot would otherwise wedge every
 	// subsequent create until restart.
+	//
+	// done is atomic so the post-bootstrap fast path (every subsequent
+	// AGS_CAMPAIGN create) avoids the mutex entirely; mu still
+	// serializes the *first* bootstrap so concurrent creates collapse
+	// to one Bootstrap call rather than racing.
 	agsBootstrap struct {
 		mu   sync.Mutex
-		done bool
+		done atomic.Bool
 	}
 }
 
