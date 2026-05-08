@@ -24,7 +24,7 @@ flowchart LR
 
 ## Status
 
-This is **MVP work-in-progress**. Track progress in [`docs/STATUS.md`](docs/STATUS.md). Sources of truth, in order:
+**v1.0.0 shipped (MIT).** Track progress in [`docs/STATUS.md`](docs/STATUS.md). Sources of truth, in order:
 
 | Doc | What it owns |
 | --- | --- |
