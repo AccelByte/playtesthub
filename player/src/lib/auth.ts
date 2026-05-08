@@ -1,5 +1,5 @@
 import type { Config } from './config';
-import { joinPath } from './api';
+import { ApiError, doJson } from './api';
 
 export const TOKEN_STORAGE_KEY = 'playtesthub.accessToken';
 const PENDING_LOGIN_KEY = 'playtesthub.pendingLogin';
@@ -110,38 +110,36 @@ export type ExchangeDiscordCodeOpts = {
 // exchangeDiscordCode forwards the Discord OAuth code to the backend,
 // which calls AGS IAM's platform-token grant with confidential client
 // credentials. AGS auto-creates the Justice platform account on first
-// call. See STATUS.md M1 phase 9.3.
+// call. See STATUS.md M1 phase 9.3. Routed through api.doJson so the
+// player has exactly one place that owns fetch + Authorization wiring;
+// errors are normalised to IamError so Callback's instanceof check
+// keeps working.
 export async function exchangeDiscordCode(
   config: Config,
   opts: ExchangeDiscordCodeOpts,
 ): Promise<TokenResponse> {
-  const url = joinPath(config.grpcGatewayUrl, '/v1/player/discord/exchange');
-  const body = { code: opts.code, redirect_uri: opts.redirectUri };
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    throw new IamError(`Discord exchange network error: ${(err as Error).message}`);
-  }
-
-  if (!res.ok) {
-    throw new IamError(`Discord exchange failed: ${res.status} ${res.statusText}`);
-  }
-
-  // grpc-gateway emits proto fields as camelCase. The wire field is
-  // accessToken, but downstream consumers use the snake_case form
-  // documented in TokenResponse, so we normalise here.
-  const parsed = (await res.json()) as {
+  type WireResponse = {
     accessToken?: string;
     refreshToken?: string;
     expiresIn?: number;
     tokenType?: string;
   };
+  let parsed: WireResponse;
+  try {
+    parsed = await doJson<WireResponse>(config, '/v1/player/discord/exchange', {
+      method: 'POST',
+      authed: false,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: opts.code, redirect_uri: opts.redirectUri }),
+    });
+  } catch (err) {
+    if (err instanceof ApiError) {
+      throw new IamError(`Discord exchange failed: ${err.message}`);
+    }
+    throw new IamError(`Discord exchange network error: ${(err as Error).message}`);
+  }
+  // grpc-gateway emits proto fields as camelCase; downstream consumers
+  // use the snake_case TokenResponse shape, so we normalise here.
   if (!parsed.accessToken) {
     throw new IamError('Discord exchange response missing accessToken');
   }

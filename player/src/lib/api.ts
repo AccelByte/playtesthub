@@ -95,7 +95,7 @@ async function parseErrorBody(res: Response): Promise<string> {
   }
 }
 
-async function doJson<T>(
+export async function doJson<T>(
   config: Config,
   path: string,
   init: RequestInit & { authed: boolean },
