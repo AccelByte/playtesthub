@@ -79,7 +79,7 @@ func (s *PlaytesthubServiceServer) ApproveApplicant(ctx context.Context, req *pb
 	// the approve RPC stays non-blocking on DM behaviour, matching the
 	// "approval RPC returns immediately" rule from dm-queue.md.
 	if s.dmQueue != nil {
-		_ = s.dmQueue.Enqueue(ctx, buildDMJob(updated, playtest, false))
+		_ = s.dmQueue.Enqueue(ctx, buildDMJob(updated, playtest, false, s.playerBaseURL))
 	}
 
 	return &pb.ApproveApplicantResponse{Applicant: adminApplicantToProto(updated)}, nil

@@ -1,5 +1,11 @@
 # playtesthub — Full Version History
 
+## v2.2 — 2026-05-08
+
+**Discord DM delivery hardened with explicit bot+server prerequisites and a deep-link DM body**:
+- §5.9 Runtime configuration — new optional env var `PLAYER_BASE_URL` documented. When set, the approval DM body embeds a deep link to the pending page (`<base>/#/playtest/<slug>/pending`) so applicants tap once and land on the granted-code view; empty preserves the legacy non-clickable copy. Implementation in `pkg/service/retry_dm.go buildApprovalDMBody` covers both auto-send and manual-retry enqueue paths (`approve.go`, `RetryDM`, `RetryFailedDms`).
+- §10 M1 / §5.4 — Discord-bot-must-share-a-guild-with-recipient operator constraint surfaced in [`docs/runbooks/setup-ags-discord.md` § 7 "Discord bot + server"](runbooks/setup-ags-discord.md#7-discord-bot--server-required-for-dm-delivery). Discord rejects bot DMs with HTTP 403 / `code 50278` ("Cannot send messages to this user due to having no mutual guilds") whenever the bot and recipient share no Discord server. Applicant-side: studios surface a server invite via the optional `discordInviteUrl` config field rendered on the player Pending page; Pages workflow accepts a new optional `PLAYER_DISCORD_INVITE_URL` Repo Variable. No backend behaviour change for the failure path itself — DM continues to surface the 50278 verbatim through the existing `last_dm_error` channel — this revision just documents the constraint and gives operators a path to satisfy it.
+
 ## v2.1 — 2026-05-08
 
 **Admin RBAC reframed: APPUI is the design choice, not a workaround**:

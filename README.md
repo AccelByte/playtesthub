@@ -11,7 +11,7 @@ Built for indie and mid-size studios that already use AGS and need tenant-isolat
 - **Two distribution models** per playtest — `STEAM_KEYS` (CSV passthrough, manual Steam redemption) and `AGS_CAMPAIGN` (in-game redemption via the AGS Platform Campaign API). One internal code pool and state machine for both.
 - **Discord-federated player identity** via AGS IAM's platform-token grant. Players sign in with Discord; the backend receives a real AGS user.
 - **NDA versioning with forced re-acceptance** — edit the NDA mid-playtest and approved players must re-accept before submitting a survey response.
-- **Discord DM delivery** of granted codes — FIFO worker queue with circuit breaker, manual retry, and restart-sweep semantics. Approval succeeds even if the DM fails; the code is also visible in the player UI.
+- **Discord DM delivery** of granted codes — FIFO worker queue with circuit breaker, manual retry, and restart-sweep semantics. Approval succeeds even if the DM fails; the code is also visible in the player UI. Requires a Discord server the bot and applicants both join (Discord blocks bot DMs without a mutual guild) — see [`docs/runbooks/setup-ags-discord.md` § 7 "Discord bot + server"](docs/runbooks/setup-ags-discord.md#7-discord-bot--server-required-for-dm-delivery).
 - **Versioned typed surveys** (text, 1–5 rating, multi-choice) with per-version response splits.
 - **Per-action audit log** for every admin mutation, stable JSONB shapes.
 - **TDD-first** — unit, integration (testcontainers Postgres), e2e golden flow, and smoke harness (`pth` CLI). CI enforces every gate on every PR.

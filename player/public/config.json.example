@@ -1,5 +1,6 @@
 {
   "grpcGatewayUrl": "https://your-namespace-ext-playtesthub.gamingservices.accelbyte.io/playtesthub",
   "iamBaseUrl": "https://your-namespace.accelbyte.io",
-  "discordClientId": "your-discord-oauth-client-id"
+  "discordClientId": "your-discord-oauth-client-id",
+  "discordInviteUrl": "https://discord.gg/your-server-invite"
 }

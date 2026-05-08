@@ -60,4 +60,30 @@ describe('parseConfig', () => {
       ConfigError,
     );
   });
+
+  it('treats discordInviteUrl as optional and parses a valid URL', () => {
+    const url = 'https://discord.gg/abc';
+    expect(parseConfig(JSON.stringify({ ...valid, discordInviteUrl: url }))).toEqual({
+      ...valid,
+      discordInviteUrl: url,
+    });
+  });
+
+  it('omits discordInviteUrl when absent, null, or empty', () => {
+    expect(parseConfig(JSON.stringify(valid))).toEqual(valid);
+    expect(parseConfig(JSON.stringify({ ...valid, discordInviteUrl: '' }))).toEqual(valid);
+    expect(parseConfig(JSON.stringify({ ...valid, discordInviteUrl: null }))).toEqual(valid);
+  });
+
+  it('rejects discordInviteUrl that is not a URL', () => {
+    expect(() =>
+      parseConfig(JSON.stringify({ ...valid, discordInviteUrl: 'not a url' })),
+    ).toThrow(/discordInviteUrl/);
+  });
+
+  it('rejects non-string discordInviteUrl', () => {
+    expect(() => parseConfig(JSON.stringify({ ...valid, discordInviteUrl: 42 }))).toThrow(
+      ConfigError,
+    );
+  });
 });

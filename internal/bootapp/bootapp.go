@@ -353,6 +353,7 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 		WithSurveyResponseStore(surveyResponseStore).
 		WithTxRunner(txRunner).
 		WithDMQueue(dmQueue).
+		WithPlayerBaseURL(cfg.PlayerBaseURL).
 		WithAGSClient(agsClient).
 		WithAGSCodeBatchSize(cfg.AGSCodeBatchSize).
 		WithLogger(logger)

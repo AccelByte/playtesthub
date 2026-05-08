@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -365,5 +366,62 @@ func TestApproveApplicant_EnqueuesAutoSendDM(t *testing.T) {
 	}
 	if jobs[0].Manual {
 		t.Fatalf("auto-send must enqueue Manual=false")
+	}
+}
+
+// TestBuildApprovalDMBody_NoBaseURL_FallsBackToLegacyCopy locks in the
+// legacy non-clickable wording when PLAYER_BASE_URL is unset, so forks
+// running without a public player origin keep the existing behaviour.
+func TestBuildApprovalDMBody_NoBaseURL_FallsBackToLegacyCopy(t *testing.T) {
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta"}
+	got := buildApprovalDMBody(pt, "")
+	want := `You're approved for "Acme Closed Beta". Open the playtest to view your code.`
+	if got != want {
+		t.Fatalf("legacy DM body mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestBuildApprovalDMBody_WithBaseURL_EmbedsHashRouterDeepLink is the
+// guard that the deep link points at the hash-router pending route and
+// uses the configured player origin verbatim. Discord renders bare URLs
+// as tappable links so no markdown wrapping is needed.
+func TestBuildApprovalDMBody_WithBaseURL_EmbedsHashRouterDeepLink(t *testing.T) {
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta"}
+	got := buildApprovalDMBody(pt, "https://anggorodewanto.github.io/playtesthub")
+	want := `You're approved for "Acme Closed Beta". View your code: https://anggorodewanto.github.io/playtesthub/#/playtest/acme-beta/pending`
+	if got != want {
+		t.Fatalf("deep-link DM body mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestApproveApplicant_DMBodyIncludesDeepLinkWhenConfigured wires
+// WithPlayerBaseURL end-to-end through ApproveApplicant and asserts the
+// enqueued job's Message carries the deep link, proving the bootapp
+// path that production uses.
+func TestApproveApplicant_DMBodyIncludesDeepLinkWhenConfigured(t *testing.T) {
+	rig := withApproveStores(t)
+	pt := steamKeysPlaytest("approve-deep-link")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+	a := seedPendingApplicant(rig, pt, uuid.New())
+	seedPoolCode(rig, pt, "STEAM-KEY-DEEP")
+	dm := &fakeDMEnqueuer{}
+	rig.svr = rig.svr.
+		WithDMQueue(dm).
+		WithPlayerBaseURL("https://example.test/playtesthub")
+
+	if _, err := rig.svr.ApproveApplicant(authCtx(uuid.New()), &pb.ApproveApplicantRequest{
+		Namespace:   testNamespace,
+		ApplicantId: a.ID.String(),
+	}); err != nil {
+		t.Fatalf("ApproveApplicant: %v", err)
+	}
+
+	jobs := dm.snapshot()
+	if len(jobs) != 1 {
+		t.Fatalf("want 1 enqueued auto-send DM, got %d", len(jobs))
+	}
+	wantSuffix := "https://example.test/playtesthub/#/playtest/" + pt.Slug + "/pending"
+	if !strings.Contains(jobs[0].Message, wantSuffix) {
+		t.Fatalf("DM body missing deep link suffix %q\n  got: %q", wantSuffix, jobs[0].Message)
 	}
 }

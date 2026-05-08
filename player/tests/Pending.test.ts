@@ -82,6 +82,51 @@ describe('Pending', () => {
     });
     render(Pending, { config, slug: 'demo' });
     expect(await screen.findByText(/under review/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('discord-invite-link')).toBeNull();
+  });
+
+  it('shows the Discord invite link on PENDING when configured', async () => {
+    setAccessToken('tok');
+    stubFetchByUrl({
+      playerPlaytest: playtestNoNda('demo'),
+      applicant: json(200, {
+        applicant: { id: 'a1', playtestId: 'pt-1', status: 'APPLICANT_STATUS_PENDING' },
+      }),
+    });
+    const inviteUrl = 'https://discord.gg/playtesthub-demo';
+    render(Pending, {
+      config: { ...config, discordInviteUrl: inviteUrl },
+      slug: 'demo',
+    });
+    const link = (await screen.findByTestId('discord-invite-link')) as HTMLAnchorElement;
+    expect(link.href).toBe(inviteUrl);
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toContain('noopener');
+  });
+
+  it('does not show the Discord invite link on APPROVED even when configured', async () => {
+    setAccessToken('tok');
+    stubFetchByUrl({
+      playerPlaytest: playtestNoNda('demo'),
+      applicant: json(200, {
+        applicant: {
+          id: 'a1',
+          playtestId: 'pt-1',
+          status: 'APPLICANT_STATUS_APPROVED',
+          ndaVersionHash: '',
+        },
+      }),
+      grantedCode: json(200, {
+        value: 'STEAM-AAAA-BBBB-CCCC',
+        distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+      }),
+    });
+    render(Pending, {
+      config: { ...config, discordInviteUrl: 'https://discord.gg/playtesthub-demo' },
+      slug: 'demo',
+    });
+    await screen.findByText(/you're approved/i);
+    expect(screen.queryByTestId('discord-invite-link')).toBeNull();
   });
 
   it('shows generic not-selected copy on REJECTED (no rejection reason shown)', async () => {

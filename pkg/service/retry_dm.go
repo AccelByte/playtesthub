@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,6 +26,15 @@ type DMEnqueuer interface {
 // that do not exercise DM behaviour can stay one-line constructions.
 func (s *PlaytesthubServiceServer) WithDMQueue(q DMEnqueuer) *PlaytesthubServiceServer {
 	s.dmQueue = q
+	return s
+}
+
+// WithPlayerBaseURL sets the public origin of the player Svelte bundle.
+// When non-empty, the approval DM includes a deep link to the pending
+// page so recipients jump straight to the granted-code view. Empty
+// preserves the legacy non-clickable DM body.
+func (s *PlaytesthubServiceServer) WithPlayerBaseURL(u string) *PlaytesthubServiceServer {
+	s.playerBaseURL = u
 	return s
 }
 
@@ -68,7 +78,7 @@ func (s *PlaytesthubServiceServer) RetryDM(ctx context.Context, req *pb.RetryDMR
 		return nil, e
 	}
 
-	enqueueErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true))
+	enqueueErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true, s.playerBaseURL))
 	// The queue handles overflow internally (writes failed status +
 	// audit and returns ErrQueueFull). We re-fetch so the response
 	// shows the synchronous state change instead of the stale row.
@@ -122,7 +132,7 @@ func (s *PlaytesthubServiceServer) RetryFailedDms(ctx context.Context, req *pb.R
 
 	var enqueued, overflow int32
 	for _, a := range rows {
-		enqErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true))
+		enqErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true, s.playerBaseURL))
 		if errors.Is(enqErr, dmqueue.ErrQueueFull) {
 			overflow++
 			continue
@@ -141,7 +151,14 @@ func (s *PlaytesthubServiceServer) RetryFailedDms(ctx context.Context, req *pb.R
 // migration 0004). Rows persisted before that migration carry NULL —
 // the queue surfaces those as `lastDmError='missing_recipient'`
 // (docs/errors.md) without invoking the Discord client.
-func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool) dmqueue.Job {
+//
+// playerBaseURL is the public origin of the player Svelte bundle (e.g.
+// "https://anggorodewanto.github.io/playtesthub"). When non-empty, the
+// DM body includes a deep link to the pending page so the recipient
+// taps once and lands on the granted-code view (one further Discord
+// re-auth on the player domain may be required, but no manual
+// navigation). When empty the message falls back to non-clickable copy.
+func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool, playerBaseURL string) dmqueue.Job {
 	var recipient string
 	if a.DiscordUserID != nil {
 		recipient = *a.DiscordUserID
@@ -151,7 +168,21 @@ func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool) dmqueue.Job {
 		PlaytestID:    a.PlaytestID,
 		UserID:        a.UserID,
 		DiscordUserID: recipient,
-		Message:       fmt.Sprintf("You're approved for %q. Open the playtest to view your code.", pt.Title),
+		Message:       buildApprovalDMBody(pt, playerBaseURL),
 		Manual:        manual,
 	}
+}
+
+// buildApprovalDMBody renders the welcome DM text. With a configured
+// playerBaseURL the link points at the hash-router pending route so a
+// Discord client renders it as a tappable URL. The slug is URL-escaped
+// to keep the output well-formed even if a future PRD revision relaxes
+// slug validation; current PRD §5.1 only allows characters that survive
+// PathEscape unchanged.
+func buildApprovalDMBody(pt *repo.Playtest, playerBaseURL string) string {
+	if playerBaseURL == "" {
+		return fmt.Sprintf("You're approved for %q. Open the playtest to view your code.", pt.Title)
+	}
+	link := fmt.Sprintf("%s/#/playtest/%s/pending", playerBaseURL, url.PathEscape(pt.Slug))
+	return fmt.Sprintf("You're approved for %q. View your code: %s", pt.Title, link)
 }

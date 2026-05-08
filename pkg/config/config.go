@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -80,6 +81,16 @@ type Config struct {
 	// `Access-Control-Allow-Credentials: true` so cookie-based admin
 	// auth keeps working.
 	CORSAllowedOrigins []string
+
+	// PlayerBaseURL is the public origin (with optional sub-path) where
+	// the player Svelte bundle is hosted, e.g.
+	// "https://anggorodewanto.github.io/playtesthub". Used to build the
+	// deep link surfaced inside the approval DM so applicants can click
+	// straight through to the pending page (where their granted code is
+	// rendered). Optional: when empty, the DM body falls back to
+	// non-clickable copy. The hash-router's "#" prefix is appended by
+	// the service layer; do not include it here.
+	PlayerBaseURL string
 }
 
 // MissingRequiredError lists every required env var that was unset or
@@ -166,6 +177,14 @@ func Load() (*Config, error) {
 	cfg.AuthEnabled = getBool("PLUGIN_GRPC_SERVER_AUTH_ENABLED", true)
 	cfg.OtelServiceName = os.Getenv("OTEL_SERVICE_NAME")
 	cfg.CORSAllowedOrigins = parseCSV(os.Getenv("CORS_ALLOWED_ORIGINS"))
+
+	cfg.PlayerBaseURL = strings.TrimRight(os.Getenv("PLAYER_BASE_URL"), "/")
+	if cfg.PlayerBaseURL != "" {
+		u, err := url.Parse(cfg.PlayerBaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("PLAYER_BASE_URL must be an http(s) URL with a host, got %q", cfg.PlayerBaseURL)
+		}
+	}
 
 	return cfg, nil
 }

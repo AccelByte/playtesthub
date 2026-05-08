@@ -2,6 +2,12 @@ export type Config = {
   grpcGatewayUrl: string;
   iamBaseUrl: string;
   discordClientId: string;
+  // Optional Discord-server invite URL surfaced on the Pending page so
+  // applicants can join the studio's Discord while waiting for approval.
+  // Required for outbound DMs to land — Discord blocks bot DMs when the
+  // bot and recipient share no guild (error 50278). See the runbook
+  // docs/runbooks/setup-ags-discord.md § "Discord bot + server".
+  discordInviteUrl?: string;
 };
 
 export class ConfigError extends Error {
@@ -52,10 +58,27 @@ export function parseConfig(raw: string): Config {
     throw new ConfigError('config.json discordClientId must not be empty');
   }
 
+  let discordInviteUrl: string | undefined;
+  if ('discordInviteUrl' in obj && obj.discordInviteUrl !== '' && obj.discordInviteUrl != null) {
+    if (typeof obj.discordInviteUrl !== 'string') {
+      throw new ConfigError('config.json key discordInviteUrl must be a string');
+    }
+    try {
+      // eslint-disable-next-line no-new
+      new URL(obj.discordInviteUrl);
+    } catch {
+      throw new ConfigError(
+        `config.json discordInviteUrl is not a valid URL: ${obj.discordInviteUrl}`,
+      );
+    }
+    discordInviteUrl = obj.discordInviteUrl;
+  }
+
   return {
     grpcGatewayUrl: obj.grpcGatewayUrl as string,
     iamBaseUrl: obj.iamBaseUrl as string,
     discordClientId,
+    ...(discordInviteUrl !== undefined ? { discordInviteUrl } : {}),
   };
 }
 

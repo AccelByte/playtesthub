@@ -71,6 +71,13 @@ type PlaytesthubServiceServer struct {
 	agsCodeBatchSize int
 	logger           *slog.Logger
 	namespace        string
+	// playerBaseURL is the optional public origin (with optional sub-path)
+	// where the player Svelte bundle is hosted. When set, the approval DM
+	// body includes a deep link to the pending page so the recipient
+	// jumps straight to the granted-code view. Wired from
+	// config.PlayerBaseURL via WithPlayerBaseURL; empty falls back to the
+	// non-clickable legacy DM text.
+	playerBaseURL string
 
 	// agsBootstrap gates AGS namespace bootstrap (M2 phase 16) so the
 	// Store + Category + Currency check runs at most once per process

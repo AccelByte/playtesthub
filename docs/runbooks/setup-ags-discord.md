@@ -94,11 +94,14 @@ CORS_ALLOWED_ORIGINS=https://<your-player-origin>
 {
   "grpcGatewayUrl": "https://<your-deployed-backend>/<base-path>",
   "iamBaseUrl":     "https://<your-ags-host>",
-  "discordClientId": "<Discord Client ID from step 1>"
+  "discordClientId": "<Discord Client ID from step 1>",
+  "discordInviteUrl": "https://discord.gg/<your-server-invite>"
 }
 ```
 
 `discordClientId` is the **Discord** OAuth client ID, not an AGS IAM client. `iamBaseUrl` is no longer used by the Discord exchange path — it's wired through for SDK / observability code that still references it.
+
+`discordInviteUrl` is **optional but strongly recommended**. When set, the pending page renders a "Join our Discord while you wait" link so applicants land in your studio's server before approval. This is operationally required for outbound DMs to land — see § Discord bot + server below. For Pages deploys, the `pages.yml` workflow reads `PLAYER_DISCORD_INVITE_URL` from Repo Variables and emits this field automatically.
 
 ### 6. CLI loopback origin (`pth auth login --discord`)
 
@@ -130,6 +133,39 @@ PTH_BACKEND_REST_URL=https://<your-deployed-backend>/<base-path>  # HTTPS gatewa
 ```
 
 Verification: after registering the redirect URI in both places, run `pth auth login --discord --no-browser --dry-run`. CLI prints the authorize URL + listener address + exchange URL as JSON and exits 0 — no network call. Then run `pth auth login --discord` for real, complete Discord login in the browser, and verify `pth auth whoami` returns the federated `userId` (matches the AGS JWT `sub` after the platform-token grant auto-creates the Justice account). Failure modes mirror the player flow — see § Common failure modes.
+
+### 7. Discord bot + server (required for DM delivery)
+
+Code grants are delivered by the backend's DM worker (`pkg/dmqueue` + `pkg/discord`) via the Discord REST API. **Discord blocks bot DMs to any user who does not share at least one guild with the bot** — the API returns HTTP 403 with code `50278` ("Cannot send messages to this user due to having no mutual guilds"). The signup flow proceeds, but the DM never arrives; `applicant.last_dm_status='failed'` and `last_dm_error` carries the 403.
+
+There is no workaround at the API layer. The bot must be a member of a Discord server that approved playtesters also join, **before approval**. The recommended shape:
+
+1. **Create a Discord server** for the playtest (or reuse an existing studio server). Free; one server can host many playtest cohorts via channels or roles.
+2. **Create a bot user under the same Discord application from step 1.**
+   - Discord developer portal → your application → **Bot** → **Add Bot**.
+   - Copy the bot token. This is `DISCORD_BOT_TOKEN` in the backend env. The OAuth Client Secret from step 1 and the bot token are **two different secrets**; do not interchange them.
+   - Privileged intents are not required — playtesthub uses only `POST /users/@me/channels` + `POST /channels/{id}/messages`, both of which work with a bare bot token.
+3. **Invite the bot into your server.**
+   - Discord developer portal → **OAuth2** → **URL Generator** → scope `bot`, no permissions required (`permissions=0`).
+   - Open the generated URL while logged into a Discord account that owns the server, pick the server, authorize.
+   - Verify with `curl -H "Authorization: Bot $DISCORD_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds` — the response must be a non-empty array. An empty `[]` is the signature failure mode.
+4. **Get applicants into the same server.** Surface the invite URL to applicants while they wait for approval:
+   - Set the `PLAYER_DISCORD_INVITE_URL` repo Variable (Pages deploy) or add `discordInviteUrl` to `player/public/config.json` directly. The pending page renders a "Join our Discord while you wait" link when this value is set.
+   - Use a [permanent invite link](https://support.discord.com/hc/en-us/articles/208866998-Invites-101) so the URL stays stable across config bumps.
+   - Recipient-side: applicants must have **User Settings → Privacy & Safety → Allow direct messages from server members** enabled (Discord's default for new accounts; only matters for users who toggled it off).
+5. **Optional — embed a deep link to the pending page in the DM body.** Set `PLAYER_BASE_URL` on the backend (e.g. `https://anggorodewanto.github.io/playtesthub`); the DM becomes:
+
+   ```
+   You're approved for "Acme Closed Beta". View your code: https://anggorodewanto.github.io/playtesthub/#/playtest/acme-beta/pending
+   ```
+
+   Discord renders the bare URL as a tappable link. The route requires the recipient to be Discord-authed on the player domain — sessionStorage from signup does not survive across domains, so the first tap may bounce through Discord login (one Approve click, since they are already federated) before landing on Pending. When `PLAYER_BASE_URL` is empty the DM falls back to the legacy non-clickable copy.
+
+6. **Verify end-to-end** before opening signups:
+   - Sign up with a test Discord account that is a member of the server. Approve the applicant from the admin UI. The DM should arrive within seconds; `applicant.last_dm_status='sent'`.
+   - If `last_dm_status='failed'` with `last_dm_error` containing `code 50278`, the test account is not in the server — add it and retry via `pth applicant retry-dm` or the admin UI's RetryDM button.
+
+Operating note: a single bot token can DM users across all guilds it is a member of, so multi-server studios can run one bot per Discord application across as many servers as they have playtests, as long as each cohort joins at least one shared server with the bot.
 
 ## Three URLs that must agree byte-for-byte
 
@@ -167,7 +203,9 @@ Each row is a 9.4 reproduction. Byte-exact error strings live in [`discord-login
 | **AGS Discord platform `IsActive=false`** — AGS rejects the grant before Discord is called. | Toggle didn't persist in Admin Portal. | Verify with the `GET /iam/v3/public/namespaces/{namespace}/platforms/clients/active` probe in step 2. If Discord doesn't appear with `IsActive: true`, fix the toggle before retrying. |
 | **AGS returns `unauthorized_client`**. | Confidential IAM client lacks the Discord-grant permission. | Assign the equivalent of `NAMESPACE:{namespace}:USER:LOGIN [CREATE]` per your AGS role catalogue. |
 | **First `POST /v1/player/discord/exchange` of a session occasionally returns HTTP 503**, but replaying the same code via `curl` seconds later returns 200. | Suspected AGS Discord-call latency on cold path or vite dev-proxy short timeout. Tracked as a STATUS.md follow-up; not a setup bug. | Retry once. If it persists across retries, escalate. |
-| **`Applicant.discordHandle=""`** on a fresh signup. | Discord bot token unset, or AGS rate-limited the bot. PRD §10 M1 falls back to raw Discord ID; an empty value points at the bot token, not setup. | Set `DISCORD_BOT_TOKEN`; verify the bot is a member of a guild that can resolve the user. Phase 7 follow-up. |
+| **`Applicant.discordHandle=""`** on a fresh signup. | Discord bot token unset, or AGS rate-limited the bot. PRD §10 M1 falls back to raw Discord ID; an empty value points at the bot token, not setup. | Set `DISCORD_BOT_TOKEN`. Bot setup is § 7 above. |
+| **`applicant.last_dm_error` contains `unexpected status 403` and `code 50278` ("Cannot send messages to this user due to having no mutual guilds")** after approval. | The bot does not share a Discord server with the recipient. Discord refuses bot DMs in this case at the API layer. | Add the bot to a server, get applicants to join it before approval. Walk-through in § 7 above. Verify with `curl -H "Authorization: Bot $DISCORD_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds` — must be non-empty. |
+| **`applicant.last_dm_error` is `missing_recipient`** after approval, with `applicant.discord_user_id` empty. | Applicant did not federate via Discord at signup (e.g., signed up with a non-Discord IAM identity), so no Discord snowflake was ever stored. The DM worker has nowhere to send. | Expected outcome per [`docs/dm-queue.md`](../dm-queue.md). To require Discord-only signup, surface this constraint in your studio's signup messaging — the backend does not enforce it. |
 | **`Applicant.discordHandle=""` and `Applicant.platforms=[]` in the `GET /applicant` response**. | **Not a bug.** `discordHandle` and `platforms` are admin-only fields per `docs/schema.md` L88. The player-visible response strips them; the DB row has the data. | Verify the actual DB row via the admin API or a direct SQL query. |
 
 For wire-level error contracts (which `ExchangeDiscordCode` errors map to which gRPC codes), see [`docs/errors.md`](../errors.md).
@@ -185,5 +223,5 @@ For wire-level error contracts (which `ExchangeDiscordCode` errors map to which 
 ## Out of scope
 
 - AGS tenant provisioning. Assumed pre-existing.
-- Discord bot setup beyond the OAuth app. The bot token (`DISCORD_BOT_TOKEN`) for handle lookup is its own concern, mentioned in the deploy guide and the env-var reference; this runbook only ensures the OAuth app exists.
+- Discord-server moderation, channel layout, role automation. § 7 covers only what playtesthub needs: a bot user, an invite for that bot, and a server-invite link applicants can join.
 - Non-Discord platform login. The architecture is generic enough to extend, but only Discord is wired today (PRD §5.2).

@@ -101,6 +101,24 @@
       The studio will review your application. If you're selected, you'll receive a Discord
       message with your key.
     </p>
+    {#if config.discordInviteUrl}
+      <!-- Required for the DM to land — Discord blocks bot DMs when the
+           bot and recipient share no guild (error 50278). The invite URL
+           is set by the studio via the PLAYER_DISCORD_INVITE_URL repo
+           Variable; see docs/runbooks/setup-ags-discord.md. -->
+      <p class="mt-4 rounded border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900">
+        Join our Discord while you wait so we can DM your key:
+        <a
+          href={config.discordInviteUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="discord-invite-link"
+          class="ml-1 underline"
+        >
+          Open Discord invite →
+        </a>
+      </p>
+    {/if}
   {:else if applicant.status === 'APPLICANT_STATUS_REJECTED'}
     <h1 class="text-2xl font-semibold">Not selected for this playtest.</h1>
     <p class="mt-3 text-slate-700">Thanks for applying.</p>

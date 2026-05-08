@@ -217,6 +217,49 @@ func TestLoad_BadInt_Error(t *testing.T) {
 	}
 }
 
+func TestLoad_PlayerBaseURL_DefaultEmpty(t *testing.T) {
+	setRequired(t)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.PlayerBaseURL != "" {
+		t.Errorf("PlayerBaseURL default = %q, want empty", cfg.PlayerBaseURL)
+	}
+}
+
+func TestLoad_PlayerBaseURL_TrimsTrailingSlash(t *testing.T) {
+	setRequired(t)
+	t.Setenv("PLAYER_BASE_URL", "https://anggorodewanto.github.io/playtesthub/")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.PlayerBaseURL != "https://anggorodewanto.github.io/playtesthub" {
+		t.Errorf("PlayerBaseURL = %q (trailing slash should be stripped)", cfg.PlayerBaseURL)
+	}
+}
+
+func TestLoad_PlayerBaseURL_RejectsNonHTTPScheme(t *testing.T) {
+	cases := []string{"ftp://example.com", "discord://join", "not a url", "/relative/only"}
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			setRequired(t)
+			t.Setenv("PLAYER_BASE_URL", raw)
+
+			_, err := config.Load()
+			if err == nil {
+				t.Fatalf("expected error for PLAYER_BASE_URL=%q, got nil", raw)
+			}
+			if !strings.Contains(err.Error(), "PLAYER_BASE_URL") {
+				t.Errorf("error does not mention PLAYER_BASE_URL: %v", err)
+			}
+		})
+	}
+}
+
 func TestMissingRequiredError_Message(t *testing.T) {
 	err := &config.MissingRequiredError{Keys: []string{"A", "B"}}
 	msg := err.Error()
