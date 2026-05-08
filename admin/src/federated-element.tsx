@@ -66,15 +66,45 @@ const PLATFORMS = [
   { value: 'PLATFORM_OTHER', label: 'Other' }
 ] as const
 
+// Mirror proto enums (proto/playtesthub/v1/playtesthub.proto) here
+// because @accelbyte/codegen emits z.any() for every enum, leaving no
+// generated consts to import. Keep these in lockstep with the .proto.
+const PlaytestStatus = {
+  UNSPECIFIED: 'PLAYTEST_STATUS_UNSPECIFIED',
+  DRAFT: 'PLAYTEST_STATUS_DRAFT',
+  OPEN: 'PLAYTEST_STATUS_OPEN',
+  CLOSED: 'PLAYTEST_STATUS_CLOSED'
+} as const
+
+const ApplicantStatus = {
+  UNSPECIFIED: 'APPLICANT_STATUS_UNSPECIFIED',
+  PENDING: 'APPLICANT_STATUS_PENDING',
+  APPROVED: 'APPLICANT_STATUS_APPROVED',
+  REJECTED: 'APPLICANT_STATUS_REJECTED'
+} as const
+type ApplicantStatusValue = (typeof ApplicantStatus)[keyof typeof ApplicantStatus]
+
+const DmStatus = {
+  UNSPECIFIED: 'DM_STATUS_UNSPECIFIED',
+  SENT: 'DM_STATUS_SENT',
+  FAILED: 'DM_STATUS_FAILED'
+} as const
+
+const DistributionModel = {
+  UNSPECIFIED: 'DISTRIBUTION_MODEL_UNSPECIFIED',
+  STEAM_KEYS: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+  AGS_CAMPAIGN: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'
+} as const
+
 const STATUS_TAG: Record<string, { text: string; color: string }> = {
-  PLAYTEST_STATUS_DRAFT: { text: 'Draft', color: 'default' },
-  PLAYTEST_STATUS_OPEN: { text: 'Open', color: 'green' },
-  PLAYTEST_STATUS_CLOSED: { text: 'Closed', color: 'red' }
+  [PlaytestStatus.DRAFT]: { text: 'Draft', color: 'default' },
+  [PlaytestStatus.OPEN]: { text: 'Open', color: 'green' },
+  [PlaytestStatus.CLOSED]: { text: 'Closed', color: 'red' }
 }
 
 const DISTRIBUTION_LABEL: Record<string, string> = {
-  DISTRIBUTION_MODEL_STEAM_KEYS: 'Steam keys',
-  DISTRIBUTION_MODEL_AGS_CAMPAIGN: 'AGS Campaign'
+  [DistributionModel.STEAM_KEYS]: 'Steam keys',
+  [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign'
 }
 
 // toastError builds the standard mutation onError handler. The verb is
@@ -153,8 +183,8 @@ function PlaytestsListPage() {
       title: 'Actions',
       key: 'actions',
       render: (_: unknown, row: V1Playtest) => {
-        const isDraft = row.status === 'PLAYTEST_STATUS_DRAFT'
-        const isOpen = row.status === 'PLAYTEST_STATUS_OPEN'
+        const isDraft = row.status === PlaytestStatus.DRAFT
+        const isOpen = row.status === PlaytestStatus.OPEN
         return (
           <Space wrap>
             <Button size="small" onClick={() => navigate(`${row.id}/edit`)}>
@@ -183,7 +213,7 @@ function PlaytestsListPage() {
                 onConfirm={() =>
                   transitionMutation.mutate({
                     playtestId: row.id ?? '',
-                    data: { targetStatus: 'PLAYTEST_STATUS_OPEN' }
+                    data: { targetStatus: PlaytestStatus.OPEN }
                   })
                 }>
                 <Button size="small" type="primary">
@@ -200,7 +230,7 @@ function PlaytestsListPage() {
                 onConfirm={() =>
                   transitionMutation.mutate({
                     playtestId: row.id ?? '',
-                    data: { targetStatus: 'PLAYTEST_STATUS_CLOSED' }
+                    data: { targetStatus: PlaytestStatus.CLOSED }
                   })
                 }>
                 <Button size="small" danger>
@@ -321,7 +351,7 @@ function PlaytestCreatePage() {
         initialValues={{
           platforms: [],
           ndaRequired: false,
-          distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS'
+          distributionModel: DistributionModel.STEAM_KEYS
         }}>
         <Form.Item label="Slug" name="slug" rules={[{ required: true, message: 'Slug is required' }]}>
           <Input placeholder="e.g. summer-alpha-2026" />
@@ -361,15 +391,15 @@ function PlaytestCreatePage() {
         </Form.Item>
         <Form.Item label="Distribution model" name="distributionModel" rules={[{ required: true }]}>
           <Radio.Group>
-            <Radio value="DISTRIBUTION_MODEL_STEAM_KEYS">Steam keys</Radio>
-            <Radio value="DISTRIBUTION_MODEL_AGS_CAMPAIGN">AGS Campaign</Radio>
+            <Radio value={DistributionModel.STEAM_KEYS}>Steam keys</Radio>
+            <Radio value={DistributionModel.AGS_CAMPAIGN}>AGS Campaign</Radio>
           </Radio.Group>
         </Form.Item>
         <Form.Item
           noStyle
           shouldUpdate={(prev: FormValues, next: FormValues) => prev.distributionModel !== next.distributionModel}>
           {({ getFieldValue }) =>
-            getFieldValue('distributionModel') === 'DISTRIBUTION_MODEL_AGS_CAMPAIGN' && (
+            getFieldValue('distributionModel') === DistributionModel.AGS_CAMPAIGN && (
               <Form.Item label="Initial code quantity" name="initialCodeQuantity" rules={[{ type: 'number', min: 1, max: 50000 }]}>
                 <InputNumber min={1} max={50000} style={{ width: '100%' }} />
               </Form.Item>
@@ -431,7 +461,7 @@ function PlaytestEditPage() {
       dateRange: start && end ? [start, end] : undefined,
       ndaRequired: playtest.ndaRequired ?? false,
       ndaText: playtest.ndaText ?? undefined,
-      distributionModel: (playtest.distributionModel as string | undefined) ?? 'DISTRIBUTION_MODEL_STEAM_KEYS'
+      distributionModel: (playtest.distributionModel as string | undefined) ?? DistributionModel.STEAM_KEYS
     }
   }, [playtest])
 
@@ -514,15 +544,15 @@ function PlaytestEditPage() {
 }
 
 const APPLICANT_STATUS_TAG: Record<string, { text: string; color: string }> = {
-  APPLICANT_STATUS_PENDING: { text: 'Pending', color: 'gold' },
-  APPLICANT_STATUS_APPROVED: { text: 'Approved', color: 'green' },
-  APPLICANT_STATUS_REJECTED: { text: 'Rejected', color: 'red' }
+  [ApplicantStatus.PENDING]: { text: 'Pending', color: 'gold' },
+  [ApplicantStatus.APPROVED]: { text: 'Approved', color: 'green' },
+  [ApplicantStatus.REJECTED]: { text: 'Rejected', color: 'red' }
 }
 
 const DM_STATUS_TAG: Record<string, { text: string; color: string }> = {
   DM_STATUS_PENDING: { text: 'Pending', color: 'default' },
-  DM_STATUS_SENT: { text: 'Sent', color: 'green' },
-  DM_STATUS_FAILED: { text: 'Failed', color: 'red' }
+  [DmStatus.SENT]: { text: 'Sent', color: 'green' },
+  [DmStatus.FAILED]: { text: 'Failed', color: 'red' }
 }
 
 const POOL_LOW_RATIO = 0.1
@@ -553,7 +583,7 @@ function ApplicantsPage() {
   const queryClient = useQueryClient()
   const { playtestId = '' } = useParams()
 
-  const [statusFilter, setStatusFilter] = useState<string>('APPLICANT_STATUS_UNSPECIFIED')
+  const [statusFilter, setStatusFilter] = useState<string>(ApplicantStatus.UNSPECIFIED)
   const [dmFailedOnly, setDmFailedOnly] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<V1Applicant | null>(null)
   const [rejectReason, setRejectReason] = useState('')
@@ -569,11 +599,7 @@ function ApplicantsPage() {
     {
       playtestId,
       queryParams: {
-        statusFilter: statusFilter as
-          | 'APPLICANT_STATUS_UNSPECIFIED'
-          | 'APPLICANT_STATUS_PENDING'
-          | 'APPLICANT_STATUS_APPROVED'
-          | 'APPLICANT_STATUS_REJECTED',
+        statusFilter: statusFilter as ApplicantStatusValue,
         dmFailedFilter: dmFailedOnly
       }
     },
@@ -662,8 +688,8 @@ function ApplicantsPage() {
       title: 'Actions',
       key: 'actions',
       render: (_: unknown, row: V1Applicant) => {
-        const isPending = row.status === 'APPLICANT_STATUS_PENDING'
-        const canRetryDm = row.status === 'APPLICANT_STATUS_APPROVED' && row.lastDmStatus === 'DM_STATUS_FAILED'
+        const isPending = row.status === ApplicantStatus.PENDING
+        const canRetryDm = row.status === ApplicantStatus.APPROVED && row.lastDmStatus === DmStatus.FAILED
         return (
           <Space wrap>
             <Popconfirm
@@ -716,10 +742,10 @@ function ApplicantsPage() {
           onChange={setStatusFilter}
           style={{ width: 200 }}
           options={[
-            { value: 'APPLICANT_STATUS_UNSPECIFIED', label: 'All statuses' },
-            { value: 'APPLICANT_STATUS_PENDING', label: 'Pending' },
-            { value: 'APPLICANT_STATUS_APPROVED', label: 'Approved' },
-            { value: 'APPLICANT_STATUS_REJECTED', label: 'Rejected' }
+            { value: ApplicantStatus.UNSPECIFIED, label: 'All statuses' },
+            { value: ApplicantStatus.PENDING, label: 'Pending' },
+            { value: ApplicantStatus.APPROVED, label: 'Approved' },
+            { value: ApplicantStatus.REJECTED, label: 'Rejected' }
           ]}
         />
         <Checkbox checked={dmFailedOnly} onChange={e => setDmFailedOnly(e.target.checked)}>
@@ -842,7 +868,7 @@ function CodePoolPage() {
   const playtest = playtestQuery.data?.playtest as V1Playtest | undefined
   const stats = codesQuery.data?.stats
   const codes = (codesQuery.data?.codes ?? []) as V1Code[]
-  const isAGS = playtest?.distributionModel === 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'
+  const isAGS = playtest?.distributionModel === DistributionModel.AGS_CAMPAIGN
 
   const handleFileChosen = (file: File) => {
     const reader = new FileReader()
@@ -1095,7 +1121,7 @@ function SurveyBuilderPage() {
   if (hasSurvey && surveyQuery.isLoading) return <Spin description="Loading existing survey..." />
 
   const initialSurvey = (hasSurvey && surveyQuery.data?.survey ? surveyQuery.data.survey : null) as V1Survey | null
-  const draftPreloadFailed = hasSurvey && surveyQuery.isError && playtest.status === 'PLAYTEST_STATUS_DRAFT'
+  const draftPreloadFailed = hasSurvey && surveyQuery.isError && playtest.status === PlaytestStatus.DRAFT
   // Mounting a fresh form per data shape avoids the cascading-effect anti-pattern.
   const formKey = `${playtestId}-${initialSurvey?.id ?? 'new'}-${draftPreloadFailed ? 'draft-blank' : 'ok'}`
 
