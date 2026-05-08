@@ -315,14 +315,21 @@ func runFlowGoldenM2(ctx context.Context, stdout, stderr io.Writer, g *Globals, 
 	return runFlowGoldenM2Live(ctx, stdout, stderr, g, &in, createReq, mk)
 }
 
-// runFlowGoldenM2DryRun emits one NDJSON line per request shape (with
-// placeholder ids for fields that only resolve after a real dial).
-func runFlowGoldenM2DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest) int {
+// dryRunStep pairs a flow label with the request shape emitted on the
+// dry-run NDJSON. File-level so the M3 dry-run can extend M2's step
+// list without re-declaring the anonymous struct.
+type dryRunStep struct {
+	label string
+	msg   proto.Message
+}
+
+// goldenM2DryRunSteps builds the seven-step request catalogue for the
+// golden-m2 flow. Exposed (package-private) so runFlowGoldenM3DryRun
+// can splice on the three survey-tail steps instead of restating the
+// M2 prefix verbatim.
+func goldenM2DryRunSteps(g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest) []dryRunStep {
 	const placeholder = "<resolved-after-create>"
-	dryRunSteps := []struct {
-		label string
-		msg   proto.Message
-	}{
+	return []dryRunStep{
 		{"create-playtest", createReq},
 		{"transition-open", &pb.TransitionPlaytestStatusRequest{
 			Namespace:    g.Namespace,
@@ -343,12 +350,24 @@ func runFlowGoldenM2DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inp
 		}},
 		{"get-code", &pb.GetGrantedCodeRequest{PlaytestId: placeholder}},
 	}
-	for _, s := range dryRunSteps {
+}
+
+// emitDryRunSteps writes one NDJSON line per step, halting on the
+// first writer failure. The exit code matches what runFlowGoldenM2/M3
+// callers used to inline.
+func emitDryRunSteps(stdout, stderr io.Writer, steps []dryRunStep) int {
+	for _, s := range steps {
 		if !writeFlowDryRun(stdout, stderr, s.label, s.msg) {
 			return exitLocalError
 		}
 	}
 	return exitOK
+}
+
+// runFlowGoldenM2DryRun emits one NDJSON line per request shape (with
+// placeholder ids for fields that only resolve after a real dial).
+func runFlowGoldenM2DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest) int {
+	return emitDryRunSteps(stdout, stderr, goldenM2DryRunSteps(g, in, createReq))
 }
 
 // runFlowGoldenM2Live drives the seven RPCs in sequence, halting on the
@@ -525,41 +544,20 @@ func runFlowGoldenM3(ctx context.Context, stdout, stderr io.Writer, g *Globals, 
 	return runFlowGoldenM3Live(ctx, stdout, stderr, g, &in, createReq, mk)
 }
 
-// runFlowGoldenM3DryRun emits the ten-step request shape catalogue.
-// Survey ids are placeholders since they only resolve after a real
-// CreateSurvey round-trip.
+// runFlowGoldenM3DryRun emits the ten-step request shape catalogue:
+// the seven golden-m2 steps followed by create-survey →
+// submit-response → list-responses. Survey ids are placeholders since
+// they only resolve after a real CreateSurvey round-trip.
 func runFlowGoldenM3DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inputs, createReq *pb.CreatePlaytestRequest) int {
 	const placeholder = "<resolved-after-create>"
 	const surveyPlaceholder = "<resolved-after-create-survey>"
-	dryRunSteps := []struct {
-		label string
-		msg   proto.Message
-	}{
-		{"create-playtest", createReq},
-		{"transition-open", &pb.TransitionPlaytestStatusRequest{
-			Namespace:    g.Namespace,
-			PlaytestId:   placeholder,
-			TargetStatus: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN,
-		}},
-		{"signup", &pb.SignupRequest{Slug: in.slug, Platforms: in.platforms}},
-		{"accept-nda", &pb.AcceptNDARequest{PlaytestId: placeholder}},
-		{"upload-codes", &pb.UploadCodesRequest{
-			Namespace:  g.Namespace,
-			PlaytestId: placeholder,
-			CsvContent: in.csvBody,
-			Filename:   in.csvFilename,
-		}},
-		{"approve", &pb.ApproveApplicantRequest{
-			Namespace:   g.Namespace,
-			ApplicantId: "<resolved-after-signup>",
-		}},
-		{"get-code", &pb.GetGrantedCodeRequest{PlaytestId: placeholder}},
-		{"create-survey", &pb.CreateSurveyRequest{
+	steps := append(goldenM2DryRunSteps(g, in, createReq),
+		dryRunStep{"create-survey", &pb.CreateSurveyRequest{
 			Namespace:  g.Namespace,
 			PlaytestId: placeholder,
 			Questions:  goldenM3SurveyQuestions(),
 		}},
-		{"submit-response", &pb.SubmitSurveyResponseRequest{
+		dryRunStep{"submit-response", &pb.SubmitSurveyResponseRequest{
 			PlaytestId: placeholder,
 			SurveyId:   surveyPlaceholder,
 			Answers: []*pb.SurveyAnswer{
@@ -567,15 +565,13 @@ func runFlowGoldenM3DryRun(stdout, stderr io.Writer, g *Globals, in *goldenM2Inp
 				{QuestionId: "<resolved-from-create-survey>", Value: &pb.SurveyAnswer_Rating{Rating: 5}},
 			},
 		}},
-		{"list-responses", &pb.ListSurveyResponsesRequest{
+		dryRunStep{"list-responses", &pb.ListSurveyResponsesRequest{
 			Namespace:  g.Namespace,
 			PlaytestId: placeholder,
 		}},
-	}
-	for _, s := range dryRunSteps {
-		if !writeFlowDryRun(stdout, stderr, s.label, s.msg) {
-			return exitLocalError
-		}
+	)
+	if code := emitDryRunSteps(stdout, stderr, steps); code != exitOK {
+		return code
 	}
 	return exitOK
 }
