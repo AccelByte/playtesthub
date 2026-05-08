@@ -349,34 +349,13 @@ func scanPlaytest(row pgx.Row) (*Playtest, error) {
 	if err != nil {
 		return nil, err
 	}
-	if startsAt.Valid {
-		t := startsAt.Time
-		p.StartsAt = &t
-	}
-	if endsAt.Valid {
-		t := endsAt.Time
-		p.EndsAt = &t
-	}
-	if surveyID.Valid {
-		id := uuid.UUID(surveyID.Bytes)
-		p.SurveyID = &id
-	}
-	if agsItemID.Valid {
-		v := agsItemID.String
-		p.AGSItemID = &v
-	}
-	if agsCampID.Valid {
-		v := agsCampID.String
-		p.AGSCampaignID = &v
-	}
-	if initialQty.Valid {
-		v := initialQty.Int32
-		p.InitialCodeQuantity = &v
-	}
-	if deletedAt.Valid {
-		t := deletedAt.Time
-		p.DeletedAt = &t
-	}
+	p.StartsAt = timePtrFromPg(startsAt)
+	p.EndsAt = timePtrFromPg(endsAt)
+	p.SurveyID = uuidPtrFromPg(surveyID)
+	p.AGSItemID = stringPtrFromPg(agsItemID)
+	p.AGSCampaignID = stringPtrFromPg(agsCampID)
+	p.InitialCodeQuantity = int32PtrFromPg(initialQty)
+	p.DeletedAt = timePtrFromPg(deletedAt)
 	return &p, nil
 }
 

@@ -290,14 +290,8 @@ func scanAuditLog(row pgx.Row) (*AuditLog, error) {
 	if err != nil {
 		return nil, err
 	}
-	if playtestID.Valid {
-		id := uuid.UUID(playtestID.Bytes)
-		a.PlaytestID = &id
-	}
-	if actorUserID.Valid {
-		id := uuid.UUID(actorUserID.Bytes)
-		a.ActorUserID = &id
-	}
+	a.PlaytestID = uuidPtrFromPg(playtestID)
+	a.ActorUserID = uuidPtrFromPg(actorUserID)
 	a.Before = append(json.RawMessage{}, before...)
 	a.After = append(json.RawMessage{}, after...)
 	return &a, nil

@@ -484,17 +484,8 @@ func scanCode(row pgx.Row) (*Code, error) {
 	if err != nil {
 		return nil, err
 	}
-	if reservedBy.Valid {
-		id := uuid.UUID(reservedBy.Bytes)
-		c.ReservedBy = &id
-	}
-	if reservedAt.Valid {
-		t := reservedAt.Time
-		c.ReservedAt = &t
-	}
-	if grantedAt.Valid {
-		t := grantedAt.Time
-		c.GrantedAt = &t
-	}
+	c.ReservedBy = uuidPtrFromPg(reservedBy)
+	c.ReservedAt = timePtrFromPg(reservedAt)
+	c.GrantedAt = timePtrFromPg(grantedAt)
 	return &c, nil
 }

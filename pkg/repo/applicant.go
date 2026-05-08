@@ -614,37 +614,13 @@ func scanApplicant(row pgx.Row) (*Applicant, error) {
 	if err != nil {
 		return nil, err
 	}
-	if discordUserID.Valid {
-		v := discordUserID.String
-		a.DiscordUserID = &v
-	}
-	if ndaHash.Valid {
-		v := ndaHash.String
-		a.NDAVersionHash = &v
-	}
-	if grantedCode.Valid {
-		id := uuid.UUID(grantedCode.Bytes)
-		a.GrantedCodeID = &id
-	}
-	if approvedAt.Valid {
-		t := approvedAt.Time
-		a.ApprovedAt = &t
-	}
-	if rejReason.Valid {
-		v := rejReason.String
-		a.RejectionReason = &v
-	}
-	if lastDMStatus.Valid {
-		v := lastDMStatus.String
-		a.LastDMStatus = &v
-	}
-	if lastDMAttempt.Valid {
-		t := lastDMAttempt.Time
-		a.LastDMAttemptAt = &t
-	}
-	if lastDMError.Valid {
-		v := lastDMError.String
-		a.LastDMError = &v
-	}
+	a.DiscordUserID = stringPtrFromPg(discordUserID)
+	a.NDAVersionHash = stringPtrFromPg(ndaHash)
+	a.GrantedCodeID = uuidPtrFromPg(grantedCode)
+	a.ApprovedAt = timePtrFromPg(approvedAt)
+	a.RejectionReason = stringPtrFromPg(rejReason)
+	a.LastDMStatus = stringPtrFromPg(lastDMStatus)
+	a.LastDMAttemptAt = timePtrFromPg(lastDMAttempt)
+	a.LastDMError = stringPtrFromPg(lastDMError)
 	return &a, nil
 }
