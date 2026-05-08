@@ -230,21 +230,15 @@ func (q *Queue) process(ctx context.Context, j Job) {
 
 // checkCircuit returns true if the breaker is currently open. As a
 // side-effect it auto-resets the breaker once the open window has
-// elapsed and writes the dm.circuit_closed audit row.
+// elapsed and writes the dm.circuit_closed audit row outside the lock
+// so a slow audit write can't block any future reader of q.mu.
 func (q *Queue) checkCircuit(ctx context.Context) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.circuitOpenAt.IsZero() {
-		return false
+	open, justClosedAt, ok := q.transitionCircuitClosedIfElapsed()
+	if !ok {
+		return open
 	}
-	if q.clock().Sub(q.circuitOpenAt) < CircuitOpenDuration {
-		return true
-	}
-	closedAt := q.clock()
-	q.circuitOpenAt = time.Time{}
-	q.failuresWindow = nil
 	if q.audit != nil {
-		if err := repo.AppendDMCircuitClosed(ctx, q.audit, q.cfg.Namespace, closedAt); err != nil {
+		if err := repo.AppendDMCircuitClosed(ctx, q.audit, q.cfg.Namespace, justClosedAt); err != nil {
 			q.logger.LogAttrs(ctx, slog.LevelWarn, "appending dm.circuit_closed audit",
 				slog.String("event", "dm_circuit_audit_failed"),
 				slog.String("error", err.Error()),
@@ -257,10 +251,53 @@ func (q *Queue) checkCircuit(ctx context.Context) bool {
 	return false
 }
 
+// transitionCircuitClosedIfElapsed inspects circuit state under q.mu
+// and, if the open window has elapsed, flips it to closed in-place.
+// Returns (currentlyOpen, closedAt, didTransition); when didTransition
+// is true the caller is responsible for the audit + log side-effects.
+func (q *Queue) transitionCircuitClosedIfElapsed() (open bool, closedAt time.Time, didTransition bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.circuitOpenAt.IsZero() {
+		return false, time.Time{}, false
+	}
+	if q.clock().Sub(q.circuitOpenAt) < CircuitOpenDuration {
+		return true, time.Time{}, false
+	}
+	now := q.clock()
+	q.circuitOpenAt = time.Time{}
+	q.failuresWindow = nil
+	return false, now, true
+}
+
 // recordFailure appends a failure timestamp and trips the circuit if
 // the trailing-window count crosses the threshold. The window is
-// pruned in place to keep the slice bounded.
+// pruned in place to keep the slice bounded. Audit + log side-effects
+// run outside q.mu so a slow audit write can't block readers.
 func (q *Queue) recordFailure(ctx context.Context) {
+	openedAt, openedCount, didTrip := q.transitionCircuitOpenedIfThresholdReached()
+	if !didTrip {
+		return
+	}
+	if q.audit != nil {
+		if err := repo.AppendDMCircuitOpened(ctx, q.audit, q.cfg.Namespace, openedAt, openedCount); err != nil {
+			q.logger.LogAttrs(ctx, slog.LevelWarn, "appending dm.circuit_opened audit",
+				slog.String("event", "dm_circuit_audit_failed"),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+	q.logger.LogAttrs(ctx, slog.LevelWarn, "dm circuit opened",
+		slog.String("event", "dm_circuit_opened"),
+		slog.Int("recentFailureCount", openedCount),
+	)
+}
+
+// transitionCircuitOpenedIfThresholdReached prunes the trailing-window
+// counter, appends the current failure, and trips the circuit when the
+// threshold is reached. Returns (openedAt, recentFailureCount,
+// didTrip); side-effects (audit, log) run in the caller outside q.mu.
+func (q *Queue) transitionCircuitOpenedIfThresholdReached() (openedAt time.Time, count int, didTrip bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	now := q.clock()
@@ -273,24 +310,13 @@ func (q *Queue) recordFailure(ctx context.Context) {
 	}
 	q.failuresWindow = append(pruned, now)
 	if len(q.failuresWindow) < CircuitTripFailureCount {
-		return
+		return time.Time{}, 0, false
 	}
 	if !q.circuitOpenAt.IsZero() {
-		return
+		return time.Time{}, 0, false
 	}
 	q.circuitOpenAt = now
-	if q.audit != nil {
-		if err := repo.AppendDMCircuitOpened(ctx, q.audit, q.cfg.Namespace, now, len(q.failuresWindow)); err != nil {
-			q.logger.LogAttrs(ctx, slog.LevelWarn, "appending dm.circuit_opened audit",
-				slog.String("event", "dm_circuit_audit_failed"),
-				slog.String("error", err.Error()),
-			)
-		}
-	}
-	q.logger.LogAttrs(ctx, slog.LevelWarn, "dm circuit opened",
-		slog.String("event", "dm_circuit_opened"),
-		slog.Int("recentFailureCount", len(q.failuresWindow)),
-	)
+	return now, len(q.failuresWindow), true
 }
 
 // resetFailures clears the trailing-window counter. Called on every
