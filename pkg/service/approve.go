@@ -19,6 +19,7 @@ import (
 const (
 	errMsgReservationExpired       = "reservation expired, please retry"
 	errMsgApplicantAlreadyApproved = "applicant already approved"
+	errMsgRejectRaced              = "applicant was approved before reject could complete"
 	errMsgApplicantRejected        = "applicant is rejected and cannot be re-approved"
 	errMsgPlaytestClosed           = "playtest is closed; approve/reject is no longer allowed"
 	errMsgPlaytestDraft            = "playtest is in draft; approve/reject requires OPEN status"
@@ -261,7 +262,7 @@ func (s *PlaytesthubServiceServer) RejectApplicant(ctx context.Context, req *pb.
 		return nil
 	})
 	if errors.Is(txErr, repo.ErrStatusCASMismatch) {
-		return nil, status.Error(codes.FailedPrecondition, errMsgApplicantAlreadyApproved)
+		return nil, status.Error(codes.FailedPrecondition, errMsgRejectRaced)
 	}
 	if txErr != nil {
 		return nil, status.Errorf(codes.Internal, "rejecting applicant: %v", txErr)

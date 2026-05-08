@@ -353,6 +353,26 @@ func TestRejectApplicant_AlreadyApproved_FailedPrecondition(t *testing.T) {
 	requireStatus(t, err, codes.FailedPrecondition)
 }
 
+// Reject-side CAS race: applicant read as PENDING, but a concurrent
+// approve commits before RejectCAS runs. The CAS update affects 0 rows
+// and surfaces FailedPrecondition with the dedicated reject-raced
+// message (errors.md row for RejectApplicant CAS race) — not the
+// approve-side "applicant already approved" string.
+func TestRejectApplicant_RacedByApprove_FailedPrecondition(t *testing.T) {
+	rig := withApproveStores(t)
+	pt := steamKeysPlaytest("reject-raced")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+	a := seedPendingApplicant(rig, pt, uuid.New())
+	rig.applicants.forceRejectCASMismatch = true
+
+	_, err := rig.svr.RejectApplicant(authCtx(uuid.New()), &pb.RejectApplicantRequest{
+		Namespace:   testNamespace,
+		ApplicantId: a.ID.String(),
+	})
+	requireStatus(t, err, codes.FailedPrecondition)
+	requireMsgContains(t, err, errMsgRejectRaced)
+}
+
 func TestRejectApplicant_PlaytestClosed_FailedPrecondition(t *testing.T) {
 	rig := withApproveStores(t)
 	pt := steamKeysPlaytest("reject-closed")

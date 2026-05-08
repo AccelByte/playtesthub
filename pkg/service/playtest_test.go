@@ -147,8 +147,9 @@ func (f *fakePlaytestStore) TransitionStatus(_ context.Context, namespace string
 // the Signup idempotency path exercises the same ErrUniqueViolation
 // branch as production.
 type fakeApplicantStore struct {
-	rows      []*repo.Applicant
-	insertErr error // set per-test to force a non-unique error path
+	rows                   []*repo.Applicant
+	insertErr              error // set per-test to force a non-unique error path
+	forceRejectCASMismatch bool  // when true, RejectCAS returns ErrStatusCASMismatch — simulates the read-pending → CAS-races-to-approved path
 }
 
 func (f *fakeApplicantStore) Insert(_ context.Context, a *repo.Applicant) (*repo.Applicant, error) {
@@ -319,6 +320,9 @@ func (f *fakeApplicantStore) ApproveCAS(_ context.Context, _ repo.Querier, appli
 }
 
 func (f *fakeApplicantStore) RejectCAS(_ context.Context, _ repo.Querier, applicantID uuid.UUID, reason *string) (*repo.Applicant, error) {
+	if f.forceRejectCASMismatch {
+		return nil, repo.ErrStatusCASMismatch
+	}
 	for i, existing := range f.rows {
 		if existing.ID != applicantID {
 			continue
