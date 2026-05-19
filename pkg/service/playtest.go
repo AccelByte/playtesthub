@@ -71,6 +71,14 @@ type PlaytesthubServiceServer struct {
 	agsCodeBatchSize int
 	logger           *slog.Logger
 	namespace        string
+
+	// leaderLease + workers back GetWorkerHealth (STATUS_M4.md phase 5).
+	// Wired via WithWorkerHealth from main.go. nil leaderLease leaves
+	// the RPC returning entries with stale=true for every worker —
+	// honest about the missing wiring.
+	leaderLease          repo.LeaderStore
+	workers              []WorkerInfo
+	clockForWorkerHealth func() time.Time
 	// playerBaseURL is the optional public origin (with optional sub-path)
 	// where the player Svelte bundle is hosted. When set, the approval DM
 	// body includes a deep link to the pending page so the recipient

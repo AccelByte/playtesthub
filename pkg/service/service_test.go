@@ -46,6 +46,8 @@ func TestServiceDescriptorMethods(t *testing.T) {
 		"ListSurveyResponses":  true,
 		"ListAuditLog":         true,
 		"RetryFailedDms":       true,
+		// M4
+		"GetWorkerHealth": true,
 	}
 
 	methods := pb.PlaytesthubService_ServiceDesc.Methods

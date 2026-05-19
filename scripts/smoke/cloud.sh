@@ -126,6 +126,25 @@ for probe in "${m3_probes[@]}"; do
         || fail "expected 401 from ${name}, got ${code} (${method} ${url})"
 done
 
+# M4 RPC reachability gate (STATUS_M4.md phase 5): GetWorkerHealth is
+# the only new admin route in M4; must reach the auth interceptor.
+declare -a m4_probes=(
+    "GetWorkerHealth      GET   ${BASE}/v1/admin/namespaces/${NS}/workers/health                              -"
+)
+
+for probe in "${m4_probes[@]}"; do
+    read -r name method url body <<<"$probe"
+    log "M4 ${name} requires auth (expect 401)"
+    if [[ "$body" == "-" ]]; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" "$url")
+    else
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" \
+            -H 'Content-Type: application/json' -d "$body" "$url")
+    fi
+    [[ "$code" == "401" ]] \
+        || fail "expected 401 from ${name}, got ${code} (${method} ${url})"
+done
+
 # Phase 9.3 / verified end-to-end in 9.4: ExchangeDiscordCode is unauth
 # and posts a Discord OAuth code to AGS IAM's platform-token grant.
 # Bogus probe — sends an obviously-fake code, expects a 400 because the

@@ -47,6 +47,7 @@ const (
 	PlaytesthubService_ListSurveyResponses_FullMethodName      = "/playtesthub.v1.PlaytesthubService/ListSurveyResponses"
 	PlaytesthubService_ListAuditLog_FullMethodName             = "/playtesthub.v1.PlaytesthubService/ListAuditLog"
 	PlaytesthubService_RetryFailedDms_FullMethodName           = "/playtesthub.v1.PlaytesthubService/RetryFailedDms"
+	PlaytesthubService_GetWorkerHealth_FullMethodName          = "/playtesthub.v1.PlaytesthubService/GetWorkerHealth"
 )
 
 // PlaytesthubServiceClient is the client API for PlaytesthubService service.
@@ -93,6 +94,7 @@ type PlaytesthubServiceClient interface {
 	ListSurveyResponses(ctx context.Context, in *ListSurveyResponsesRequest, opts ...grpc.CallOption) (*ListSurveyResponsesResponse, error)
 	ListAuditLog(ctx context.Context, in *ListAuditLogRequest, opts ...grpc.CallOption) (*ListAuditLogResponse, error)
 	RetryFailedDms(ctx context.Context, in *RetryFailedDmsRequest, opts ...grpc.CallOption) (*RetryFailedDmsResponse, error)
+	GetWorkerHealth(ctx context.Context, in *GetWorkerHealthRequest, opts ...grpc.CallOption) (*GetWorkerHealthResponse, error)
 }
 
 type playtesthubServiceClient struct {
@@ -383,6 +385,16 @@ func (c *playtesthubServiceClient) RetryFailedDms(ctx context.Context, in *Retry
 	return out, nil
 }
 
+func (c *playtesthubServiceClient) GetWorkerHealth(ctx context.Context, in *GetWorkerHealthRequest, opts ...grpc.CallOption) (*GetWorkerHealthResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWorkerHealthResponse)
+	err := c.cc.Invoke(ctx, PlaytesthubService_GetWorkerHealth_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PlaytesthubServiceServer is the server API for PlaytesthubService service.
 // All implementations should embed UnimplementedPlaytesthubServiceServer
 // for forward compatibility.
@@ -427,6 +439,7 @@ type PlaytesthubServiceServer interface {
 	ListSurveyResponses(context.Context, *ListSurveyResponsesRequest) (*ListSurveyResponsesResponse, error)
 	ListAuditLog(context.Context, *ListAuditLogRequest) (*ListAuditLogResponse, error)
 	RetryFailedDms(context.Context, *RetryFailedDmsRequest) (*RetryFailedDmsResponse, error)
+	GetWorkerHealth(context.Context, *GetWorkerHealthRequest) (*GetWorkerHealthResponse, error)
 }
 
 // UnimplementedPlaytesthubServiceServer should be embedded to have
@@ -519,6 +532,9 @@ func (UnimplementedPlaytesthubServiceServer) ListAuditLog(context.Context, *List
 }
 func (UnimplementedPlaytesthubServiceServer) RetryFailedDms(context.Context, *RetryFailedDmsRequest) (*RetryFailedDmsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetryFailedDms not implemented")
+}
+func (UnimplementedPlaytesthubServiceServer) GetWorkerHealth(context.Context, *GetWorkerHealthRequest) (*GetWorkerHealthResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkerHealth not implemented")
 }
 func (UnimplementedPlaytesthubServiceServer) testEmbeddedByValue() {}
 
@@ -1044,6 +1060,24 @@ func _PlaytesthubService_RetryFailedDms_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlaytesthubService_GetWorkerHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkerHealthRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlaytesthubServiceServer).GetWorkerHealth(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlaytesthubService_GetWorkerHealth_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlaytesthubServiceServer).GetWorkerHealth(ctx, req.(*GetWorkerHealthRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PlaytesthubService_ServiceDesc is the grpc.ServiceDesc for PlaytesthubService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1162,6 +1196,10 @@ var PlaytesthubService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetryFailedDms",
 			Handler:    _PlaytesthubService_RetryFailedDms_Handler,
+		},
+		{
+			MethodName: "GetWorkerHealth",
+			Handler:    _PlaytesthubService_GetWorkerHealth_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

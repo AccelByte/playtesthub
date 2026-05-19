@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -20,7 +21,7 @@ import (
 // to (*Globals).dial.
 type playtestClientFactory func(ctx context.Context) (pb.PlaytesthubServiceClient, context.Context, func() error, error)
 
-const playtestUsage = `playtest: action required (one of: get-public, get-player, get, list, create, edit, delete, transition)`
+const playtestUsage = `playtest: action required (one of: get-public, get-player, get, list, create, edit, delete, transition, schedule-info)`
 
 func runPlaytest(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
 	if len(args) == 0 {
@@ -45,6 +46,8 @@ func runPlaytest(ctx context.Context, stdout, stderr io.Writer, g *Globals, args
 		return runPlaytestDelete(ctx, stdout, stderr, g, rest, factory)
 	case "transition":
 		return runPlaytestTransition(ctx, stdout, stderr, g, rest, factory)
+	case "schedule-info":
+		return runPlaytestScheduleInfo(ctx, stdout, stderr, g, rest, factory)
 	default:
 		fmt.Fprintf(stderr, "playtest: unknown action %q\n", action)
 		return exitLocalError
@@ -401,6 +404,104 @@ func runPlaytestTransition(ctx context.Context, stdout, stderr io.Writer, g *Glo
 		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
 			return c.TransitionPlaytestStatus(cctx, req)
 		})
+}
+
+// runPlaytestScheduleInfo prints a compact window-state view for one
+// playtest: status, startsAt, endsAt, and the next system-driven
+// auto-transition (M4). Reads through AdminGetPlaytest under the hood
+// so the same OPEN/CLOSED visibility rules apply.
+//
+//   - dry-run echoes the underlying AdminGetPlaytestRequest, mirroring
+//     every other admin subcommand's dry-run shape.
+//   - the success path emits a single JSON object with field order
+//     {slug, status, startsAt, endsAt, nextAutoTransition}; agents
+//     consume it via stdout.
+func runPlaytestScheduleInfo(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
+	fs := flag.NewFlagSet("playtest schedule-info", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	id := fs.String("id", "", "playtest id (required)")
+	dryRun := fs.Bool("dry-run", false, "print the request JSON and exit without dialling")
+	if err := fs.Parse(args); err != nil {
+		return exitLocalError
+	}
+	if *id == "" {
+		fmt.Fprintln(stderr, "playtest schedule-info: --id is required")
+		return exitLocalError
+	}
+	if !g.requireNamespace(stderr, "playtest schedule-info") {
+		return exitLocalError
+	}
+	req := &pb.AdminGetPlaytestRequest{Namespace: g.Namespace, PlaytestId: *id}
+	if *dryRun {
+		if err := writeJSONProto(stdout, req); err != nil {
+			fmt.Fprintf(stderr, "playtest schedule-info: %v\n", err)
+			return exitLocalError
+		}
+		return exitOK
+	}
+	client, callCtx, closeFn, err := factory(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "playtest schedule-info: %v\n", err)
+		return exitTransportError
+	}
+	defer closeFn() //nolint:errcheck // best-effort close on a CLI exit path.
+	g.logRPC(stderr, "AdminGetPlaytest")
+	callCtx, cancel := context.WithTimeout(callCtx, g.Timeout)
+	defer cancel()
+	resp, err := client.AdminGetPlaytest(callCtx, req)
+	if err != nil {
+		writeGRPCError(stderr, err)
+		st, _ := status.FromError(err)
+		return exitCodeForGRPC(st.Code())
+	}
+	pt := resp.GetPlaytest()
+	if pt == nil {
+		fmt.Fprintln(stderr, "playtest schedule-info: server returned empty playtest")
+		return exitTransportError
+	}
+	info := scheduleInfo(pt)
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(info); err != nil {
+		fmt.Fprintf(stderr, "playtest schedule-info: %v\n", err)
+		return exitLocalError
+	}
+	return exitOK
+}
+
+// scheduleInfo derives the next auto-transition payload from a playtest
+// per STATUS_M4.md phase 7. DRAFT-with-startsAt opens; OPEN-with-endsAt
+// closes; everything else has no scheduled next transition.
+func scheduleInfo(pt *pb.Playtest) map[string]any {
+	out := map[string]any{
+		"slug":               pt.GetSlug(),
+		"status":             pt.GetStatus().String(),
+		"startsAt":           timestampJSON(pt.GetStartsAt()),
+		"endsAt":             timestampJSON(pt.GetEndsAt()),
+		"nextAutoTransition": nextAutoTransitionPayload(pt),
+	}
+	return out
+}
+
+func nextAutoTransitionPayload(pt *pb.Playtest) map[string]any {
+	switch pt.GetStatus() {
+	case pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT:
+		if pt.GetStartsAt() != nil {
+			return map[string]any{"at": timestampJSON(pt.GetStartsAt()), "to": pb.PlaytestStatus_PLAYTEST_STATUS_OPEN.String()}
+		}
+	case pb.PlaytestStatus_PLAYTEST_STATUS_OPEN:
+		if pt.GetEndsAt() != nil {
+			return map[string]any{"at": timestampJSON(pt.GetEndsAt()), "to": pb.PlaytestStatus_PLAYTEST_STATUS_CLOSED.String()}
+		}
+	}
+	return nil
+}
+
+func timestampJSON(ts *timestamppb.Timestamp) any {
+	if ts == nil {
+		return nil
+	}
+	return ts.AsTime().UTC().Format(time.RFC3339)
 }
 
 // parsePlatforms splits a comma-separated platform list into proto enums.

@@ -6,7 +6,7 @@ Instructions for Claude Code when working in this repository.
 
 **playtesthub** — open-source, self-hosted AccelByte Gaming Services (AGS) Extend application for running closed game playtests. Go + gRPC backend, Svelte player frontend, React admin extension. MIT-licensed. See `docs/PRD.md` for full product requirements.
 
-**Current state**: M1 (backend + admin CRUD + signup, STEAM_KEYS) and M2 (NDA + approval + code grant + AGS Campaign API + RetryDM) shipped. M3 (survey + Discord DM + audit-log viewer + perf proof + a11y/codegen-fresh CI gates) is in progress — phases 1–16 shipped, phase 17 (README walkthrough + MIT release) shipped except the operator-driven demo video, phase 18 (admin-RBAC docs realignment per PRD v2.1) queued. `docs/STATUS.md` is the live tracker; treat that as authoritative over this paragraph and update there when phases land.
+**Current state**: M1 (backend + admin CRUD + signup, STEAM_KEYS), M2 (NDA + approval + code grant + AGS Campaign API + RetryDM), and M3 (survey + Discord DM + audit-log viewer + perf proof + a11y/codegen-fresh CI gates) shipped. M4 (playtest window enforcement: auto DRAFT→OPEN→CLOSED at startsAt/endsAt) tracked in `docs/STATUS_M4.md` — phases 1–5 + 7–9 shipped, phase 6 (player opens-soon banner) deferred as cosmetic cut-if-behind. `docs/STATUS.md` + `docs/STATUS_M4.md` are the live trackers; treat those as authoritative over this paragraph and update there when phases land.
 
 ## Canonical docs
 

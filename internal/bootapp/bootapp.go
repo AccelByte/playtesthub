@@ -34,6 +34,8 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/anggorodewanto/playtesthub/internal/reclaim"
+	"github.com/anggorodewanto/playtesthub/internal/window"
 	"github.com/anggorodewanto/playtesthub/pkg/ags"
 	"github.com/anggorodewanto/playtesthub/pkg/common"
 	"github.com/anggorodewanto/playtesthub/pkg/config"
@@ -345,6 +347,20 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 		logger.Info("ags client: in-memory (enable auth to use the live SDK adapter)")
 	}
 
+	leaderStore := repo.NewPgLeaderStore(dbPool)
+	workers := []service.WorkerInfo{{
+		Name:         reclaim.LeaseName,
+		TickInterval: time.Duration(cfg.ReclaimIntervalSeconds) * time.Second,
+		LeaseTTL:     time.Duration(cfg.LeaderLeaseTTLSeconds) * time.Second,
+	}}
+	if cfg.WindowTickSeconds > 0 {
+		workers = append(workers, service.WorkerInfo{
+			Name:         window.LeaseName,
+			TickInterval: time.Duration(cfg.WindowTickSeconds) * time.Second,
+			LeaseTTL:     time.Duration(cfg.LeaderLeaseTTLSeconds) * time.Second,
+		})
+	}
+
 	svcServer := service.NewPlaytesthubServiceServer(playtestStore, applicantStore, cfg.AGSNamespace).
 		WithNDAStore(ndaStore).
 		WithAuditLogStore(auditStore).
@@ -356,6 +372,7 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 		WithPlayerBaseURL(cfg.PlayerBaseURL).
 		WithAGSClient(agsClient).
 		WithAGSCodeBatchSize(cfg.AGSCodeBatchSize).
+		WithWorkerHealth(leaderStore, workers).
 		WithLogger(logger)
 	if botClient != nil {
 		svcServer = svcServer.WithDiscordLookup(botClient)

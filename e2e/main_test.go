@@ -38,8 +38,10 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/anggorodewanto/playtesthub/internal/bootapp"
+	"github.com/anggorodewanto/playtesthub/internal/window"
 	"github.com/anggorodewanto/playtesthub/pkg/config"
 	"github.com/anggorodewanto/playtesthub/pkg/migrate"
+	"github.com/anggorodewanto/playtesthub/pkg/repo"
 )
 
 // e2eEnv carries everything a test needs to drive the CLI. Resolved
@@ -182,6 +184,14 @@ func (h *suiteHarness) setup() error {
 		AuthEnabled:            true,
 		RefreshIntervalSeconds: 600,
 		LogLevel:               "warn", // less noise in test output
+		// M4: the window worker needs to actually run in-process for the
+		// golden-m4 e2e — tick at 1s so the bounded ~10s runtime budget
+		// holds. m1/m2/m3 don't notice the worker spinning.
+		WindowTickSeconds:      1,
+		LeaderLeaseTTLSeconds:  30,
+		LeaderHeartbeatSeconds: 10,
+		ReclaimIntervalSeconds: 30,
+		ReservationTTLSeconds:  60,
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	srv, err := bootapp.New(ctx, bootapp.Options{
@@ -201,6 +211,21 @@ func (h *suiteHarness) setup() error {
 	serveErr := make(chan error, 1)
 	go func() {
 		serveErr <- srv.Serve()
+	}()
+
+	// M4: in-process window worker (mirrors main.go's wiring) so the
+	// golden-m4 e2e can observe real DRAFT→OPEN→CLOSED transitions
+	// driven by the wall clock. Tick = 1s keeps the test bounded.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	worker := window.New(window.Config{
+		Namespace:         cfg.AGSNamespace,
+		HolderID:          "e2e-suite",
+		LeaseTTL:          time.Duration(cfg.LeaderLeaseTTLSeconds) * time.Second,
+		HeartbeatInterval: time.Duration(cfg.LeaderHeartbeatSeconds) * time.Second,
+		TickInterval:      time.Duration(cfg.WindowTickSeconds) * time.Second,
+	}, repo.NewPgLeaderStore(dbPool), repo.NewPgPlaytestStore(dbPool), repo.NewPgAuditLogStore(dbPool), logger)
+	go func() {
+		_ = worker.Run(workerCtx)
 	}()
 
 	// 3. Build pth binary.
@@ -227,6 +252,7 @@ func (h *suiteHarness) setup() error {
 	h.logDir = tmpDir
 
 	h.teardown = func() {
+		workerCancel()
 		srv.Stop()
 		// Drain serveErr so a delayed Serve() return doesn't leak.
 		select {

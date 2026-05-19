@@ -28,6 +28,7 @@ import { V1CreateSurveyResponse } from '../generated-definitions/V1CreateSurveyR
 import { V1EditPlaytestResponse } from '../generated-definitions/V1EditPlaytestResponse.js'
 import { V1EditSurveyResponse } from '../generated-definitions/V1EditSurveyResponse.js'
 import { V1GetCodePoolResponse } from '../generated-definitions/V1GetCodePoolResponse.js'
+import { V1GetWorkerHealthResponse } from '../generated-definitions/V1GetWorkerHealthResponse.js'
 import { V1ListApplicantsResponse } from '../generated-definitions/V1ListApplicantsResponse.js'
 import { V1ListAuditLogResponse } from '../generated-definitions/V1ListAuditLogResponse.js'
 import { V1ListPlaytestsResponse } from '../generated-definitions/V1ListPlaytestsResponse.js'
@@ -85,6 +86,13 @@ export function PlaytesthubServiceAdminApi(sdk: AccelByteSDK, args?: SdkSetConfi
   async function createPlaytest(data: PlaytesthubServiceCreatePlaytestBody): Promise<AxiosResponse<V1CreatePlaytestResponse>> {
     const $ = new PlaytesthubServiceAdmin$(axiosInstance, namespace, useSchemaValidation)
     const resp = await $.createPlaytest(data)
+    if (resp.error) throw resp.error
+    return resp.response
+  }
+
+  async function getWorkersHealth(): Promise<AxiosResponse<V1GetWorkerHealthResponse>> {
+    const $ = new PlaytesthubServiceAdmin$(axiosInstance, namespace, useSchemaValidation)
+    const resp = await $.getWorkersHealth()
     if (resp.error) throw resp.error
     return resp.response
   }
@@ -261,6 +269,10 @@ export function PlaytesthubServiceAdminApi(sdk: AccelByteSDK, args?: SdkSetConfi
      * STEAM_KEYS only in M1; distribution_model=AGS_CAMPAIGN returns Unimplemented until M2.
      */
     createPlaytest,
+    /**
+     * Returns one entry per registered background worker (reclaim_worker, window_worker). stale := now > expires_at + 2*tick_interval. Missing rows surface as lease_holder='' with stale=true so a never-ticked worker is unmissable. Reads leader_lease directly — no new table.
+     */
+    getWorkersHealth,
 
     getPlaytest_ByPlaytestId,
 

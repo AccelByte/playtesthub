@@ -31,6 +31,7 @@ import { V1CreateSurveyResponse } from '../../generated-definitions/V1CreateSurv
 import { V1EditPlaytestResponse } from '../../generated-definitions/V1EditPlaytestResponse.js'
 import { V1EditSurveyResponse } from '../../generated-definitions/V1EditSurveyResponse.js'
 import { V1GetCodePoolResponse } from '../../generated-definitions/V1GetCodePoolResponse.js'
+import { V1GetWorkerHealthResponse } from '../../generated-definitions/V1GetWorkerHealthResponse.js'
 import { V1ListApplicantsResponse } from '../../generated-definitions/V1ListApplicantsResponse.js'
 import { V1ListAuditLogResponse } from '../../generated-definitions/V1ListAuditLogResponse.js'
 import { V1ListPlaytestsResponse } from '../../generated-definitions/V1ListPlaytestsResponse.js'
@@ -47,6 +48,7 @@ import { V1UploadCodesResponse } from '../../generated-definitions/V1UploadCodes
 export const Key_PlaytesthubServiceAdmin = {
   Playtests: 'Playtesthubapi.PlaytesthubServiceAdmin.Playtests',
   Playtest: 'Playtesthubapi.PlaytesthubServiceAdmin.Playtest',
+  WorkersHealth: 'Playtesthubapi.PlaytesthubServiceAdmin.WorkersHealth',
   Playtest_ByPlaytestId: 'Playtesthubapi.PlaytesthubServiceAdmin.Playtest_ByPlaytestId',
   Codes_ByPlaytestId: 'Playtesthubapi.PlaytesthubServiceAdmin.Codes_ByPlaytestId',
   Survey_ByPlaytestId: 'Playtesthubapi.PlaytesthubServiceAdmin.Survey_ByPlaytestId',
@@ -116,6 +118,39 @@ export const usePlaytesthubServiceAdminApi_CreatePlaytestMutation = (
   return useMutation({
     mutationKey: [Key_PlaytesthubServiceAdmin.Playtest],
     mutationFn,
+    ...options
+  })
+}
+
+/**
+ * Returns one entry per registered background worker (reclaim_worker, window_worker). stale := now > expires_at + 2*tick_interval. Missing rows surface as lease_holder='' with stale=true so a never-ticked worker is unmissable. Reads leader_lease directly — no new table.
+ *
+ * #### Default Query Options
+ * The default options include:
+ * ```
+ * {
+ *    queryKey: [Key_PlaytesthubServiceAdmin.WorkersHealth, input]
+ * }
+ * ```
+ */
+export const usePlaytesthubServiceAdminApi_GetWorkersHealth = (
+  sdk: AccelByteSDK,
+  input: SdkSetConfigParam,
+  options?: Omit<UseQueryOptions<V1GetWorkerHealthResponse, AxiosError<ApiError>>, 'queryKey'>,
+  callback?: (data: AxiosResponse<V1GetWorkerHealthResponse>) => void
+): UseQueryResult<V1GetWorkerHealthResponse, AxiosError<ApiError>> => {
+  const queryFn = (sdk: AccelByteSDK, input: Parameters<typeof usePlaytesthubServiceAdminApi_GetWorkersHealth>[1]) => async () => {
+    const response = await PlaytesthubServiceAdminApi(sdk, {
+      coreConfig: input.coreConfig,
+      axiosConfig: input.axiosConfig
+    }).getWorkersHealth()
+    callback?.(response)
+    return response.data
+  }
+
+  return useQuery<V1GetWorkerHealthResponse, AxiosError<ApiError>>({
+    queryKey: [Key_PlaytesthubServiceAdmin.WorkersHealth, input],
+    queryFn: queryFn(sdk, input),
     ...options
   })
 }

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // flowProfileFactory builds a (playtestClientFactory, *Globals) pair for
@@ -34,7 +36,7 @@ func defaultFlowProfileFactory(getenv envSnapshot) flowProfileFactory {
 	}
 }
 
-const flowUsage = `flow: action required (one of: golden-m1, golden-m2, golden-m3)`
+const flowUsage = `flow: action required (one of: golden-m1, golden-m2, golden-m3, golden-m4)`
 
 func runFlow(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, mk flowProfileFactory) int {
 	if len(args) == 0 {
@@ -49,6 +51,8 @@ func runFlow(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []s
 		return runFlowGoldenM2(ctx, stdout, stderr, g, rest, mk)
 	case "golden-m3":
 		return runFlowGoldenM3(ctx, stdout, stderr, g, rest, mk)
+	case "golden-m4":
+		return runFlowGoldenM4(ctx, stdout, stderr, g, rest, mk)
 	default:
 		fmt.Fprintf(stderr, "flow: unknown action %q\n", action)
 		return exitLocalError
@@ -771,6 +775,198 @@ func writeFlowDryRun(stdout, stderr io.Writer, label string, msg proto.Message) 
 		return false
 	}
 	return true
+}
+
+// goldenM4Inputs bundles the parsed flag values for golden-m4. The
+// flow is admin-only (no player profile) — the assertions are entirely
+// server-driven by the window worker.
+type goldenM4Inputs struct {
+	slug             string
+	title            string
+	adminProfile     string
+	startOffset      time.Duration
+	endOffset        time.Duration
+	pollInterval     time.Duration
+	pollTimeoutOpen  time.Duration
+	pollTimeoutClose time.Duration
+	dryRun           bool
+}
+
+// parseGoldenM4Flags returns parsed inputs or, on validation failure,
+// an exit code (caller returns it). User-facing errors go to stderr
+// inside this function — same shape as parseGoldenM2Flags.
+func parseGoldenM4Flags(stderr io.Writer, g *Globals, args []string) (goldenM4Inputs, int) {
+	fs := flag.NewFlagSet("flow golden-m4", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	slug := fs.String("slug", "", "playtest slug (required, PRD §5.1 regex)")
+	title := fs.String("title", "", "playtest title (default: 'Playtest <slug>')")
+	adminProfile := fs.String("admin-profile", "", "credential profile for admin steps")
+	startOffset := fs.Duration("start-offset", 2*time.Second, "how far in the future to set starts_at from now")
+	endOffset := fs.Duration("end-offset", 4*time.Second, "how far in the future to set ends_at from now")
+	pollInterval := fs.Duration("poll-interval", 250*time.Millisecond, "schedule-info poll cadence while waiting for an auto-transition")
+	pollTimeoutOpen := fs.Duration("poll-timeout-open", 15*time.Second, "max wall-clock wait for DRAFT→OPEN")
+	pollTimeoutClose := fs.Duration("poll-timeout-close", 15*time.Second, "max wall-clock wait for OPEN→CLOSED")
+	dryRun := fs.Bool("dry-run", false, "print every step's request JSON and exit without dialling")
+	if err := fs.Parse(args); err != nil {
+		return goldenM4Inputs{}, exitLocalError
+	}
+	if *slug == "" {
+		fmt.Fprintln(stderr, "flow golden-m4: --slug is required")
+		return goldenM4Inputs{}, exitLocalError
+	}
+	if g.Namespace == "" {
+		fmt.Fprintln(stderr, "flow golden-m4: --namespace (or PTH_NAMESPACE) is required")
+		return goldenM4Inputs{}, exitLocalError
+	}
+	if !*dryRun && *adminProfile == "" {
+		fmt.Fprintln(stderr, "flow golden-m4: --admin-profile is required")
+		return goldenM4Inputs{}, exitLocalError
+	}
+	if *endOffset <= *startOffset {
+		fmt.Fprintln(stderr, "flow golden-m4: --end-offset must be greater than --start-offset")
+		return goldenM4Inputs{}, exitLocalError
+	}
+	resolvedTitle := *title
+	if resolvedTitle == "" {
+		resolvedTitle = "Playtest " + *slug
+	}
+	return goldenM4Inputs{
+		slug:             *slug,
+		title:            resolvedTitle,
+		adminProfile:     *adminProfile,
+		startOffset:      *startOffset,
+		endOffset:        *endOffset,
+		pollInterval:     *pollInterval,
+		pollTimeoutOpen:  *pollTimeoutOpen,
+		pollTimeoutClose: *pollTimeoutClose,
+		dryRun:           *dryRun,
+	}, exitOK
+}
+
+// runFlowGoldenM4 exercises PRD §5.1 window-driven auto-transitions
+// end-to-end. Four NDJSON lines: create-playtest (DRAFT with startsAt +
+// endsAt set) → await-auto-open (poll until status=OPEN) →
+// await-auto-close (poll until status=CLOSED) → assert-system-transitions
+// (list audit log; expect 2 system-emitted playtest.status_transition
+// rows). Admin-only; the player flow is fully covered by golden-m3.
+func runFlowGoldenM4(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, mk flowProfileFactory) int {
+	in, code := parseGoldenM4Flags(stderr, g, args)
+	if code != exitOK {
+		return code
+	}
+	now := time.Now().UTC()
+	startsAt := timestamppb.New(now.Add(in.startOffset))
+	endsAt := timestamppb.New(now.Add(in.endOffset))
+
+	createReq := &pb.CreatePlaytestRequest{
+		Namespace:         g.Namespace,
+		Slug:              in.slug,
+		Title:             in.title,
+		Platforms:         []pb.Platform{pb.Platform_PLATFORM_STEAM},
+		DistributionModel: pb.DistributionModel_DISTRIBUTION_MODEL_STEAM_KEYS,
+		StartsAt:          startsAt,
+		EndsAt:            endsAt,
+	}
+	if in.dryRun {
+		const placeholder = "<resolved-after-create>"
+		return emitDryRunSteps(stdout, stderr, []dryRunStep{
+			{"create-playtest", createReq},
+			{"await-auto-open", &pb.AdminGetPlaytestRequest{Namespace: g.Namespace, PlaytestId: placeholder}},
+			{"await-auto-close", &pb.AdminGetPlaytestRequest{Namespace: g.Namespace, PlaytestId: placeholder}},
+			{"assert-system-transitions", &pb.ListAuditLogRequest{Namespace: g.Namespace, PlaytestId: placeholder, ActorFilter: "system", ActionFilter: "playtest.status_transition"}},
+		})
+	}
+
+	adminFactory, _ := mk(g, in.adminProfile)
+	createResp, code := flowInvoke(ctx, stdout, stderr, g, adminFactory, "create-playtest",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.CreatePlaytest(cctx, createReq)
+		})
+	if code != exitOK {
+		return code
+	}
+	cp, ok := createResp.(*pb.CreatePlaytestResponse)
+	if !ok || cp.Playtest == nil || cp.Playtest.Id == "" {
+		writeFlowFailure(stdout, stderr, "create-playtest", "Internal", "CreatePlaytest response missing playtest.id")
+		return exitClientError
+	}
+	playtestID := cp.Playtest.Id
+
+	if code := flowGoldenM4AwaitStatus(ctx, stdout, stderr, g, adminFactory, "await-auto-open", playtestID, pb.PlaytestStatus_PLAYTEST_STATUS_OPEN, in.pollInterval, in.pollTimeoutOpen); code != exitOK {
+		return code
+	}
+	if code := flowGoldenM4AwaitStatus(ctx, stdout, stderr, g, adminFactory, "await-auto-close", playtestID, pb.PlaytestStatus_PLAYTEST_STATUS_CLOSED, in.pollInterval, in.pollTimeoutClose); code != exitOK {
+		return code
+	}
+	return flowGoldenM4AssertSystemTransitions(ctx, stdout, stderr, g, adminFactory, playtestID)
+}
+
+func flowGoldenM4AwaitStatus(ctx context.Context, stdout, stderr io.Writer, g *Globals, admin playtestClientFactory, label, playtestID string, want pb.PlaytestStatus, interval, timeout time.Duration) int {
+	client, callCtx, closeFn, err := admin(ctx)
+	if err != nil {
+		writeFlowFailure(stdout, stderr, label, "Unavailable", fmt.Sprintf("dial: %v", err))
+		return exitTransportError
+	}
+	defer closeFn() //nolint:errcheck // best-effort close on a CLI exit path.
+
+	deadline := time.Now().Add(timeout)
+	var last *pb.AdminGetPlaytestResponse
+	for {
+		perCallCtx, cancel := context.WithTimeout(callCtx, g.Timeout)
+		resp, err := client.AdminGetPlaytest(perCallCtx, &pb.AdminGetPlaytestRequest{Namespace: g.Namespace, PlaytestId: playtestID})
+		cancel()
+		if err != nil {
+			st, _ := status.FromError(err)
+			writeFlowFailure(stdout, stderr, label, st.Code().String(), st.Message())
+			return exitCodeForGRPC(st.Code())
+		}
+		last = resp
+		if resp.GetPlaytest().GetStatus() == want {
+			if err := writeFlowSuccess(stdout, label, resp); err != nil {
+				fmt.Fprintf(stderr, "flow: %v\n", err)
+				return exitLocalError
+			}
+			return exitOK
+		}
+		if time.Now().After(deadline) {
+			writeFlowFailure(stdout, stderr, label, "DeadlineExceeded",
+				fmt.Sprintf("playtest stuck at %s after %s (waiting for %s)", last.GetPlaytest().GetStatus(), timeout, want))
+			return exitClientError
+		}
+		select {
+		case <-ctx.Done():
+			writeFlowFailure(stdout, stderr, label, "Canceled", ctx.Err().Error())
+			return exitClientError
+		case <-time.After(interval):
+		}
+	}
+}
+
+func flowGoldenM4AssertSystemTransitions(ctx context.Context, stdout, stderr io.Writer, g *Globals, admin playtestClientFactory, playtestID string) int {
+	resp, code := flowInvoke(ctx, stdout, stderr, g, admin, "assert-system-transitions",
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.ListAuditLog(cctx, &pb.ListAuditLogRequest{
+				Namespace:    g.Namespace,
+				PlaytestId:   playtestID,
+				ActorFilter:  "system",
+				ActionFilter: "playtest.status_transition",
+				PageSize:     200,
+			})
+		})
+	if code != exitOK {
+		return code
+	}
+	lr, ok := resp.(*pb.ListAuditLogResponse)
+	if !ok {
+		writeFlowFailure(stdout, stderr, "assert-system-transitions", "Internal", "ListAuditLog returned unexpected payload")
+		return exitClientError
+	}
+	if len(lr.Entries) < 2 {
+		writeFlowFailure(stdout, stderr, "assert-system-transitions", "FailedPrecondition",
+			fmt.Sprintf("expected ≥2 system-emitted playtest.status_transition rows, got %d", len(lr.Entries)))
+		return exitClientError
+	}
+	return exitOK
 }
 
 func writeJSONLine(w io.Writer, v any) error {

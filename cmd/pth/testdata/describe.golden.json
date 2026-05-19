@@ -576,6 +576,61 @@
       "example": "pth --namespace mygame flow golden-m3 --slug e2e-m3 --admin-profile admin --player-profile player"
     },
     {
+      "name": "flow golden-m4",
+      "milestone": "M4",
+      "description": "Composite: create playtest (DRAFT + startsAt/endsAt set) → await auto-open → await auto-close → assert ≥2 system playtest.status_transition audit rows. Four NDJSON lines, stop-on-first-failure (cli.md §6.4, STATUS_M4 phase 8).",
+      "requiredFlags": [
+        {
+          "name": "--slug",
+          "description": "playtest slug (PRD §5.1 regex ^[a-z0-9-]{3,50}$)",
+          "valueType": "string"
+        },
+        {
+          "name": "--admin-profile",
+          "description": "credential profile for admin steps (create, schedule-info, audit list)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--title",
+          "description": "playtest title (default: 'Playtest \u003cslug\u003e')",
+          "valueType": "string"
+        },
+        {
+          "name": "--start-offset",
+          "description": "how far in the future to set starts_at (default 2s)",
+          "valueType": "duration"
+        },
+        {
+          "name": "--end-offset",
+          "description": "how far in the future to set ends_at (default 4s)",
+          "valueType": "duration"
+        },
+        {
+          "name": "--poll-interval",
+          "description": "schedule-info poll cadence (default 250ms)",
+          "valueType": "duration"
+        },
+        {
+          "name": "--poll-timeout-open",
+          "description": "max wait for DRAFT→OPEN (default 15s)",
+          "valueType": "duration"
+        },
+        {
+          "name": "--poll-timeout-close",
+          "description": "max wait for OPEN→CLOSED (default 15s)",
+          "valueType": "duration"
+        },
+        {
+          "name": "--dry-run",
+          "description": "print every step's request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame flow golden-m4 --slug e2e-m4 --admin-profile admin"
+    },
+    {
       "name": "playtest create",
       "milestone": "M1",
       "description": "Create a playtest. Admin token required. Mutable fields are PRD-whitelisted (cli.md §6.1, PRD §5.1).",
@@ -798,6 +853,26 @@
         }
       ],
       "example": "pth --namespace mygame --profile admin playtest list"
+    },
+    {
+      "name": "playtest schedule-info",
+      "milestone": "M4",
+      "description": "Admin: print {slug, status, startsAt, endsAt, nextAutoTransition} for a playtest. Reads through AdminGetPlaytest (cli.md §6.4, STATUS_M4 phase 7).",
+      "requiredFlags": [
+        {
+          "name": "--id",
+          "description": "ULID identifier",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin playtest schedule-info --id 01J0..."
     },
     {
       "name": "playtest transition",

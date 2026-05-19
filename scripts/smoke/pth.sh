@@ -275,6 +275,13 @@ del_dry=$("$PTH_BIN" --namespace smoke playtest delete --id p-smoke --dry-run)
 [[ "$(jq -r '.playtest_id' <<<"$del_dry")" == "p-smoke" ]] \
     || fail "playtest delete dry-run playtest_id mismatch: $del_dry"
 
+log "pth playtest schedule-info --dry-run echoes the underlying AdminGetPlaytestRequest"
+sched_dry=$("$PTH_BIN" --namespace smoke playtest schedule-info --id p-smoke --dry-run)
+[[ "$(jq -r '.namespace' <<<"$sched_dry")" == "smoke" ]] \
+    || fail "playtest schedule-info dry-run namespace mismatch: $sched_dry"
+[[ "$(jq -r '.playtest_id' <<<"$sched_dry")" == "p-smoke" ]] \
+    || fail "playtest schedule-info dry-run playtest_id mismatch: $sched_dry"
+
 log "pth playtest transition --dry-run normalizes short status"
 trans_dry=$("$PTH_BIN" --namespace smoke playtest transition --id p-smoke --to OPEN --dry-run)
 [[ "$(jq -r '.target_status' <<<"$trans_dry")" == "PLAYTEST_STATUS_OPEN" ]] \
@@ -488,6 +495,27 @@ while IFS= read -r line; do
         || fail "flow golden-m3 dry-run line $((i+1)) status=$status, want DRY_RUN"
     i=$((i+1))
 done <<<"$flow_dry_m3"
+
+# --- pth flow golden-m4 --dry-run (unconditional) ---------------------
+# STATUS_M4 phase 8: four NDJSON steps with status=DRY_RUN. Window-
+# enforcement flow drives create-playtest (with startsAt/endsAt set)
+# → await-auto-open → await-auto-close → assert-system-transitions.
+log "pth flow golden-m4 --dry-run emits 4 NDJSON steps without dialling"
+flow_dry_m4=$("$PTH_BIN" --namespace smoke flow golden-m4 --slug demo-flow-m4 --dry-run)
+flow_dry_m4_lines=$(printf '%s\n' "$flow_dry_m4" | wc -l | tr -d ' ')
+[[ "$flow_dry_m4_lines" -eq 4 ]] \
+    || { printf '%s\n' "$flow_dry_m4" >&2; fail "flow golden-m4 dry-run lines=$flow_dry_m4_lines, want 4"; }
+expected_steps_m4=("create-playtest" "await-auto-open" "await-auto-close" "assert-system-transitions")
+i=0
+while IFS= read -r line; do
+    step=$(jq -r '.step' <<<"$line")
+    status=$(jq -r '.status' <<<"$line")
+    [[ "$step" == "${expected_steps_m4[$i]}" ]] \
+        || fail "flow golden-m4 dry-run line $((i+1)) step=$step, want ${expected_steps_m4[$i]}"
+    [[ "$status" == "DRY_RUN" ]] \
+        || fail "flow golden-m4 dry-run line $((i+1)) status=$status, want DRY_RUN"
+    i=$((i+1))
+done <<<"$flow_dry_m4"
 
 # --- pth M2 subcommand catalogue presence -----------------------------
 # Phase 12 commits the §6.2 surface to the catalogue. The byte-exact

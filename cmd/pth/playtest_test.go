@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
 	"google.golang.org/grpc"
@@ -670,6 +671,124 @@ func TestRunPlaytestTransition_NormalizesShortStatus(t *testing.T) {
 	}
 }
 
+func TestRunPlaytestScheduleInfo_DryRun(t *testing.T) {
+	stub := &stubPlaytestClient{
+		adminGetFunc: func(_ context.Context, _ *pb.AdminGetPlaytestRequest, _ ...grpc.CallOption) (*pb.AdminGetPlaytestResponse, error) {
+			t.Fatal("dry-run must not dial")
+			return nil, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runPlaytest(t.Context(), &stdout, &stderr, g, []string{"schedule-info", "--id", "p1", "--dry-run"}, factoryFor(stub))
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("stdout not JSON: %v: %q", err, stdout.String())
+	}
+	if got["namespace"] != testNamespaceDev || got["playtest_id"] != "p1" {
+		t.Errorf("dry-run body wrong: %v", got)
+	}
+}
+
+func TestRunPlaytestScheduleInfo_DraftWithStartsAtRendersNextOpen(t *testing.T) {
+	startsAt := timestamppb.New(timeMust("2026-06-01T10:00:00Z"))
+	stub := &stubPlaytestClient{
+		adminGetFunc: func(_ context.Context, _ *pb.AdminGetPlaytestRequest, _ ...grpc.CallOption) (*pb.AdminGetPlaytestResponse, error) {
+			return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{
+				Id:       "p1",
+				Slug:     "summer-alpha",
+				Status:   pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT,
+				StartsAt: startsAt,
+			}}, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runPlaytest(t.Context(), &stdout, &stderr, g, []string{"schedule-info", "--id", "p1"}, factoryFor(stub))
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("stdout not JSON: %v: %q", err, stdout.String())
+	}
+	if got["slug"] != "summer-alpha" {
+		t.Errorf("slug=%v, want summer-alpha", got["slug"])
+	}
+	if got["status"] != "PLAYTEST_STATUS_DRAFT" {
+		t.Errorf("status=%v, want PLAYTEST_STATUS_DRAFT", got["status"])
+	}
+	next, ok := got["nextAutoTransition"].(map[string]any)
+	if !ok {
+		t.Fatalf("nextAutoTransition not an object: %v", got["nextAutoTransition"])
+	}
+	if next["to"] != "PLAYTEST_STATUS_OPEN" {
+		t.Errorf("nextAutoTransition.to=%v, want PLAYTEST_STATUS_OPEN", next["to"])
+	}
+	if next["at"] != "2026-06-01T10:00:00Z" {
+		t.Errorf("nextAutoTransition.at=%v", next["at"])
+	}
+}
+
+func TestRunPlaytestScheduleInfo_OpenWithEndsAtRendersNextClosed(t *testing.T) {
+	endsAt := timestamppb.New(timeMust("2026-06-08T10:00:00Z"))
+	stub := &stubPlaytestClient{
+		adminGetFunc: func(_ context.Context, _ *pb.AdminGetPlaytestRequest, _ ...grpc.CallOption) (*pb.AdminGetPlaytestResponse, error) {
+			return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{
+				Id:     "p1",
+				Slug:   "summer-alpha",
+				Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN,
+				EndsAt: endsAt,
+			}}, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runPlaytest(t.Context(), &stdout, &stderr, g, []string{"schedule-info", "--id", "p1"}, factoryFor(stub))
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("stdout not JSON: %v: %q", err, stdout.String())
+	}
+	next, ok := got["nextAutoTransition"].(map[string]any)
+	if !ok {
+		t.Fatalf("nextAutoTransition not an object: %v", got["nextAutoTransition"])
+	}
+	if next["to"] != "PLAYTEST_STATUS_CLOSED" {
+		t.Errorf("nextAutoTransition.to=%v", next["to"])
+	}
+}
+
+func TestRunPlaytestScheduleInfo_NoDatesNoNext(t *testing.T) {
+	stub := &stubPlaytestClient{
+		adminGetFunc: func(_ context.Context, _ *pb.AdminGetPlaytestRequest, _ ...grpc.CallOption) (*pb.AdminGetPlaytestResponse, error) {
+			return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{
+				Id:     "p1",
+				Slug:   "manual",
+				Status: pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT,
+			}}, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runPlaytest(t.Context(), &stdout, &stderr, g, []string{"schedule-info", "--id", "p1"}, factoryFor(stub))
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("stdout not JSON: %v: %q", err, stdout.String())
+	}
+	if got["nextAutoTransition"] != nil {
+		t.Errorf("nextAutoTransition=%v, want nil", got["nextAutoTransition"])
+	}
+}
+
 func TestRunPlaytestTransition_RejectsUnknownStatus(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
@@ -686,4 +805,12 @@ func TestRunPlaytestTransition_RejectsUnknownStatus(t *testing.T) {
 
 func writeFile(path, contents string) error {
 	return os.WriteFile(path, []byte(contents), 0o600)
+}
+
+func timeMust(rfc3339 string) time.Time {
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		panic(err)
+	}
+	return t
 }

@@ -132,7 +132,9 @@ Tear down:
 ./pth user delete --user-id "$USER_ID" --yes
 ```
 
-The tests under [`e2e/golden_m1_test.go`](e2e/golden_m1_test.go), [`e2e/golden_m2_test.go`](e2e/golden_m2_test.go), and [`e2e/golden_m3_test.go`](e2e/golden_m3_test.go) wrap the same sequences behind `go test ./e2e/...` for CI / operator verification — see [`docs/cli.md` §7.4](docs/cli.md).
+The tests under [`e2e/golden_m1_test.go`](e2e/golden_m1_test.go), [`e2e/golden_m2_test.go`](e2e/golden_m2_test.go), [`e2e/golden_m3_test.go`](e2e/golden_m3_test.go), and [`e2e/golden_m4_test.go`](e2e/golden_m4_test.go) wrap the same sequences behind `go test ./e2e/...` for CI / operator verification — see [`docs/cli.md` §7.4](docs/cli.md).
+
+**Window enforcement (M4)** — `Playtest.startsAt` / `Playtest.endsAt` are no longer display-only. A background `internal/window/` worker auto-transitions `DRAFT → OPEN` at `startsAt` and `OPEN → CLOSED` at `endsAt` (PRD §5.1, [`docs/STATUS_M4.md`](docs/STATUS_M4.md)). `pth flow golden-m4 --slug e2e-m4 --admin-profile admin` exercises the path: create with a window, await the auto-open + auto-close, assert two system-attributed `playtest.status_transition` audit rows.
 
 ## Architecture at a glance
 

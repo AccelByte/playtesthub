@@ -17,11 +17,19 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message
 } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
+import {
+  DATE_RANGE_HELP,
+  DATE_RANGE_LABEL,
+  autoTransitionPreview,
+  dateRangeUtcFromEvent,
+  dateRangeWindowRule
+} from './window'
 import { useEffect, useMemo, useState } from 'react'
 import { Route, Routes, useNavigate, useParams } from 'react-router'
 import type { V1Applicant } from './playtesthubapi/generated-definitions/V1Applicant'
@@ -35,6 +43,7 @@ import type { V1SurveyAnswer } from './playtesthubapi/generated-definitions/V1Su
 import type { V1SurveyQuestion } from './playtesthubapi/generated-definitions/V1SurveyQuestion'
 import type { V1SurveyResponse } from './playtesthubapi/generated-definitions/V1SurveyResponse'
 import type { V1UploadCodesRejection } from './playtesthubapi/generated-definitions/V1UploadCodesRejection'
+import type { V1WorkerHealthEntry } from './playtesthubapi/generated-definitions/V1WorkerHealthEntry'
 import {
   Key_PlaytesthubServiceAdmin,
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdApproveMutation,
@@ -53,6 +62,7 @@ import {
   usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetPlaytests,
   usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId,
+  usePlaytesthubServiceAdminApi_GetWorkersHealth,
   usePlaytesthubServiceAdminApi_PatchPlaytest_ByPlaytestIdMutation,
   usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation
 } from './playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
@@ -102,6 +112,14 @@ const STATUS_TAG: Record<string, { text: string; color: string }> = {
   [PlaytestStatus.CLOSED]: { text: 'Closed', color: 'red' }
 }
 
+function StatusTag({ status, startsAt, endsAt }: { status: string | null | undefined; startsAt?: string | null; endsAt?: string | null }) {
+  const info = STATUS_TAG[status ?? ''] ?? { text: status ?? '—', color: 'default' }
+  const preview = autoTransitionPreview(status, startsAt, endsAt)
+  const tag = <Tag color={info.color}>{info.text}</Tag>
+  if (!preview) return tag
+  return <Tooltip title={preview}>{tag}</Tooltip>
+}
+
 const DISTRIBUTION_LABEL: Record<string, string> = {
   [DistributionModel.STEAM_KEYS]: 'Steam keys',
   [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign'
@@ -115,9 +133,33 @@ function toastError(verb: string) {
   return (err: ApiError) => message.error(err?.response?.data?.errorMessage ?? `Failed to ${verb}`)
 }
 
+function WorkerHealthBanner() {
+  const { sdk } = useAppUIContext()
+  const { data } = usePlaytesthubServiceAdminApi_GetWorkersHealth(
+    sdk,
+    {},
+    { refetchInterval: 30_000 }
+  )
+  const workers = (data?.workers ?? []) as V1WorkerHealthEntry[]
+  const stale = workers.filter(w => w.stale)
+  if (stale.length === 0) return null
+  const names = stale.map(w => w.name ?? '').filter(Boolean).join(', ')
+  return (
+    <Alert
+      type="error"
+      showIcon
+      style={{ marginBottom: 12 }}
+      message="Background worker stale"
+      description={`${names} hasn't ticked recently. Auto-transitions are paused — flip status manually via the Publish/Close buttons until ops investigates.`}
+      data-testid="worker-health-banner"
+    />
+  )
+}
+
 export function FederatedElement() {
   return (
     <div style={{ padding: 16 }}>
+      <WorkerHealthBanner />
       <Routes>
         <Route path="/" index element={<PlaytestsListPage />} />
         <Route path="new" element={<PlaytestCreatePage />} />
@@ -162,10 +204,7 @@ function PlaytestsListPage() {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: (value: string | null | undefined) => {
-        const info = STATUS_TAG[value ?? ''] ?? { text: value ?? '—', color: 'default' }
-        return <Tag color={info.color}>{info.text}</Tag>
-      }
+      render: (_: unknown, row: V1Playtest) => <StatusTag status={row.status} startsAt={row.startsAt} endsAt={row.endsAt} />
     },
     {
       title: 'Distribution',
@@ -372,8 +411,13 @@ function PlaytestCreatePage() {
         <Form.Item label="Platforms" name="platforms" rules={[{ required: true, message: 'Pick at least one' }]}>
           <Select mode="multiple" options={PLATFORMS.map(p => ({ value: p.value, label: p.label }))} />
         </Form.Item>
-        <Form.Item label="Starts / Ends (display-only in MVP)" name="dateRange">
-          <DatePicker.RangePicker showTime style={{ width: '100%' }} />
+        <Form.Item
+          label={DATE_RANGE_LABEL}
+          name="dateRange"
+          extra={DATE_RANGE_HELP}
+          rules={[dateRangeWindowRule]}
+          getValueFromEvent={dateRangeUtcFromEvent}>
+          <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
         </Form.Item>
         <Form.Item name="ndaRequired" valuePropName="checked">
           <Checkbox>Require NDA</Checkbox>
@@ -451,8 +495,8 @@ function PlaytestEditPage() {
 
   const initialValues = useMemo<Partial<FormValues>>(() => {
     if (!playtest) return {}
-    const start = playtest.startsAt ? dayjs(playtest.startsAt) : undefined
-    const end = playtest.endsAt ? dayjs(playtest.endsAt) : undefined
+    const start = playtest.startsAt ? dayjs.utc(playtest.startsAt) : undefined
+    const end = playtest.endsAt ? dayjs.utc(playtest.endsAt) : undefined
     return {
       title: playtest.title ?? '',
       description: playtest.description ?? undefined,
@@ -508,8 +552,13 @@ function PlaytestEditPage() {
         <Form.Item label="Platforms" name="platforms" rules={[{ required: true, message: 'Pick at least one' }]}>
           <Select mode="multiple" options={PLATFORMS.map(p => ({ value: p.value, label: p.label }))} />
         </Form.Item>
-        <Form.Item label="Starts / Ends (display-only in MVP)" name="dateRange">
-          <DatePicker.RangePicker showTime style={{ width: '100%' }} />
+        <Form.Item
+          label={DATE_RANGE_LABEL}
+          name="dateRange"
+          extra={DATE_RANGE_HELP}
+          rules={[dateRangeWindowRule]}
+          getValueFromEvent={dateRangeUtcFromEvent}>
+          <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
         </Form.Item>
         <Form.Item name="ndaRequired" valuePropName="checked">
           <Checkbox>Require NDA</Checkbox>

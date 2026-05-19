@@ -281,6 +281,25 @@ var catalogue = []commandSpec{
 		Example: "pth --namespace mygame flow golden-m3 --slug e2e-m3 --admin-profile admin --player-profile player",
 	},
 	{
+		Name:        "flow golden-m4",
+		Milestone:   "M4",
+		Description: "Composite: create playtest (DRAFT + startsAt/endsAt set) → await auto-open → await auto-close → assert ≥2 system playtest.status_transition audit rows. Four NDJSON lines, stop-on-first-failure (cli.md §6.4, STATUS_M4 phase 8).",
+		RequiredFlags: []flagSpec{
+			slugFlag(),
+			{Name: "--admin-profile", Description: "credential profile for admin steps (create, schedule-info, audit list)", ValueType: "string"},
+		},
+		OptionalFlags: []flagSpec{
+			{Name: "--title", Description: "playtest title (default: 'Playtest <slug>')", ValueType: "string"},
+			{Name: "--start-offset", Description: "how far in the future to set starts_at (default 2s)", ValueType: "duration"},
+			{Name: "--end-offset", Description: "how far in the future to set ends_at (default 4s)", ValueType: "duration"},
+			{Name: "--poll-interval", Description: "schedule-info poll cadence (default 250ms)", ValueType: "duration"},
+			{Name: "--poll-timeout-open", Description: "max wait for DRAFT→OPEN (default 15s)", ValueType: "duration"},
+			{Name: "--poll-timeout-close", Description: "max wait for OPEN→CLOSED (default 15s)", ValueType: "duration"},
+			{Name: "--dry-run", Description: "print every step's request JSON and exit without dialling", ValueType: "bool"},
+		},
+		Example: "pth --namespace mygame flow golden-m4 --slug e2e-m4 --admin-profile admin",
+	},
+	{
 		Name:          "playtest create",
 		Milestone:     "M1",
 		Description:   "Create a playtest. Admin token required. Mutable fields are PRD-whitelisted (cli.md §6.1, PRD §5.1).",
@@ -355,6 +374,14 @@ var catalogue = []commandSpec{
 		Description:   "List all playtests in --namespace. Admin token required (cli.md §6.1).",
 		OptionalFlags: []flagSpec{dryRunFlag()},
 		Example:       "pth --namespace mygame --profile admin playtest list",
+	},
+	{
+		Name:          "playtest schedule-info",
+		Milestone:     "M4",
+		Description:   "Admin: print {slug, status, startsAt, endsAt, nextAutoTransition} for a playtest. Reads through AdminGetPlaytest (cli.md §6.4, STATUS_M4 phase 7).",
+		RequiredFlags: []flagSpec{idFlag()},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin playtest schedule-info --id 01J0...",
 	},
 	{
 		Name:        "playtest transition",

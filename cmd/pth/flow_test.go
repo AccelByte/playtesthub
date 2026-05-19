@@ -732,3 +732,145 @@ func equalSlices(a, b []string) bool {
 	}
 	return true
 }
+
+func TestRunFlowGoldenM4_DryRunEmitsFourSteps(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rec := &flowFactoryRecorder{}
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m4", "--slug", "demo-window", "--dry-run"}, rec.factory)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	if len(rec.requested) != 0 {
+		t.Errorf("dry-run should not request factories: %v", rec.requested)
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	wantSteps := []string{"create-playtest", "await-auto-open", "await-auto-close", "assert-system-transitions"}
+	if got, want := len(lines), len(wantSteps); got != want {
+		t.Fatalf("dry-run emitted %d lines, want %d (stdout=%q)", got, want, stdout.String())
+	}
+	for i, raw := range lines {
+		var got struct {
+			Step    string          `json:"step"`
+			Status  string          `json:"status"`
+			Request json.RawMessage `json:"request"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("line %d: %v: %q", i, err, raw)
+		}
+		if got.Step != wantSteps[i] {
+			t.Errorf("line %d step=%q, want %q", i, got.Step, wantSteps[i])
+		}
+		if got.Status != "DRY_RUN" {
+			t.Errorf("line %d status=%q, want DRY_RUN", i, got.Status)
+		}
+	}
+}
+
+func TestRunFlowGoldenM4_HappyPathStitchesStatusFlips(t *testing.T) {
+	const createdID = "01J0M4PLAYTEST"
+	getCalls := 0
+	adminStub := &stubPlaytestClient{
+		createFunc: func(_ context.Context, in *pb.CreatePlaytestRequest, _ ...grpc.CallOption) (*pb.CreatePlaytestResponse, error) {
+			if in.StartsAt == nil || in.EndsAt == nil {
+				t.Errorf("create_request missing window: starts=%v ends=%v", in.StartsAt, in.EndsAt)
+			}
+			if in.DistributionModel != pb.DistributionModel_DISTRIBUTION_MODEL_STEAM_KEYS {
+				t.Errorf("distribution=%v want STEAM_KEYS", in.DistributionModel)
+			}
+			return &pb.CreatePlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Slug: in.Slug, Status: pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT}}, nil
+		},
+		adminGetFunc: func(_ context.Context, _ *pb.AdminGetPlaytestRequest, _ ...grpc.CallOption) (*pb.AdminGetPlaytestResponse, error) {
+			getCalls++
+			// First poll → still DRAFT, second → OPEN, third → still OPEN, fourth → CLOSED.
+			switch getCalls {
+			case 1:
+				return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT}}, nil
+			case 2:
+				return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN}}, nil
+			case 3:
+				return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_OPEN}}, nil
+			default:
+				return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_CLOSED}}, nil
+			}
+		},
+		listAuditLogFunc: func(_ context.Context, in *pb.ListAuditLogRequest, _ ...grpc.CallOption) (*pb.ListAuditLogResponse, error) {
+			if in.ActorFilter != "system" || in.ActionFilter != "playtest.status_transition" {
+				t.Errorf("audit filter=actor=%q action=%q want system/playtest.status_transition", in.ActorFilter, in.ActionFilter)
+			}
+			return &pb.ListAuditLogResponse{Entries: []*pb.AuditLogEntry{{Id: "a1"}, {Id: "a2"}}}, nil
+		},
+	}
+	rec := &flowFactoryRecorder{byProfile: map[string]*stubPlaytestClient{"admin": adminStub}}
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m4", "--slug", "demo-window", "--admin-profile", "admin",
+			"--start-offset", "1ms", "--end-offset", "2ms", "--poll-interval", "1ms",
+			"--poll-timeout-open", "1s", "--poll-timeout-close", "1s"},
+		rec.factory)
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)\nstdout=%s", code, exitOK, stderr.String(), stdout.String())
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	wantSteps := []string{"create-playtest", "await-auto-open", "await-auto-close", "assert-system-transitions"}
+	if got, want := len(lines), len(wantSteps); got != want {
+		t.Fatalf("emitted %d lines, want %d", got, want)
+	}
+	for i, raw := range lines {
+		var got struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("line %d: %v: %q", i, err, raw)
+		}
+		if got.Step != wantSteps[i] {
+			t.Errorf("line %d step=%q want %q", i, got.Step, wantSteps[i])
+		}
+		if got.Status != statusOK {
+			t.Errorf("line %d status=%q want OK", i, got.Status)
+		}
+	}
+}
+
+func TestRunFlowGoldenM4_TimeoutSurfacesFailedLine(t *testing.T) {
+	const createdID = "01J0M4STUCK"
+	adminStub := &stubPlaytestClient{
+		createFunc: func(_ context.Context, in *pb.CreatePlaytestRequest, _ ...grpc.CallOption) (*pb.CreatePlaytestResponse, error) {
+			return &pb.CreatePlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Slug: in.Slug, Status: pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT}}, nil
+		},
+		adminGetFunc: func(_ context.Context, _ *pb.AdminGetPlaytestRequest, _ ...grpc.CallOption) (*pb.AdminGetPlaytestResponse, error) {
+			return &pb.AdminGetPlaytestResponse{Playtest: &pb.Playtest{Id: createdID, Status: pb.PlaytestStatus_PLAYTEST_STATUS_DRAFT}}, nil
+		},
+	}
+	rec := &flowFactoryRecorder{byProfile: map[string]*stubPlaytestClient{"admin": adminStub}}
+	var stdout, stderr bytes.Buffer
+	code := runFlow(t.Context(), &stdout, &stderr, newFlowGlobals(),
+		[]string{"golden-m4", "--slug", "demo-stuck", "--admin-profile", "admin",
+			"--poll-interval", "1ms", "--poll-timeout-open", "10ms"},
+		rec.factory)
+	if code != exitClientError {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitClientError, stderr.String())
+	}
+	lines := splitNDJSON(stdout.Bytes())
+	// create-playtest OK + await-auto-open FAILED = 2 lines total.
+	if got := len(lines); got != 2 {
+		t.Fatalf("emitted %d lines, want 2: %s", got, stdout.String())
+	}
+	var last struct {
+		Step   string `json:"step"`
+		Status string `json:"status"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(lines[1], &last); err != nil {
+		t.Fatalf("line 1: %v", err)
+	}
+	if last.Step != "await-auto-open" || last.Status != statusFailed {
+		t.Errorf("got step=%q status=%q, want await-auto-open/FAILED", last.Step, last.Status)
+	}
+	if last.Error.Code != "DeadlineExceeded" {
+		t.Errorf("error code=%q, want DeadlineExceeded", last.Error.Code)
+	}
+}

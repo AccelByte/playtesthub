@@ -993,6 +993,43 @@
         ]
       }
     },
+    "/v1/admin/namespaces/{namespace}/workers/health": {
+      "get": {
+        "summary": "Worker leader-lease snapshot for the admin health banner (M4)",
+        "description": "Returns one entry per registered background worker (reclaim_worker, window_worker). stale := now \u003e expires_at + 2*tick_interval. Missing rows surface as lease_holder='' with stale=true so a never-ticked worker is unmissable. Reads leader_lease directly — no new table.",
+        "operationId": "PlaytesthubService_GetWorkerHealth",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkerHealthResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
     "/v1/player/discord/exchange": {
       "post": {
         "summary": "Exchange a Discord OAuth authorization code for an AGS access token (unauthenticated)",
@@ -1889,6 +1926,18 @@
         }
       }
     },
+    "v1GetWorkerHealthResponse": {
+      "type": "object",
+      "properties": {
+        "workers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkerHealthEntry"
+          }
+        }
+      }
+    },
     "v1ListApplicantsResponse": {
       "type": "object",
       "properties": {
@@ -2401,6 +2450,29 @@
           }
         }
       }
+    },
+    "v1WorkerHealthEntry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "leaseHolder": {
+          "type": "string"
+        },
+        "lastTickAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      },
+      "description": "WorkerHealthEntry mirrors one row of the leader_lease table with the\naddition of a server-computed `stale` flag (now \u003e expires_at +\n2*tick_interval per STATUS_M4.md phase 5). Workers that have never\nelected a leader return with lease_holder=\"\" and stale=true so the\nadmin banner makes a never-ticked worker unmissable."
     }
   },
   "securityDefinitions": {

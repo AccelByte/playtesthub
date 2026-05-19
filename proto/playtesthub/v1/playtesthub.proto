@@ -498,6 +498,24 @@ service PlaytesthubService {
       }
     };
   }
+
+  // ---------------- M4 ----------------
+
+  rpc GetWorkerHealth(GetWorkerHealthRequest) returns (GetWorkerHealthResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/workers/health"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Worker leader-lease snapshot for the admin health banner (M4)"
+      description: "Returns one entry per registered background worker (reclaim_worker, window_worker). stale := now > expires_at + 2*tick_interval. Missing rows surface as lease_holder='' with stale=true so a never-ticked worker is unmissable. Reads leader_lease directly — no new table."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
 }
 
 // ---------------- enums ----------------
@@ -1101,6 +1119,27 @@ message RetryFailedDmsResponse {
   // these stay last_dm_status=FAILED with last_dm_error='dm_queue_overflow'
   // (PRD §5.5).
   int32 overflow = 2;
+}
+
+message GetWorkerHealthRequest {
+  string namespace = 1;
+}
+
+// WorkerHealthEntry mirrors one row of the leader_lease table with the
+// addition of a server-computed `stale` flag (now > expires_at +
+// 2*tick_interval per STATUS_M4.md phase 5). Workers that have never
+// elected a leader return with lease_holder="" and stale=true so the
+// admin banner makes a never-ticked worker unmissable.
+message WorkerHealthEntry {
+  string name = 1;
+  string lease_holder = 2;
+  google.protobuf.Timestamp last_tick_at = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  bool stale = 5;
+}
+
+message GetWorkerHealthResponse {
+  repeated WorkerHealthEntry workers = 1;
 }
 
 // ---------------- swagger root ----------------

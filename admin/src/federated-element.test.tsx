@@ -1,8 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import dayjs, { type Dayjs } from 'dayjs'
+import utc from 'dayjs/plugin/utc'
 import { MemoryRouter } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+dayjs.extend(utc)
 
 vi.mock('@accelbyte/sdk-extend-app-ui', () => ({
   useAppUIContext: () => ({
@@ -31,6 +35,7 @@ const mockEditSurveyMutation = vi.fn()
 const mockGetSurveyResponses = vi.fn()
 const mockGetSurveyPlayer = vi.fn()
 const mockGetAuditLog = vi.fn()
+const mockGetWorkersHealth = vi.fn()
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -60,7 +65,8 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockCreateSurveyMutation(...args),
   usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockEditSurveyMutation(...args),
   usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId: (...args: unknown[]) => mockGetSurveyResponses(...args),
-  usePlaytesthubServiceAdminApi_GetAuditLog_ByPlaytestId: (...args: unknown[]) => mockGetAuditLog(...args)
+  usePlaytesthubServiceAdminApi_GetAuditLog_ByPlaytestId: (...args: unknown[]) => mockGetAuditLog(...args),
+  usePlaytesthubServiceAdminApi_GetWorkersHealth: (...args: unknown[]) => mockGetWorkersHealth(...args)
 }))
 
 vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
@@ -68,6 +74,7 @@ vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', ()
 }))
 
 import { FederatedElement } from './federated-element'
+import { dateRangeWindowRule } from './window'
 
 function renderAt(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -100,6 +107,7 @@ beforeEach(() => {
   mockGetSurveyResponses.mockReset()
   mockGetSurveyPlayer.mockReset()
   mockGetAuditLog.mockReset()
+  mockGetWorkersHealth.mockReset()
 
   // Default: empty list + no-op mutations.
   mockGetPlaytests.mockReturnValue({ data: { playtests: [] }, isLoading: false, error: null, refetch: vi.fn() })
@@ -121,6 +129,7 @@ beforeEach(() => {
   mockGetSurveyResponses.mockReturnValue({ data: { responses: [] }, isLoading: false, error: null, refetch: vi.fn() })
   mockGetSurveyPlayer.mockReturnValue({ data: undefined, isLoading: false, isError: false, error: null })
   mockGetAuditLog.mockReturnValue({ data: { entries: [], nextPageToken: '' }, isLoading: false, error: null, refetch: vi.fn() })
+  mockGetWorkersHealth.mockReturnValue({ data: { workers: [] }, isLoading: false, error: null })
 })
 
 describe('PlaytestsListPage', () => {
@@ -879,5 +888,142 @@ describe('AuditLogPage', () => {
       const lastCall = mockGetAuditLog.mock.calls.at(-1)
       expect(lastCall?.[1].queryParams.pageToken).toBe('cursor-page-2')
     })
+  })
+})
+
+describe('Playtest window (M4)', () => {
+  it('labels create-form date range as UTC and surfaces auto-transition help', () => {
+    renderAt('/new')
+    expect(screen.getByText('Starts / Ends (UTC)')).toBeInTheDocument()
+    expect(screen.queryByText(/display-only in MVP/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/Auto-opens at start, auto-closes at end/i)).toBeInTheDocument()
+  })
+
+  it('labels edit-form date range as UTC', async () => {
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: {
+          id: 'pt_1',
+          slug: 'summer-alpha',
+          title: 'Summer Alpha',
+          platforms: ['PLATFORM_STEAM'],
+          distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+          ndaRequired: false,
+          startsAt: '2026-06-01T10:00:00Z',
+          endsAt: '2026-06-08T10:00:00Z'
+        }
+      },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/pt_1/edit')
+    await waitFor(() => expect(screen.getByDisplayValue('Summer Alpha')).toBeInTheDocument())
+    expect(screen.getByText('Starts / Ends (UTC)')).toBeInTheDocument()
+  })
+
+  it('validator rejects inverted + equal windows with byte-exact server message and accepts a valid window', async () => {
+    // Driving the antd RangePicker through userEvent in jsdom is fragile; the byte-exact server
+    // error string is owned by the validator rule, so we exercise it directly.
+    const inverted: [Dayjs, Dayjs] = [dayjs.utc('2026-06-08T10:00:00Z'), dayjs.utc('2026-06-01T10:00:00Z')]
+    await expect(dateRangeWindowRule.validator(undefined, inverted)).rejects.toThrow('ends_at must be after starts_at')
+    const equal: [Dayjs, Dayjs] = [dayjs.utc('2026-06-08T10:00:00Z'), dayjs.utc('2026-06-08T10:00:00Z')]
+    await expect(dateRangeWindowRule.validator(undefined, equal)).rejects.toThrow('ends_at must be after starts_at')
+    const valid: [Dayjs, Dayjs] = [dayjs.utc('2026-06-01T10:00:00Z'), dayjs.utc('2026-06-08T10:00:00Z')]
+    await expect(dateRangeWindowRule.validator(undefined, valid)).resolves.toBeUndefined()
+    const onlyStart: [Dayjs, null] = [dayjs.utc('2026-06-01T10:00:00Z'), null]
+    await expect(dateRangeWindowRule.validator(undefined, onlyStart)).resolves.toBeUndefined()
+    const onlyEnd: [null, Dayjs] = [null, dayjs.utc('2026-06-08T10:00:00Z')]
+    await expect(dateRangeWindowRule.validator(undefined, onlyEnd)).resolves.toBeUndefined()
+  })
+
+  it('renders an Auto-opens tooltip on DRAFT rows with startsAt set', async () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [
+          {
+            id: 'pt_1',
+            slug: 'summer-alpha',
+            title: 'Summer Alpha',
+            status: 'PLAYTEST_STATUS_DRAFT',
+            startsAt: dayjs.utc().add(2, 'hour').toISOString()
+          }
+        ]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/')
+    const user = userEvent.setup()
+    await user.hover(screen.getByText('Draft'))
+    const tip = await screen.findByRole('tooltip')
+    expect(tip.textContent).toMatch(/Auto-opens/)
+  })
+
+  it('renders an Auto-closes tooltip on OPEN rows with endsAt set', async () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [
+          {
+            id: 'pt_1',
+            slug: 'summer-alpha',
+            title: 'Summer Alpha',
+            status: 'PLAYTEST_STATUS_OPEN',
+            endsAt: dayjs.utc().add(3, 'day').toISOString()
+          }
+        ]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/')
+    const user = userEvent.setup()
+    await user.hover(screen.getByText('Open'))
+    const tip = await screen.findByRole('tooltip')
+    expect(tip.textContent).toMatch(/Auto-closes/)
+  })
+
+  it('shows a red Alert banner when any worker is stale', () => {
+    mockGetWorkersHealth.mockReturnValue({
+      data: {
+        workers: [
+          { name: 'reclaim-job', stale: false },
+          { name: 'window-worker', stale: true }
+        ]
+      },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/')
+    const banner = screen.getByTestId('worker-health-banner')
+    expect(banner).toBeInTheDocument()
+    expect(banner.textContent).toMatch(/window-worker/)
+    expect(banner.textContent).toMatch(/Auto-transitions are paused/)
+  })
+
+  it('does not render the banner when every worker is fresh', () => {
+    mockGetWorkersHealth.mockReturnValue({
+      data: { workers: [{ name: 'reclaim-job', stale: false }, { name: 'window-worker', stale: false }] },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/')
+    expect(screen.queryByTestId('worker-health-banner')).not.toBeInTheDocument()
+  })
+
+  it('does not render a tooltip on DRAFT rows without startsAt', () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [{ id: 'pt_1', slug: 'manual', title: 'Manual', status: 'PLAYTEST_STATUS_DRAFT' }]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/')
+    // No hover; tooltip should not have a trigger wrapper. Tag rendered raw.
+    expect(screen.getByText('Draft')).toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 })
