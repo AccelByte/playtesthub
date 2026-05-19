@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -249,6 +250,78 @@ func TestPlaytestTransitionStatus_CASMismatch(t *testing.T) {
 	_, err = store.TransitionStatus(ctx, testNamespace, created.ID, "DRAFT", "OPEN")
 	if !errors.Is(err, repo.ErrStatusCASMismatch) {
 		t.Errorf("race loser: got %v, want ErrStatusCASMismatch", err)
+	}
+}
+
+// M4 phase 3: ListDueForAutoTransition returns DRAFTs past starts_at and
+// OPENs past ends_at, but NOT rows without the relevant date set, soft-
+// deleted rows, or rows whose boundary is still in the future.
+func TestPlaytestListDueForAutoTransition(t *testing.T) {
+	truncateAll(t)
+	store := repo.NewPgPlaytestStore(testPool)
+	ctx := context.Background()
+
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+
+	// Due: DRAFT with starts_at in the past.
+	dueDraft := newSteamKeysPlaytest("due-draft")
+	dueDraft.StartsAt = &past
+	if _, err := store.Create(ctx, dueDraft); err != nil {
+		t.Fatalf("Create due-draft: %v", err)
+	}
+
+	// Due: OPEN with ends_at in the past.
+	dueOpen := newSteamKeysPlaytest("due-open")
+	dueOpen.EndsAt = &past
+	created, err := store.Create(ctx, dueOpen)
+	if err != nil {
+		t.Fatalf("Create due-open: %v", err)
+	}
+	if _, err := store.TransitionStatus(ctx, testNamespace, created.ID, "DRAFT", "OPEN"); err != nil {
+		t.Fatalf("transition due-open to OPEN: %v", err)
+	}
+
+	// Not due: DRAFT with starts_at in the future.
+	notYet := newSteamKeysPlaytest("not-yet")
+	notYet.StartsAt = &future
+	if _, err := store.Create(ctx, notYet); err != nil {
+		t.Fatalf("Create not-yet: %v", err)
+	}
+
+	// Not due: DRAFT with no starts_at at all (manual mode).
+	manual := newSteamKeysPlaytest("manual")
+	if _, err := store.Create(ctx, manual); err != nil {
+		t.Fatalf("Create manual: %v", err)
+	}
+
+	// Not due: soft-deleted DRAFT even with starts_at past.
+	deleted := newSteamKeysPlaytest("deleted-due")
+	deleted.StartsAt = &past
+	createdDel, err := store.Create(ctx, deleted)
+	if err != nil {
+		t.Fatalf("Create deleted-due: %v", err)
+	}
+	if err := store.SoftDelete(ctx, testNamespace, createdDel.ID); err != nil {
+		t.Fatalf("SoftDelete deleted-due: %v", err)
+	}
+
+	got, err := store.ListDueForAutoTransition(ctx, testNamespace, now)
+	if err != nil {
+		t.Fatalf("ListDueForAutoTransition: %v", err)
+	}
+	gotSlugs := make(map[string]bool, len(got))
+	for _, p := range got {
+		gotSlugs[p.Slug] = true
+	}
+	if !gotSlugs["due-draft"] || !gotSlugs["due-open"] {
+		t.Errorf("missing due rows; got %v", gotSlugs)
+	}
+	for _, s := range []string{"not-yet", "manual", "deleted-due"} {
+		if gotSlugs[s] {
+			t.Errorf("row %q should not be due; got %v", s, gotSlugs)
+		}
 	}
 }
 

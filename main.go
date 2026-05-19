@@ -29,6 +29,7 @@ import (
 
 	"github.com/anggorodewanto/playtesthub/internal/bootapp"
 	"github.com/anggorodewanto/playtesthub/internal/reclaim"
+	"github.com/anggorodewanto/playtesthub/internal/window"
 	"github.com/anggorodewanto/playtesthub/pkg/common"
 	"github.com/anggorodewanto/playtesthub/pkg/config"
 	"github.com/anggorodewanto/playtesthub/pkg/migrate"
@@ -221,6 +222,33 @@ func main() {
 		"leaseHolder", holderIDFromEnv(),
 		"reclaimIntervalSeconds", cfg.ReclaimIntervalSeconds,
 		"leaseTtlSeconds", cfg.LeaderLeaseTTLSeconds)
+
+	// PRD §5.1 "Window-driven auto-transition" (M4 phase 3). Skip when
+	// WINDOW_TICK_SECONDS=0 — operators may disable the worker and
+	// drive status manually via TransitionPlaytestStatus.
+	if cfg.WindowTickSeconds > 0 {
+		windowWorker := window.New(window.Config{
+			Namespace:         cfg.AGSNamespace,
+			HolderID:          holderIDFromEnv(),
+			LeaseTTL:          time.Duration(cfg.LeaderLeaseTTLSeconds) * time.Second,
+			HeartbeatInterval: time.Duration(cfg.LeaderHeartbeatSeconds) * time.Second,
+			TickInterval:      time.Duration(cfg.WindowTickSeconds) * time.Second,
+		}, repo.NewPgLeaderStore(dbPool), repo.NewPgPlaytestStore(dbPool), repo.NewPgAuditLogStore(dbPool), logger)
+		go func() {
+			if err := windowWorker.Run(ctx); err != nil {
+				logger.Error("window worker stopped with error", "error", err)
+			}
+		}()
+		logger.Info("window worker started",
+			"event", "window_started",
+			"leaseHolder", holderIDFromEnv(),
+			"windowTickSeconds", cfg.WindowTickSeconds,
+			"leaseTtlSeconds", cfg.LeaderLeaseTTLSeconds)
+	} else {
+		logger.Info("window worker disabled",
+			"event", "window_disabled",
+			"reason", "WINDOW_TICK_SECONDS=0")
+	}
 
 	if server.DMQueue != nil {
 		// Restart sweep runs once before the worker so any APPROVED row

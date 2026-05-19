@@ -126,6 +126,20 @@ func validateNDA(required bool, text string) error {
 	return nil
 }
 
+// validateWindow enforces PRD §5.1 "Window-driven auto-transition" — when
+// both startsAt and endsAt are set, endsAt must be strictly after startsAt.
+// Either side individually nil is valid (asymmetric / manual modes per the
+// nullable-date matrix). Both nil is also valid (fully manual).
+func validateWindow(startsAt, endsAt *time.Time) error {
+	if startsAt == nil || endsAt == nil {
+		return nil
+	}
+	if !endsAt.After(*startsAt) {
+		return status.Error(codes.InvalidArgument, "ends_at must be after starts_at")
+	}
+	return nil
+}
+
 // platformsToStrings renders the proto enum as the TEXT[] values the DB
 // stores (see migration 0001). Unspecified is rejected — it means the
 // client omitted a platform.

@@ -18,6 +18,34 @@ const (
 	ActionPlaytestStatusTransition = "playtest.status_transition"
 )
 
+// AppendStatusTransition records a playtest status flip. `actor` is the
+// admin user id for `TransitionPlaytestStatus` calls, or nil for
+// system-emitted rows written by the `internal/window/` auto-transition
+// worker (PRD §5.1 "Window-driven auto-transition"; schema.md
+// §"AuditLog — action enum"). The before/after payloads carry the
+// status values only.
+func AppendStatusTransition(ctx context.Context, store AuditLogStore, namespace string, playtestID uuid.UUID, actor *uuid.UUID, fromStatus, toStatus string) error {
+	beforeBytes, err := json.Marshal(map[string]any{"status": fromStatus})
+	if err != nil {
+		return fmt.Errorf("marshalling playtest.status_transition before: %w", err)
+	}
+	afterBytes, err := json.Marshal(map[string]any{"status": toStatus})
+	if err != nil {
+		return fmt.Errorf("marshalling playtest.status_transition after: %w", err)
+	}
+	if _, err := store.Append(ctx, &AuditLog{
+		Namespace:   namespace,
+		PlaytestID:  &playtestID,
+		ActorUserID: actor,
+		Action:      ActionPlaytestStatusTransition,
+		Before:      beforeBytes,
+		After:       afterBytes,
+	}); err != nil {
+		return fmt.Errorf("appending playtest.status_transition audit row: %w", err)
+	}
+	return nil
+}
+
 // AppendNDAEdit records an NDA-text mutation on a Playtest. Per
 // schema.md L42 the row is the **only** place where the full NDA text
 // is intentionally persisted to the audit log — every other audited

@@ -392,6 +392,16 @@ done
 [[ -n "$reclaim_ok" ]] \
     || { tail -50 /tmp/playtesthub-smoke.log >&2; fail "reclaim worker never emitted a reclaim_tick log line"; }
 
+log "window worker emitted the boot wiring log line"
+# M4 phase 3 starts the internal/window/ auto-transition worker as a
+# background goroutine. The boot log line is emitted unconditionally
+# when WINDOW_TICK_SECONDS > 0; a missing line means main.go wiring
+# regressed or the env var defaulting in pkg/config flipped. We do not
+# poll for a window_tick because the default TickInterval is 60s and
+# the smoke run is shorter — the boot line is the deploy-gate signal.
+grep -q '"event":"window_started"' /tmp/playtesthub-smoke.log \
+    || { tail -50 /tmp/playtesthub-smoke.log >&2; fail "window worker never emitted window_started log line"; }
+
 log "player AcceptNDA reaches the handler over the gateway (expect 401 Unauthenticated)"
 # M2 phase 4 wires the gateway path POST /v1/player/playtests/{id}:acceptNda.
 # auth interceptor → handler short-circuit gives 401, distinct from a

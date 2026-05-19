@@ -185,6 +185,11 @@ func (s *PlaytesthubServiceServer) CreatePlaytest(ctx context.Context, req *pb.C
 	if err := validateNDA(req.GetNdaRequired(), req.GetNdaText()); err != nil {
 		return nil, err
 	}
+	startsAt := timestampToTime(req.GetStartsAt())
+	endsAt := timestampToTime(req.GetEndsAt())
+	if err := validateWindow(startsAt, endsAt); err != nil {
+		return nil, err
+	}
 	platforms, err := platformsToStrings(req.GetPlatforms())
 	if err != nil {
 		return nil, wrapPlatformsErr(err)
@@ -214,8 +219,8 @@ func (s *PlaytesthubServiceServer) CreatePlaytest(ctx context.Context, req *pb.C
 		Description:           req.GetDescription(),
 		BannerImageURL:        req.GetBannerImageUrl(),
 		Platforms:             platforms,
-		StartsAt:              timestampToTime(req.GetStartsAt()),
-		EndsAt:                timestampToTime(req.GetEndsAt()),
+		StartsAt:              startsAt,
+		EndsAt:                endsAt,
 		Status:                statusDraft,
 		NDARequired:           req.GetNdaRequired(),
 		NDAText:               req.GetNdaText(),
@@ -275,6 +280,11 @@ func (s *PlaytesthubServiceServer) EditPlaytest(ctx context.Context, req *pb.Edi
 	if err := validateNDA(req.GetNdaRequired(), req.GetNdaText()); err != nil {
 		return nil, err
 	}
+	startsAt := timestampToTime(req.GetStartsAt())
+	endsAt := timestampToTime(req.GetEndsAt())
+	if err := validateWindow(startsAt, endsAt); err != nil {
+		return nil, err
+	}
 	platforms, err := platformsToStrings(req.GetPlatforms())
 	if err != nil {
 		return nil, wrapPlatformsErr(err)
@@ -292,8 +302,8 @@ func (s *PlaytesthubServiceServer) EditPlaytest(ctx context.Context, req *pb.Edi
 	current.Description = req.GetDescription()
 	current.BannerImageURL = req.GetBannerImageUrl()
 	current.Platforms = platforms
-	current.StartsAt = timestampToTime(req.GetStartsAt())
-	current.EndsAt = timestampToTime(req.GetEndsAt())
+	current.StartsAt = startsAt
+	current.EndsAt = endsAt
 	current.NDARequired = req.GetNdaRequired()
 	// PRD §5.3: changing NDA text forces every approved applicant back
 	// to re-accept. Only recompute the version hash when the text has
@@ -346,7 +356,8 @@ func (s *PlaytesthubServiceServer) SoftDeletePlaytest(ctx context.Context, req *
 // linear state machine: DRAFT → OPEN → CLOSED. Any other transition
 // (including same-state and backward) is FailedPrecondition.
 func (s *PlaytesthubServiceServer) TransitionPlaytestStatus(ctx context.Context, req *pb.TransitionPlaytestStatusRequest) (*pb.TransitionPlaytestStatusResponse, error) {
-	if _, err := requireActor(ctx); err != nil {
+	actorID, err := requireActor(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if err := s.checkNamespace(req.GetNamespace()); err != nil {
@@ -375,6 +386,11 @@ func (s *PlaytesthubServiceServer) TransitionPlaytestStatus(ctx context.Context,
 	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "transitioning playtest status: %v", err)
+	}
+	if s.audit != nil {
+		if auditErr := repo.AppendStatusTransition(ctx, s.audit, s.namespace, got.ID, &actorID, current.Status, got.Status); auditErr != nil {
+			return nil, status.Errorf(codes.Internal, "appending playtest.status_transition audit: %v", auditErr)
+		}
 	}
 	return &pb.TransitionPlaytestStatusResponse{Playtest: playtestToProto(got)}, nil
 }

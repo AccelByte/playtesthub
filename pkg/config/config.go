@@ -58,11 +58,16 @@ type Config struct {
 	ReclaimIntervalSeconds int
 	LeaderLeaseTTLSeconds  int
 	LeaderHeartbeatSeconds int
-	AGSCodeBatchSize       int
-	DMTimeoutSeconds       int
-	DMDrainRatePerSec      int
-	DMQueueMaxDepth        int
-	DBMaxConnections       int
+	// WindowTickSeconds is the tick interval of the internal/window/
+	// auto-transition worker (PRD §5.1 "Window-driven auto-transition").
+	// 0 disables the worker entirely — status then sticks at its
+	// current value until a manual `TransitionPlaytestStatus`.
+	WindowTickSeconds int
+	AGSCodeBatchSize  int
+	DMTimeoutSeconds  int
+	DMDrainRatePerSec int
+	DMQueueMaxDepth   int
+	DBMaxConnections  int
 
 	// Inherited from the template / operational tuning. Not PRD-specified
 	// but consumed by main.go, so parsed here to keep all env reads in one
@@ -148,6 +153,12 @@ func Load() (*Config, error) {
 	}
 	if cfg.LeaderHeartbeatSeconds, err = getInt("LEADER_HEARTBEAT_SECONDS", 10); err != nil {
 		return nil, err
+	}
+	if cfg.WindowTickSeconds, err = getInt("WINDOW_TICK_SECONDS", 60); err != nil {
+		return nil, err
+	}
+	if cfg.WindowTickSeconds < 0 {
+		return nil, fmt.Errorf("WINDOW_TICK_SECONDS must be >= 0, got %d", cfg.WindowTickSeconds)
 	}
 	if cfg.AGSCodeBatchSize, err = getInt("AGS_CODE_BATCH_SIZE", 1000); err != nil {
 		return nil, err

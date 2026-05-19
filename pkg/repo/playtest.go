@@ -56,6 +56,12 @@ type PlaytestStore interface {
 	Update(ctx context.Context, p *Playtest) (*Playtest, error)
 	SoftDelete(ctx context.Context, namespace string, id uuid.UUID) error
 	TransitionStatus(ctx context.Context, namespace string, id uuid.UUID, from, to string) (*Playtest, error)
+	// ListDueForAutoTransition returns live playtests whose status should
+	// advance per PRD §5.1 "Window-driven auto-transition" relative to
+	// `now`: DRAFT rows with starts_at <= now, plus OPEN rows with
+	// ends_at <= now. Soft-deleted rows are excluded. The result is
+	// ordered by id for deterministic iteration in tests.
+	ListDueForAutoTransition(ctx context.Context, namespace string, now time.Time) ([]*Playtest, error)
 	// SetSurveyID points playtest.survey_id at the given Survey row.
 	// Survey CRUD (M3 phase 3) calls this immediately after inserting
 	// or version-bumping a survey so GetSurvey can resolve the current
@@ -280,6 +286,40 @@ func (s *PgPlaytestStore) SetSurveyID(ctx context.Context, namespace string, pla
 		return fmt.Errorf("setting playtest survey_id: %w", err)
 	}
 	return nil
+}
+
+// ListDueForAutoTransition returns live playtests whose status should
+// advance per PRD §5.1 "Window-driven auto-transition" relative to
+// `now`. Soft-deleted rows are excluded.
+func (s *PgPlaytestStore) ListDueForAutoTransition(ctx context.Context, namespace string, now time.Time) ([]*Playtest, error) {
+	const sql = `
+		SELECT ` + playtestColumns + `
+		  FROM playtest
+		 WHERE namespace = $1
+		   AND deleted_at IS NULL
+		   AND (
+		     (status = 'DRAFT' AND starts_at IS NOT NULL AND starts_at <= $2)
+		     OR
+		     (status = 'OPEN' AND ends_at IS NOT NULL AND ends_at <= $2)
+		   )
+		 ORDER BY id`
+	rows, err := s.pool.Query(ctx, sql, namespace, now)
+	if err != nil {
+		return nil, fmt.Errorf("listing due-for-auto-transition playtests: %w", err)
+	}
+	defer rows.Close()
+	var out []*Playtest
+	for rows.Next() {
+		p, err := scanPlaytest(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning due-for-auto-transition row: %w", err)
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating due-for-auto-transition rows: %w", err)
+	}
+	return out, nil
 }
 
 // TransitionStatus performs a compare-and-swap on the status column.

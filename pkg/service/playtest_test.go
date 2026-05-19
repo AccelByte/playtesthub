@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	iampkg "github.com/anggorodewanto/playtesthub/pkg/iam"
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
@@ -125,6 +126,28 @@ func (f *fakePlaytestStore) SetSurveyID(_ context.Context, namespace string, pla
 		}
 	}
 	return repo.ErrNotFound
+}
+
+func (f *fakePlaytestStore) ListDueForAutoTransition(_ context.Context, namespace string, now time.Time) ([]*repo.Playtest, error) {
+	out := make([]*repo.Playtest, 0)
+	for _, r := range f.rows {
+		if r.Namespace != namespace || r.DeletedAt != nil {
+			continue
+		}
+		switch r.Status {
+		case "DRAFT":
+			if r.StartsAt != nil && !r.StartsAt.After(now) {
+				clone := *r
+				out = append(out, &clone)
+			}
+		case "OPEN":
+			if r.EndsAt != nil && !r.EndsAt.After(now) {
+				clone := *r
+				out = append(out, &clone)
+			}
+		}
+	}
+	return out, nil
 }
 
 func (f *fakePlaytestStore) TransitionStatus(_ context.Context, namespace string, id uuid.UUID, from, to string) (*repo.Playtest, error) {
@@ -661,6 +684,76 @@ func TestCreatePlaytest_NDARequiredEmptyText_InvalidArgument(t *testing.T) {
 	_, err := svr.CreatePlaytest(authCtx(uuid.New()), req)
 	requireStatus(t, err, codes.InvalidArgument)
 	requireMsgContains(t, err, "nda_text")
+}
+
+func TestCreatePlaytest_InvertedWindow_InvalidArgument(t *testing.T) {
+	// PRD §5.1 "Window-driven auto-transition": both dates set forces
+	// ends_at > starts_at. errors.md row pins the byte-exact message.
+	svr, _, _ := newTestServer()
+	req := validCreateRequest("bad-window")
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	req.StartsAt = timestamppb.New(now.Add(time.Hour))
+	req.EndsAt = timestamppb.New(now)
+	_, err := svr.CreatePlaytest(authCtx(uuid.New()), req)
+	requireStatus(t, err, codes.InvalidArgument)
+	if got := status.Convert(err).Message(); got != "ends_at must be after starts_at" {
+		t.Fatalf("message = %q, want byte-exact errors.md row", got)
+	}
+}
+
+func TestCreatePlaytest_EqualWindow_InvalidArgument(t *testing.T) {
+	// Boundary: ends_at == starts_at is rejected (strict "after").
+	svr, _, _ := newTestServer()
+	req := validCreateRequest("equal-window")
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	req.StartsAt = timestamppb.New(now)
+	req.EndsAt = timestamppb.New(now)
+	_, err := svr.CreatePlaytest(authCtx(uuid.New()), req)
+	requireStatus(t, err, codes.InvalidArgument)
+	requireMsgContains(t, err, "ends_at must be after starts_at")
+}
+
+func TestCreatePlaytest_StartsAtOnly_OK(t *testing.T) {
+	// Nullable-date matrix: starts-only is the auto-open-only mode.
+	svr, _, _ := newTestServer()
+	req := validCreateRequest("starts-only")
+	req.StartsAt = timestamppb.New(time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC))
+	req.EndsAt = nil
+	if _, err := svr.CreatePlaytest(authCtx(uuid.New()), req); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+func TestCreatePlaytest_EndsAtOnly_OK(t *testing.T) {
+	// Nullable-date matrix: ends-only is the auto-close-only mode.
+	svr, _, _ := newTestServer()
+	req := validCreateRequest("ends-only")
+	req.StartsAt = nil
+	req.EndsAt = timestamppb.New(time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC))
+	if _, err := svr.CreatePlaytest(authCtx(uuid.New()), req); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+func TestEditPlaytest_InvertedWindow_InvalidArgument(t *testing.T) {
+	svr, store, _ := newTestServer()
+	id := uuid.New()
+	store.rows = append(store.rows, &repo.Playtest{
+		ID: id, Namespace: testNamespace, Slug: "edit-window", Title: "t",
+		DistributionModel: "STEAM_KEYS", Status: "DRAFT",
+	})
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	_, err := svr.EditPlaytest(authCtx(uuid.New()), &pb.EditPlaytestRequest{
+		Namespace:  testNamespace,
+		PlaytestId: id.String(),
+		Title:      "t",
+		StartsAt:   timestamppb.New(now.Add(time.Hour)),
+		EndsAt:     timestamppb.New(now),
+	})
+	requireStatus(t, err, codes.InvalidArgument)
+	if got := status.Convert(err).Message(); got != "ends_at must be after starts_at" {
+		t.Fatalf("message = %q, want byte-exact errors.md row", got)
+	}
 }
 
 func TestCreatePlaytest_InitialCodeQuantityOnSteam_InvalidArgument(t *testing.T) {
