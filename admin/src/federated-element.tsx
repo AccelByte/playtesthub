@@ -15,6 +15,7 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
   Tag,
   Tooltip,
@@ -345,7 +346,24 @@ type FormValues = {
   ndaText?: string
   distributionModel: string
   initialCodeQuantity?: number
+  autoApprove?: boolean
+  autoApproveLimit?: number
 }
+
+const AUTO_APPROVE_LIMIT_MIN = 1
+const AUTO_APPROVE_LIMIT_MAX = 100000
+const AUTO_APPROVE_LIMIT_ERROR =
+  'auto_approve_limit must be between 1 and 100000 when auto_approve is true'
+
+const autoApproveLimitRule = ({ getFieldValue }: { getFieldValue: (name: string) => unknown }) => ({
+  validator(_: unknown, value: unknown) {
+    if (!getFieldValue('autoApprove')) return Promise.resolve()
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < AUTO_APPROVE_LIMIT_MIN || value > AUTO_APPROVE_LIMIT_MAX) {
+      return Promise.reject(new Error(AUTO_APPROVE_LIMIT_ERROR))
+    }
+    return Promise.resolve()
+  }
+})
 
 function PlaytestCreatePage() {
   const { sdk } = useAppUIContext()
@@ -375,7 +393,9 @@ function PlaytestCreatePage() {
         ndaRequired: values.ndaRequired,
         ndaText: values.ndaText,
         distributionModel: values.distributionModel,
-        initialCodeQuantity: values.initialCodeQuantity
+        initialCodeQuantity: values.initialCodeQuantity,
+        autoApprove: values.autoApprove ?? false,
+        autoApproveLimit: values.autoApprove ? values.autoApproveLimit : undefined
       }
     })
   }
@@ -390,7 +410,8 @@ function PlaytestCreatePage() {
         initialValues={{
           platforms: [],
           ndaRequired: false,
-          distributionModel: DistributionModel.STEAM_KEYS
+          distributionModel: DistributionModel.STEAM_KEYS,
+          autoApprove: false
         }}>
         <Form.Item label="Slug" name="slug" rules={[{ required: true, message: 'Slug is required' }]}>
           <Input placeholder="e.g. summer-alpha-2026" />
@@ -450,6 +471,28 @@ function PlaytestCreatePage() {
             )
           }
         </Form.Item>
+        <Form.Item
+          label="Auto-approve"
+          name="autoApprove"
+          valuePropName="checked"
+          extra="Signups bypass the manual queue up to the cap below. Manual approve stays uncapped.">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prev: FormValues, next: FormValues) => prev.autoApprove !== next.autoApprove}>
+          {({ getFieldValue }) =>
+            getFieldValue('autoApprove') && (
+              <Form.Item
+                label="Auto-approve limit"
+                name="autoApproveLimit"
+                dependencies={['autoApprove']}
+                rules={[autoApproveLimitRule]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            )
+          }
+        </Form.Item>
         {createMutation.isError && (
           <Form.Item>
             <Alert type="error" message={createMutation.error?.response?.data?.errorMessage ?? 'Create failed'} />
@@ -505,7 +548,9 @@ function PlaytestEditPage() {
       dateRange: start && end ? [start, end] : undefined,
       ndaRequired: playtest.ndaRequired ?? false,
       ndaText: playtest.ndaText ?? undefined,
-      distributionModel: (playtest.distributionModel as string | undefined) ?? DistributionModel.STEAM_KEYS
+      distributionModel: (playtest.distributionModel as string | undefined) ?? DistributionModel.STEAM_KEYS,
+      autoApprove: playtest.autoApprove ?? false,
+      autoApproveLimit: playtest.autoApproveLimit ?? undefined
     }
   }, [playtest])
 
@@ -524,7 +569,9 @@ function PlaytestEditPage() {
         startsAt: values.dateRange?.[0].toISOString(),
         endsAt: values.dateRange?.[1].toISOString(),
         ndaRequired: values.ndaRequired,
-        ndaText: values.ndaText
+        ndaText: values.ndaText,
+        autoApprove: values.autoApprove ?? false,
+        autoApproveLimit: values.autoApprove ? values.autoApproveLimit : undefined
       }
     })
   }
@@ -570,6 +617,28 @@ function PlaytestEditPage() {
             getFieldValue('ndaRequired') && (
               <Form.Item label="NDA text" name="ndaText" rules={[{ required: true, message: 'NDA text required when NDA enabled' }]}>
                 <Input.TextArea rows={4} />
+              </Form.Item>
+            )
+          }
+        </Form.Item>
+        <Form.Item
+          label="Auto-approve"
+          name="autoApprove"
+          valuePropName="checked"
+          extra="Signups bypass the manual queue up to the cap below. Manual approve stays uncapped.">
+          <Switch />
+        </Form.Item>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prev: FormValues, next: FormValues) => prev.autoApprove !== next.autoApprove}>
+          {({ getFieldValue }) =>
+            getFieldValue('autoApprove') && (
+              <Form.Item
+                label="Auto-approve limit"
+                name="autoApproveLimit"
+                dependencies={['autoApprove']}
+                rules={[autoApproveLimitRule]}>
+                <InputNumber style={{ width: '100%' }} />
               </Form.Item>
             )
           }

@@ -259,6 +259,38 @@ describe('PlaytestCreatePage', () => {
     expect(screen.getByText(/distribution model/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^create$/i })).toBeInTheDocument()
   })
+
+  it('auto-approve toggle starts off and hides the limit input', () => {
+    renderAt('/new')
+    const toggle = screen.getByRole('switch', { name: /auto-approve/i })
+    expect(toggle).not.toBeChecked()
+    expect(screen.queryByLabelText(/auto-approve limit/i)).not.toBeInTheDocument()
+  })
+
+  it('reveals the auto-approve limit input when the toggle is on', async () => {
+    renderAt('/new')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('switch', { name: /auto-approve/i }))
+    expect(await screen.findByLabelText(/auto-approve limit/i)).toBeInTheDocument()
+  })
+
+  it('rejects an out-of-bounds auto-approve limit with the byte-exact server message', async () => {
+    const mutate = vi.fn()
+    mockCreateMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    renderAt('/new')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('switch', { name: /auto-approve/i }))
+    const limit = await screen.findByLabelText(/auto-approve limit/i)
+    await user.type(limit, '100001')
+    // Required fields so the form actually reaches the validator.
+    await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
+    await user.type(screen.getByLabelText(/^title$/i), 'Demo')
+    await user.click(screen.getByRole('button', { name: /^create$/i }))
+    expect(
+      await screen.findByText('auto_approve_limit must be between 1 and 100000 when auto_approve is true')
+    ).toBeInTheDocument()
+    expect(mutate).not.toHaveBeenCalled()
+  })
 })
 
 describe('PlaytestEditPage', () => {
@@ -288,6 +320,29 @@ describe('PlaytestEditPage', () => {
     await waitFor(() => expect(screen.getByDisplayValue('Summer Alpha')).toBeInTheDocument())
     expect(screen.getByDisplayValue('Alpha description')).toBeInTheDocument()
     expect(screen.getByText(/immutable after creation/i)).toBeInTheDocument()
+  })
+
+  it('preloads auto-approve toggle + limit from the fetched playtest', async () => {
+    mockGetPlaytest.mockReturnValue({
+      data: {
+        playtest: {
+          id: 'pt_1',
+          slug: 'summer-alpha',
+          title: 'Summer Alpha',
+          platforms: ['PLATFORM_STEAM'],
+          distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
+          ndaRequired: false,
+          autoApprove: true,
+          autoApproveLimit: 25
+        }
+      },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/pt_1/edit')
+    await waitFor(() => expect(screen.getByDisplayValue('Summer Alpha')).toBeInTheDocument())
+    expect(screen.getByRole('switch', { name: /auto-approve/i })).toBeChecked()
+    expect(screen.getByLabelText(/auto-approve limit/i)).toHaveValue('25')
   })
 })
 
