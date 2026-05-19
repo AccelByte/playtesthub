@@ -1,5 +1,15 @@
 # playtesthub — Full Version History
 
+## v2.3 — 2026-05-19
+
+**Playtest window enforcement (`startsAt` / `endsAt` are no longer display-only)**:
+- §5.1 — `startsAt` / `endsAt` paragraph rewritten. Fields are now UTC and **drive automatic `DRAFT → OPEN → CLOSED` status transitions** via a leader-leased background worker (`internal/window/`). New "Window-driven auto-transition" subsection documents the nullable-date matrix (both / start-only / end-only / neither), the monotonic forward-only invariant, the manual-override precedence (admin transitions always win), and the explicit carve-out that `endsAt` auto-close does **NOT** gate survey submit — APPROVED applicants can still submit surveys post-CLOSED per §5.6.
+- §5.9 — new optional env var `WINDOW_TICK_SECONDS` (default `60`, set `0` to disable the worker entirely).
+- `errors.md` — new `InvalidArgument` row for `CreatePlaytest` / `EditPlaytest` when both dates set with `endsAt <= startsAt` (byte-exact: `ends_at must be after starts_at`).
+- `schema.md` — note on `playtest.status_transition` clarifying that `actorUserId = NULL` (system-emitted) signals an auto-transition from the worker; non-NULL signals a manual `TransitionPlaytestStatus` call.
+- M4 build plan tracked in [`STATUS_M4.md`](STATUS_M4.md). No new RPCs gated on dates (status remains the single source of truth); one read-only `GetWorkerHealth` admin RPC will land in M4 phase 5 for the admin worker-health banner.
+- **Backwards compatibility note**: every existing M1/M2/M3 playtest with `startsAt` / `endsAt` already populated will start auto-transitioning the moment the M4 phase 3 worker deploys. Operators who relied on "dates are decorative" should either null the dates out (manual mode) or accept the auto-flip.
+
 ## v2.2 — 2026-05-08
 
 **Discord DM delivery hardened with explicit bot+server prerequisites and a deep-link DM body**:

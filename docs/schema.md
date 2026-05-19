@@ -41,7 +41,7 @@ The full set of audited admin actions in MVP. Each row's `before` and `after` JS
 - `playtest.edit` — non-NDA field edits on a `Playtest` row.
 - `nda.edit` — `ndaText` change; `before`/`after` store the **full old and new NDA text**.
 - `playtest.soft_delete` — `deletedAt` set.
-- `playtest.status_transition` — `DRAFT → OPEN` or `OPEN → CLOSED`; `before`/`after` record the status values.
+- `playtest.status_transition` — `DRAFT → OPEN` or `OPEN → CLOSED`; `before`/`after` record the status values. `actorUserId` is the admin user id when the transition is driven by `TransitionPlaytestStatus`, and **NULL (system-emitted)** when driven by the `internal/window/` worker hitting a configured `startsAt` / `endsAt` boundary (PRD §5.1 "Window-driven auto-transition").
 - `applicant.approve` — records `{applicantId, grantedCodeId}`. **The raw code value is never written to the audit log** (cross-reference PRD §6 Observability log-redaction policy — code values are forbidden in logs, and this table carries the same prohibition for code values).
 - `applicant.reject` — records `{applicantId, rejectionReason}`.
 - `applicant.dm_failed` — written when the Discord DM send fails; records `{applicantId, error (truncated to 500 chars, byte-truncation preserving valid UTF-8 codepoint boundaries), attemptAt}`. See PRD §4.1 step 6d and §5. **System-emitted**.
