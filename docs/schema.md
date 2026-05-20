@@ -60,6 +60,7 @@ The full set of audited admin actions in MVP. Each row's `before` and `after` JS
 - `survey.edit` — records the **full before/after question set**. Intentional — survey questions are not secret, and full diffs are the accountability mechanism for survey changes.
 - `adt_linkage.create` — written when `CompleteADTLink` successfully inserts an `adt_linkage` row (PRD §4.8.2). Records `{adtLinkageId, studioNamespace, adtNamespace, linkedBy}` — identity columns only; **no credential payload exists to leak** (the linking flow exchanges no credential — auth to ADT on every subsequent API call is the AGS service IAM JWT; PRD §4.8). **Admin-attributed**: `actorUserId` = the admin who completed the link (recovered from the `adt_link_pending.started_by_user_id` column at commit time).
 - `adt_linkage.delete` — written when `UnlinkADT` soft-deletes an `adt_linkage` row (PRD §4.8). Records `{adtLinkageId, studioNamespace, adtNamespace}`. **Admin-attributed**: `actorUserId` = the admin who called the RPC. Idempotent on the audit side too — a second `UnlinkADT` against an already-deleted linkage is a no-op and writes no row.
+- `announcement.create` — written when `CreateAnnouncement` (PRD §5.4 "Bulk announcements") successfully resolves the recipient set, inserts the `announcement` row, and fans `announcement_recipient` rows out. Records `{announcementId, playtestId, sendToFilter, recipientCount, createdBy}` only. **Admin-attributed**: `actorUserId` = the admin who authored the broadcast. **`subject` and `message` are NEVER written to the audit JSONB** — PRD §6 Observability extends the existing code-redaction rule to admin-authored DM content because operators may include NDA prompts / project codenames / build URLs in the body. Forensic recovery of "what was sent to whom" lives entirely on the `announcement` + `announcement_recipient` tables; the audit row records only that a broadcast happened, when, and by whom.
 
 ---
 
@@ -83,13 +84,19 @@ Applicant {
   lastDmAttemptAt   TIMESTAMP?
   lastDmError       TEXT?        // byte-truncated to 500 chars preserving valid UTF-8 codepoint boundaries
   autoApproved      BOOLEAN      // NOT NULL DEFAULT FALSE — true iff this applicant was approved by the M5.A auto-approve path (Playtest.autoApprove=true at signup, under cap). Distinct from manual ApproveApplicant which leaves this false. Drives the autoApproveLimit count predicate in PRD §5.4 "Auto-approve".
+  adtDownloadAt              TIMESTAMP?  // M6-targeted ADT telemetry cache; ships dormant in M5.C (always NULL until M6 worker lands). First-time download timestamp surfaced via the ADT telemetry endpoint.
+  adtTotalPlaytimeSeconds    INTEGER?    // M6-targeted ADT telemetry cache; ships dormant in M5.C. Aggregated playtime per ADT telemetry.
+  adtHardwareSpecs           JSONB?      // M6-targeted ADT telemetry cache; ships dormant in M5.C. Hardware-spec snapshot per ADT telemetry (CPU / GPU / RAM / OS / Storage shape; rendered as the Hardware Specs section in the M6 participant detail modal).
+  adtCrashCount              INTEGER     // NOT NULL DEFAULT 0; M6-targeted ADT telemetry cache; ships dormant in M5.C. Per-applicant crash-report count.
   createdAt         TIMESTAMP
 }
 ```
 
 **Admin-visible fields** (returned by `ListApplicants` / `GetApplicantStatus` when caller is admin): all fields above.
 
-**Player-visible fields** (returned by `GetApplicantStatus` when caller is the applicant themselves): `status`, `grantedCodeId` (presence only — value retrieved via `GetGrantedCode`), `approvedAt`, `ndaVersionHash` (for the §5.3 re-accept client-side check). **Not visible to the player**: `rejectionReason`, `lastDmStatus`, `lastDmAttemptAt`, `lastDmError`, `discordHandle`, `platforms`, `autoApproved`.
+**Player-visible fields** (returned by `GetApplicantStatus` when caller is the applicant themselves): `status`, `grantedCodeId` (presence only — value retrieved via `GetGrantedCode`), `approvedAt`, `ndaVersionHash` (for the §5.3 re-accept client-side check). **Not visible to the player**: `rejectionReason`, `lastDmStatus`, `lastDmAttemptAt`, `lastDmError`, `discordHandle`, `platforms`, `autoApproved`, and all four ADT telemetry cache columns.
+
+The four ADT telemetry columns (`adtDownloadAt`, `adtTotalPlaytimeSeconds`, `adtHardwareSpecs`, `adtCrashCount`) ship in migration 0007 (M5.C) but stay NULL / zero across the M5.C window — there is no telemetry client, worker, or refresh path in M5.C. The columns exist so M6's worker + endpoint hookup lands with zero schema churn. The `GetPlaytestParticipants` response shape includes them so the proto wire is stable across M5.C → M6; admin UI ignores them in M5.C.
 
 ---
 
@@ -185,6 +192,50 @@ adt_link_pending {
 ```
 
 **Sweep policy**: each `CompleteADTLink` call runs an inline `DELETE FROM adt_link_pending WHERE expires_at < now()` to keep the table small (no background sweeper needed at this cardinality). `state` is single-use — `CompleteADTLink` consumes the row on success.
+
+---
+
+## announcement + announcement_recipient tables
+
+Backs PRD §5.4 "Bulk announcements". One row in `announcement` per admin-authored broadcast; N rows in `announcement_recipient` (one per resolved applicant) carry per-recipient DM delivery state. The fan-out reuses the M2 RetryDM machinery — each recipient row is paired with a `dm_outbox` row enqueued through the same circuit-broken queue that backs approve-DMs.
+
+```
+announcement {
+  id                    UUID PK
+  playtest_id           UUID NOT NULL REFERENCES playtest(id)
+  send_to_filter        TEXT NOT NULL CHECK (send_to_filter IN ('ALL', 'APPROVED_ONLY', 'PENDING_ONLY'))
+  subject               TEXT NOT NULL CHECK (length(subject) BETWEEN 1 AND 200)
+  message               TEXT NOT NULL CHECK (length(message) BETWEEN 1 AND 4000)
+  status                TEXT NOT NULL CHECK (status IN ('SENDING', 'SENT', 'PARTIAL', 'FAILED')) DEFAULT 'SENDING'
+  recipients_total      INTEGER NOT NULL                  // count resolved at fan-out time; immutable after insert
+  recipients_sent       INTEGER NOT NULL DEFAULT 0        // recomputed by the RetryDM worker; load-bearing for the `status` aggregation
+  created_by_user_id    UUID NOT NULL                     // admin who authored the broadcast
+  created_at            TIMESTAMP NOT NULL DEFAULT now()
+}
+```
+
+```
+announcement_recipient {
+  announcement_id   UUID NOT NULL REFERENCES announcement(id) ON DELETE CASCADE
+  applicant_id      UUID NOT NULL REFERENCES applicant(id)
+  dm_status         TEXT NOT NULL CHECK (dm_status IN ('QUEUED', 'SENT', 'FAILED')) DEFAULT 'QUEUED'
+  dm_sent_at        TIMESTAMP?
+  dm_failed_at      TIMESTAMP?
+  dm_error_code     TEXT?                  // short machine-readable tag mirroring `applicant.lastDmError` semantics
+  PRIMARY KEY (announcement_id, applicant_id)
+}
+```
+
+**Status aggregation** (`ListAnnouncements` computes `announcement.status` at read time via SQL aggregate over `announcement_recipient.dm_status`):
+
+- `SENT` — every recipient row is `'SENT'`.
+- `SENDING` — at least one recipient row is `'QUEUED'`.
+- `PARTIAL` — no `'QUEUED'` rows, but a mix of `'SENT'` and `'FAILED'`.
+- `FAILED` — every recipient row is `'FAILED'`.
+
+**Why a `recipients_sent` cache column despite the aggregate**: the list view (`ListAnnouncements`) does not need the per-recipient roll-up on every request — incrementing `recipients_sent` on each successful DM avoids an `O(N_recipients)` scan per announcement in the list query. The aggregate is still the source of truth for `status`; `recipients_sent` is a denormalized hint for the UI.
+
+**PII guarantee**: `subject` and `message` columns store the admin-authored body. Neither value is ever written into structured logs, metrics, audit JSONB, or DM-error telemetry — `dm_error_code` carries only short machine-readable tags. The audit table records `announcement.create` with IDs + counts only; recovery of the per-applicant delivery state lives entirely on `announcement_recipient`.
 
 ---
 
