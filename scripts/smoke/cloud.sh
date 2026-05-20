@@ -145,6 +145,31 @@ for probe in "${m4_probes[@]}"; do
         || fail "expected 401 from ${name}, got ${code} (${method} ${url})"
 done
 
+# M5.B RPC reachability gate (STATUS_M5.md B10): six new admin routes +
+# one player route must reach the auth interceptor. Anything other than
+# 401 means the route never registered (404) or auth regressed.
+declare -a m5_probes=(
+    "ListADTLinkages       GET    ${BASE}/v1/admin/namespaces/${NS}/adt/linkages                          -"
+    "StartADTLink          POST   ${BASE}/v1/admin/namespaces/${NS}/adt/linkages:start                    {}"
+    "CompleteADTLink       POST   ${BASE}/v1/admin/namespaces/${NS}/adt/linkages:complete                 {\"state\":\"x\",\"adtNamespace\":\"y\"}"
+    "UnlinkADT             DELETE ${BASE}/v1/admin/namespaces/${NS}/adt/linkages/00000000-0000-0000-0000-000000000000 -"
+    "ListADTBuilds         GET    ${BASE}/v1/admin/namespaces/${NS}/adt/linkages/00000000-0000-0000-0000-000000000000/builds?adtGameId=g -"
+    "GetADTDownloadInfo    GET    ${BASE}/v1/player/playtests/${PT}/adtDownload                           -"
+)
+
+for probe in "${m5_probes[@]}"; do
+    read -r name method url body <<<"$probe"
+    log "M5.B ${name} requires auth (expect 401)"
+    if [[ "$body" == "-" ]]; then
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" "$url")
+    else
+        code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" \
+            -H 'Content-Type: application/json' -d "$body" "$url")
+    fi
+    [[ "$code" == "401" ]] \
+        || fail "expected 401 from ${name}, got ${code} (${method} ${url})"
+done
+
 # Phase 9.3 / verified end-to-end in 9.4: ExchangeDiscordCode is unauth
 # and posts a Discord OAuth code to AGS IAM's platform-token grant.
 # Bogus probe — sends an obviously-fake code, expects a 400 because the
