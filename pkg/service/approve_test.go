@@ -473,8 +473,8 @@ func TestListApplicants_DMFailedFilter(t *testing.T) {
 	pt := steamKeysPlaytest("list-dm")
 	rig.playtests.rows = append(rig.playtests.rows, pt)
 
-	failed := "failed"
-	sent := "sent"
+	failed := dmStatusFailed
+	sent := dmStatusSent
 	rig.applicants.rows = append(rig.applicants.rows,
 		&repo.Applicant{
 			ID: uuid.New(), PlaytestID: pt.ID, UserID: uuid.New(),

@@ -53,6 +53,18 @@ func (f *fakeAnnouncementStore) InsertRecipients(_ context.Context, announcement
 	return nil
 }
 
+func (f *fakeAnnouncementStore) GetByID(_ context.Context, announcementID uuid.UUID) (*repo.Announcement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.rows {
+		if r.ID == announcementID {
+			clone := *r
+			return &clone, nil
+		}
+	}
+	return nil, repo.ErrNotFound
+}
+
 func (f *fakeAnnouncementStore) ListByPlaytest(_ context.Context, playtestID uuid.UUID) ([]*repo.Announcement, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -114,15 +126,14 @@ func (f *fakeAnnouncementStore) FinaliseStatus(_ context.Context, announcementID
 			queued++
 		}
 	}
-	finalStatus := repo.AnnouncementStatusSending
-	if queued > 0 {
+	finalStatus := repo.AnnouncementStatusPartial
+	switch {
+	case queued > 0:
 		finalStatus = repo.AnnouncementStatusSending
-	} else if failed == len(rec) {
+	case failed == len(rec):
 		finalStatus = repo.AnnouncementStatusFailed
-	} else if sent == len(rec) {
+	case sent == len(rec):
 		finalStatus = repo.AnnouncementStatusSent
-	} else {
-		finalStatus = repo.AnnouncementStatusPartial
 	}
 	for _, ann := range f.rows {
 		if ann.ID == announcementID {
@@ -176,7 +187,16 @@ func (f *fakeAnnouncementSender) snapshot() []deliveryRecord {
 
 // --- tests -------------------------------------------------------------------
 
-func seedAnnouncementRig(t *testing.T) (*PlaytesthubServiceServer, *fakePlaytestStore, *fakeApplicantStore, *fakeAnnouncementStore, *fakeAnnouncementSender, *fakeAuditLogStore) {
+type announcementRig struct {
+	svr    *PlaytesthubServiceServer
+	pt     *fakePlaytestStore
+	ap     *fakeApplicantStore
+	ann    *fakeAnnouncementStore
+	sender *fakeAnnouncementSender
+	audit  *fakeAuditLogStore
+}
+
+func seedAnnouncementRig(t *testing.T) announcementRig {
 	t.Helper()
 	svr, pt, ap := newTestServer()
 	annStore := newFakeAnnouncementStore()
@@ -185,7 +205,7 @@ func seedAnnouncementRig(t *testing.T) (*PlaytesthubServiceServer, *fakePlaytest
 	svr = svr.
 		WithAuditLogStore(audit).
 		WithAnnouncementStore(annStore, sender)
-	return svr, pt, ap, annStore, sender, audit
+	return announcementRig{svr: svr, pt: pt, ap: ap, ann: annStore, sender: sender, audit: audit}
 }
 
 func seedOpenPlaytest(t *testing.T, store *fakePlaytestStore, slug string) *repo.Playtest {
@@ -225,12 +245,12 @@ func seedApplicant(t *testing.T, ap *fakeApplicantStore, playtestID uuid.UUID, s
 // time (PRD §5.4 "Bulk announcements"). One applicant added after the
 // broadcast is NOT included.
 func TestCreateAnnouncement_HappyPath_ResolvesAtCallTime(t *testing.T) {
-	svr, pt, ap, ann, sender, audit := seedAnnouncementRig(t)
-	p := seedOpenPlaytest(t, pt, "ann-happy")
-	a1 := seedApplicant(t, ap, p.ID, applicantStatusApproved, "111")
-	_ = seedApplicant(t, ap, p.ID, applicantStatusApproved, "222")
+	rig := seedAnnouncementRig(t)
+	p := seedOpenPlaytest(t, rig.pt, "ann-happy")
+	a1 := seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "111")
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "222")
 
-	resp, err := svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
+	resp, err := rig.svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
 		Namespace:    testNamespace,
 		PlaytestId:   p.ID.String(),
 		SendToFilter: pb.AnnouncementSendToFilter_ANNOUNCEMENT_SEND_TO_FILTER_APPROVED_ONLY,
@@ -245,13 +265,13 @@ func TestCreateAnnouncement_HappyPath_ResolvesAtCallTime(t *testing.T) {
 	}
 
 	// Adding a third applicant after the call must NOT auto-include.
-	_ = seedApplicant(t, ap, p.ID, applicantStatusApproved, "333")
-	if got := len(sender.snapshot()); got != 2 {
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "333")
+	if got := len(rig.sender.snapshot()); got != 2 {
 		t.Errorf("sender deliveries = %d, want 2 (resolution is at call time)", got)
 	}
 
 	// Per-recipient row created for the original cohort only.
-	recs, _ := ann.ListRecipients(context.Background(), uuid.MustParse(resp.GetAnnouncement().GetId()))
+	recs, _ := rig.ann.ListRecipients(context.Background(), uuid.MustParse(resp.GetAnnouncement().GetId()))
 	if len(recs) != 2 {
 		t.Errorf("recipients = %d, want 2", len(recs))
 	}
@@ -267,10 +287,10 @@ func TestCreateAnnouncement_HappyPath_ResolvesAtCallTime(t *testing.T) {
 	}
 
 	// Audit row carries no subject / message (PII canary).
-	if got := len(audit.rows); got != 1 {
+	if got := len(rig.audit.rows); got != 1 {
 		t.Fatalf("audit row count = %d, want 1", got)
 	}
-	row := audit.rows[0]
+	row := rig.audit.rows[0]
 	if row.Action != repo.ActionAnnouncementCreate {
 		t.Errorf("action = %q, want %q", row.Action, repo.ActionAnnouncementCreate)
 	}
@@ -286,10 +306,10 @@ func TestCreateAnnouncement_HappyPath_ResolvesAtCallTime(t *testing.T) {
 }
 
 func TestCreateAnnouncement_RejectsEmptySubject(t *testing.T) {
-	svr, pt, _, _, _, _ := seedAnnouncementRig(t)
-	p := seedOpenPlaytest(t, pt, "ann-empty-subject")
+	rig := seedAnnouncementRig(t)
+	p := seedOpenPlaytest(t, rig.pt, "ann-empty-subject")
 
-	_, err := svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
+	_, err := rig.svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
 		Namespace:    testNamespace,
 		PlaytestId:   p.ID.String(),
 		SendToFilter: pb.AnnouncementSendToFilter_ANNOUNCEMENT_SEND_TO_FILTER_ALL,
@@ -303,10 +323,10 @@ func TestCreateAnnouncement_RejectsEmptySubject(t *testing.T) {
 }
 
 func TestCreateAnnouncement_RejectsOverlongMessage(t *testing.T) {
-	svr, pt, _, _, _, _ := seedAnnouncementRig(t)
-	p := seedOpenPlaytest(t, pt, "ann-long-msg")
+	rig := seedAnnouncementRig(t)
+	p := seedOpenPlaytest(t, rig.pt, "ann-long-msg")
 
-	_, err := svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
+	_, err := rig.svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
 		Namespace:    testNamespace,
 		PlaytestId:   p.ID.String(),
 		SendToFilter: pb.AnnouncementSendToFilter_ANNOUNCEMENT_SEND_TO_FILTER_ALL,
@@ -320,11 +340,11 @@ func TestCreateAnnouncement_RejectsOverlongMessage(t *testing.T) {
 }
 
 func TestCreateAnnouncement_RejectsClosedPlaytest(t *testing.T) {
-	svr, pt, _, _, _, _ := seedAnnouncementRig(t)
-	p := seedOpenPlaytest(t, pt, "ann-closed")
+	rig := seedAnnouncementRig(t)
+	p := seedOpenPlaytest(t, rig.pt, "ann-closed")
 	p.Status = statusClosed
 
-	_, err := svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
+	_, err := rig.svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
 		Namespace:    testNamespace,
 		PlaytestId:   p.ID.String(),
 		SendToFilter: pb.AnnouncementSendToFilter_ANNOUNCEMENT_SEND_TO_FILTER_ALL,
@@ -341,13 +361,13 @@ func TestCreateAnnouncement_RejectsClosedPlaytest(t *testing.T) {
 // semantics: APPROVED_ONLY against a mixed cohort picks the APPROVED
 // rows only.
 func TestCreateAnnouncement_FilterAppliesAtFanOut(t *testing.T) {
-	svr, pt, ap, _, sender, _ := seedAnnouncementRig(t)
-	p := seedOpenPlaytest(t, pt, "ann-filter")
-	_ = seedApplicant(t, ap, p.ID, applicantStatusApproved, "ok-1")
-	_ = seedApplicant(t, ap, p.ID, applicantStatusPending, "pending-2")
-	_ = seedApplicant(t, ap, p.ID, applicantStatusApproved, "ok-3")
+	rig := seedAnnouncementRig(t)
+	p := seedOpenPlaytest(t, rig.pt, "ann-filter")
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "ok-1")
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusPending, "pending-2")
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "ok-3")
 
-	resp, err := svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
+	resp, err := rig.svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
 		Namespace:    testNamespace,
 		PlaytestId:   p.ID.String(),
 		SendToFilter: pb.AnnouncementSendToFilter_ANNOUNCEMENT_SEND_TO_FILTER_APPROVED_ONLY,
@@ -360,7 +380,7 @@ func TestCreateAnnouncement_FilterAppliesAtFanOut(t *testing.T) {
 	if resp.GetAnnouncement().GetRecipientsTotal() != 2 {
 		t.Errorf("recipients_total = %d, want 2 (approved only)", resp.GetAnnouncement().GetRecipientsTotal())
 	}
-	delivered := sender.snapshot()
+	delivered := rig.sender.snapshot()
 	if len(delivered) != 2 {
 		t.Errorf("sender deliveries = %d, want 2", len(delivered))
 	}
@@ -375,14 +395,14 @@ func TestCreateAnnouncement_FilterAppliesAtFanOut(t *testing.T) {
 // ListAnnouncements returns the per-playtest history with the aggregate
 // status from the last broadcast.
 func TestListAnnouncements_OrdersDescAndStatusAggregates(t *testing.T) {
-	svr, pt, ap, _, sender, _ := seedAnnouncementRig(t)
-	p := seedOpenPlaytest(t, pt, "ann-list")
-	_ = seedApplicant(t, ap, p.ID, applicantStatusApproved, "rec-a")
-	_ = seedApplicant(t, ap, p.ID, applicantStatusApproved, "rec-b")
+	rig := seedAnnouncementRig(t)
+	p := seedOpenPlaytest(t, rig.pt, "ann-list")
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "rec-a")
+	_ = seedApplicant(t, rig.ap, p.ID, applicantStatusApproved, "rec-b")
 	// Make one recipient fail to exercise PARTIAL aggregate.
-	sender.failHandles = map[string]error{"rec-b": context.DeadlineExceeded}
+	rig.sender.failHandles = map[string]error{"rec-b": context.DeadlineExceeded}
 
-	_, err := svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
+	_, err := rig.svr.CreateAnnouncement(authCtx(uuid.New()), &pb.CreateAnnouncementRequest{
 		Namespace:    testNamespace,
 		PlaytestId:   p.ID.String(),
 		SendToFilter: pb.AnnouncementSendToFilter_ANNOUNCEMENT_SEND_TO_FILTER_ALL,
@@ -393,7 +413,7 @@ func TestListAnnouncements_OrdersDescAndStatusAggregates(t *testing.T) {
 		t.Fatalf("unexpected: %v", err)
 	}
 
-	resp, err := svr.ListAnnouncements(authCtx(uuid.New()), &pb.ListAnnouncementsRequest{
+	resp, err := rig.svr.ListAnnouncements(authCtx(uuid.New()), &pb.ListAnnouncementsRequest{
 		Namespace:  testNamespace,
 		PlaytestId: p.ID.String(),
 	})

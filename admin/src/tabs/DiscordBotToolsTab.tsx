@@ -1,16 +1,7 @@
-/**
- * DiscordBotToolsTab — M5.C phase 7 / docs/STATUS_M5.md D8 + C7.
- *
- * Two side-by-side cards: Create Announcement form (subject + message
- * + Send-To filter + char counters) and the Announcement History table
- * (status pill aggregated server-side from announcement_recipient).
- */
-
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
 import { useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Form, Input, Select, Space, Table, Tag, Typography, message } from 'antd'
 import dayjs from 'dayjs'
-import { useMemo } from 'react'
 import type { V1Announcement } from '../playtesthubapi/generated-definitions/V1Announcement'
 import type { V1Playtest } from '../playtesthubapi/generated-definitions/V1Playtest'
 import {
@@ -18,16 +9,8 @@ import {
   usePlaytesthubServiceAdminApi_CreateAnnouncement_ByPlaytestIdMutation,
   usePlaytesthubServiceAdminApi_GetAnnouncements_ByPlaytestId
 } from '../playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
-
-const PlaytestStatus = {
-  CLOSED: 'PLAYTEST_STATUS_CLOSED'
-} as const
-
-const AnnouncementSendToFilter = {
-  ALL: 'ANNOUNCEMENT_SEND_TO_FILTER_ALL',
-  APPROVED_ONLY: 'ANNOUNCEMENT_SEND_TO_FILTER_APPROVED_ONLY',
-  PENDING_ONLY: 'ANNOUNCEMENT_SEND_TO_FILTER_PENDING_ONLY'
-} as const
+import { AnnouncementSendToFilter, PlaytestStatus } from '../shared/playtesthub-enums'
+import { toastError } from '../shared/api-error'
 
 const STATUS_TAG: Record<string, { text: string; color: string }> = {
   ANNOUNCEMENT_STATUS_SENT: { text: 'Sent', color: 'green' },
@@ -64,22 +47,16 @@ export function DiscordBotToolsTab({ playtest }: { playtest: V1Playtest }) {
         queryKey: [Key_PlaytesthubServiceAdmin.Announcements_ByPlaytestId]
       })
     },
-    onError: (err: { response?: { data?: { errorMessage?: string } } }) =>
-      message.error(err?.response?.data?.errorMessage ?? 'Failed to send announcement')
+    onError: toastError('send announcement')
   })
 
-  const announcements = useMemo(
-    () => (history.data?.announcements ?? []) as V1Announcement[],
-    [history.data]
-  )
+  const announcements = (history.data?.announcements ?? []) as V1Announcement[]
 
   const onFinish = (values: FormValues) => {
     createMutation.mutate({
       playtestId: playtest.id ?? '',
       data: {
-        sendToFilter: values.sendToFilter as keyof typeof AnnouncementSendToFilter extends never
-          ? never
-          : (typeof AnnouncementSendToFilter)[keyof typeof AnnouncementSendToFilter],
+        sendToFilter: values.sendToFilter,
         subject: values.subject,
         message: values.message
       } as never

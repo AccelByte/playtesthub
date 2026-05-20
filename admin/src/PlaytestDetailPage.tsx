@@ -1,16 +1,3 @@
-/**
- * PlaytestDetailPage — M5.C admin shell.
- *
- * Renders the list+detail page model documented in docs/STATUS_M5.md D5 +
- * PRD §5.7 M5.C restructure. Top header carries the breadcrumb + title +
- * date range + status pill + Publish/Stop verbs + share link. Below sit
- * four tabs whose selected key is persisted to the `?tab=` query param.
- *
- * Publish (DRAFT→OPEN) + Stop Playtest (OPEN→CLOSED) are pure UI copy
- * renames over M4's existing TransitionPlaytestStatus RPC — no
- * state-machine change.
- */
-
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
 import { useQueryClient } from '@tanstack/react-query'
 import {
@@ -26,7 +13,6 @@ import {
   message
 } from 'antd'
 import dayjs from 'dayjs'
-import { useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 
 import type { V1Playtest } from './playtesthubapi/generated-definitions/V1Playtest'
@@ -35,19 +21,15 @@ import {
   usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation,
   usePlaytesthubServiceAdminApi_GetPlaytests
 } from './playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
+import { PlaytestStatus } from './shared/playtesthub-enums'
+import { toastError } from './shared/api-error'
 import { DistributionTab } from './tabs/DistributionTab'
 import { ParticipantsTab } from './tabs/ParticipantsTab'
 import { DiscordBotToolsTab } from './tabs/DiscordBotToolsTab'
 
-const PlaytestStatus = {
-  DRAFT: 'PLAYTEST_STATUS_DRAFT',
-  OPEN: 'PLAYTEST_STATUS_OPEN',
-  CLOSED: 'PLAYTEST_STATUS_CLOSED'
-} as const
-
 const STATUS_PILL: Record<string, { text: string; color: string }> = {
   [PlaytestStatus.DRAFT]: { text: 'Draft', color: 'default' },
-  [PlaytestStatus.OPEN]: { text: 'Published', color: 'green' },
+  [PlaytestStatus.OPEN]: { text: 'Open', color: 'green' },
   [PlaytestStatus.CLOSED]: { text: 'Closed', color: 'red' }
 }
 
@@ -69,18 +51,14 @@ export function PlaytestDetailPage() {
   const activeTab: TabKey = isTabKey(tabParam) ? tabParam : 'info'
 
   const { data, isLoading, error, refetch } = usePlaytesthubServiceAdminApi_GetPlaytests(sdk, {})
-  const playtest = useMemo<V1Playtest | undefined>(() => {
-    const rows = (data?.playtests ?? []) as V1Playtest[]
-    return rows.find(p => p.slug === slug)
-  }, [data, slug])
+  const playtest = ((data?.playtests ?? []) as V1Playtest[]).find(p => p.slug === slug)
 
   const transitionMutation = usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation(sdk, {
     onSuccess: () => {
       message.success('Status updated')
       queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtests] })
     },
-    onError: (err: { response?: { data?: { errorMessage?: string } } }) =>
-      message.error(err?.response?.data?.errorMessage ?? 'Failed to update status')
+    onError: toastError('update status')
   })
 
   if (isLoading) return <Spin size="large" data-testid="playtest-detail-loading" />

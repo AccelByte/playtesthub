@@ -12,13 +12,7 @@ import (
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
 )
 
-// runAnnouncement is the entry point for the `pth announcement ...`
-// group introduced in M5.C phase 10. Subcommands:
-//
-//	announcement create --playtest-slug --send-to --subject --message
-//	announcement list   --playtest-slug
-//
-// PRD §5.4 "Bulk announcements" / STATUS_M5.md C10.
+// runAnnouncement dispatches `pth announcement {create|list} ...`.
 func runAnnouncement(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "announcement: usage: pth announcement {create|list} ...")
@@ -26,7 +20,7 @@ func runAnnouncement(ctx context.Context, stdout, stderr io.Writer, g *Globals, 
 	}
 	action, rest := args[0], args[1:]
 	switch action {
-	case "create":
+	case actionCreate:
 		return runAnnouncementCreate(ctx, stdout, stderr, g, rest, factory)
 	case actionList:
 		return runAnnouncementList(ctx, stdout, stderr, g, rest, factory)

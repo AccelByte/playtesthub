@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -75,9 +76,11 @@ type AnnouncementStore interface {
 	InsertRecipients(ctx context.Context, announcementID uuid.UUID, applicantIDs []uuid.UUID) error
 
 	// ListByPlaytest returns announcements for the playtest ordered by
-	// created_at DESC. status is recomputed at read time via aggregate
-	// over announcement_recipient.dm_status (PRD §5.4 / schema.md).
+	// created_at DESC.
 	ListByPlaytest(ctx context.Context, playtestID uuid.UUID) ([]*Announcement, error)
+
+	// GetByID fetches a single announcement row.
+	GetByID(ctx context.Context, announcementID uuid.UUID) (*Announcement, error)
 
 	// MarkRecipientSent updates the per-recipient row + increments
 	// announcement.recipients_sent atomically. Called by the fan-out
@@ -145,6 +148,15 @@ func (s *PgAnnouncementStore) InsertRecipients(ctx context.Context, announcement
 		return fmt.Errorf("inserting announcement recipients: %w", classifyPgError(err))
 	}
 	return nil
+}
+
+func (s *PgAnnouncementStore) GetByID(ctx context.Context, announcementID uuid.UUID) (*Announcement, error) {
+	const sql = `SELECT ` + announcementColumns + ` FROM announcement WHERE id = $1`
+	got, err := scanAnnouncement(s.pool.QueryRow(ctx, sql, announcementID))
+	if err != nil {
+		return nil, fmt.Errorf("fetching announcement: %w", classifyPgError(err))
+	}
+	return got, nil
 }
 
 func (s *PgAnnouncementStore) ListByPlaytest(ctx context.Context, playtestID uuid.UUID) ([]*Announcement, error) {
@@ -255,8 +267,7 @@ func (s *PgAnnouncementStore) ListRecipients(ctx context.Context, announcementID
 	return out, rows.Err()
 }
 
-// scanAnnouncement maps a pgx row to *Announcement.
-func scanAnnouncement(row interface{ Scan(...any) error }) (*Announcement, error) {
+func scanAnnouncement(row pgx.Row) (*Announcement, error) {
 	a := &Announcement{}
 	err := row.Scan(
 		&a.ID, &a.PlaytestID, &a.SendToFilter, &a.Subject, &a.Message,

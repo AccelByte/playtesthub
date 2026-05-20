@@ -392,19 +392,9 @@ func (s *PlaytesthubServiceServer) ListApplicants(ctx context.Context, req *pb.L
 		return nil, e
 	}
 
-	statusFilter := ""
-	switch req.GetStatusFilter() {
-	case pb.ApplicantStatus_APPLICANT_STATUS_PENDING:
-		statusFilter = applicantStatusPending
-	case pb.ApplicantStatus_APPLICANT_STATUS_APPROVED:
-		statusFilter = applicantStatusApproved
-	case pb.ApplicantStatus_APPLICANT_STATUS_REJECTED:
-		statusFilter = applicantStatusRejected
-	}
-
 	page, err := s.applicant.ListPaged(ctx, repo.ApplicantPageQuery{
 		PlaytestID:   pt.ID,
-		Status:       statusFilter,
+		Status:       applicantStatusFilterFromPb(req.GetStatusFilter()),
 		DMFailedOnly: req.GetDmFailedFilter(),
 		PageToken:    req.GetPageToken(),
 		Limit:        int(req.GetPageSize()),

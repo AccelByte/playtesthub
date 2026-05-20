@@ -85,36 +85,14 @@ const PLATFORMS = [
   { value: 'PLATFORM_OTHER', label: 'Other' }
 ] as const
 
-// Mirror proto enums (proto/playtesthub/v1/playtesthub.proto) here
-// because @accelbyte/codegen emits z.any() for every enum, leaving no
-// generated consts to import. Keep these in lockstep with the .proto.
-const PlaytestStatus = {
-  UNSPECIFIED: 'PLAYTEST_STATUS_UNSPECIFIED',
-  DRAFT: 'PLAYTEST_STATUS_DRAFT',
-  OPEN: 'PLAYTEST_STATUS_OPEN',
-  CLOSED: 'PLAYTEST_STATUS_CLOSED'
-} as const
-
-const ApplicantStatus = {
-  UNSPECIFIED: 'APPLICANT_STATUS_UNSPECIFIED',
-  PENDING: 'APPLICANT_STATUS_PENDING',
-  APPROVED: 'APPLICANT_STATUS_APPROVED',
-  REJECTED: 'APPLICANT_STATUS_REJECTED'
-} as const
-type ApplicantStatusValue = (typeof ApplicantStatus)[keyof typeof ApplicantStatus]
-
-const DmStatus = {
-  UNSPECIFIED: 'DM_STATUS_UNSPECIFIED',
-  SENT: 'DM_STATUS_SENT',
-  FAILED: 'DM_STATUS_FAILED'
-} as const
-
-const DistributionModel = {
-  UNSPECIFIED: 'DISTRIBUTION_MODEL_UNSPECIFIED',
-  STEAM_KEYS: 'DISTRIBUTION_MODEL_STEAM_KEYS',
-  AGS_CAMPAIGN: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN',
-  ADT: 'DISTRIBUTION_MODEL_ADT'
-} as const
+import {
+  ApplicantStatus,
+  type ApplicantStatusValue,
+  DistributionModel,
+  DmStatus,
+  PlaytestStatus
+} from './shared/playtesthub-enums'
+import { toastError } from './shared/api-error'
 
 const STATUS_TAG: Record<string, { text: string; color: string }> = {
   [PlaytestStatus.DRAFT]: { text: 'Draft', color: 'default' },
@@ -134,14 +112,6 @@ const DISTRIBUTION_LABEL: Record<string, string> = {
   [DistributionModel.STEAM_KEYS]: 'Steam keys',
   [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign',
   [DistributionModel.ADT]: 'ADT'
-}
-
-// toastError builds the standard mutation onError handler. The verb is
-// the second half of the fallback message ("Failed to <verb>"); the
-// gateway's errorMessage from gRPC status takes precedence when present.
-type ApiError = { response?: { data?: { errorMessage?: string } } }
-function toastError(verb: string) {
-  return (err: ApiError) => message.error(err?.response?.data?.errorMessage ?? `Failed to ${verb}`)
 }
 
 function WorkerHealthBanner() {

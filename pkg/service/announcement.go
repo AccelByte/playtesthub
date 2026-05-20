@@ -15,36 +15,29 @@ import (
 	"github.com/anggorodewanto/playtesthub/pkg/repo"
 )
 
-// Bounds — exposed for the tests that pin the byte-exact errors.md
-// strings. PRD §5.9 lists the defaults; the env vars are read by the
-// bootapp and threaded in via WithAnnouncementBounds.
+// Subject/message bounds exposed so tests can pin the byte-exact
+// errors.md strings. PRD §5.9 lists the defaults; env vars override
+// via WithAnnouncementBounds.
 const (
 	defaultAnnouncementSubjectMaxLen = 200
 	defaultAnnouncementMessageMaxLen = 4000
 )
 
 // AnnouncementSender posts a single direct-message body to a recipient.
-// The production wiring is `pkg/discord.BotClient` (same as the M2 DM
-// queue's Sender). Tests inject a fake. The inline fan-out path applies
-// the sender directly without going through the in-memory DM queue —
-// the queue's circuit-breaker protects the approve DM channel by design
-// (per-applicant attribution on `applicant.last_dm_*`). Announcement
-// state lives on `announcement_recipient` and is updated by the fan-out
-// itself.
+// Production wiring is `pkg/discord.BotClient`. The inline fan-out path
+// bypasses the M2 DM queue on purpose — the queue's circuit breaker
+// protects the approve DM channel (per-applicant attribution on
+// `applicant.last_dm_*`), which announcements must not touch.
 type AnnouncementSender interface {
 	SendDM(ctx context.Context, discordUserID, message string) error
 }
 
-// WithAnnouncementStore wires the M5.C announcement repo + sender.
-// Optional in unit tests that do not exercise CreateAnnouncement.
 func (s *PlaytesthubServiceServer) WithAnnouncementStore(store repo.AnnouncementStore, sender AnnouncementSender) *PlaytesthubServiceServer {
 	s.announcement = store
 	s.announcementSender = sender
 	return s
 }
 
-// WithAnnouncementBounds overrides the default subject / message length
-// caps with PRD §5.9 env-var values.
 func (s *PlaytesthubServiceServer) WithAnnouncementBounds(subjectMax, messageMax int) *PlaytesthubServiceServer {
 	if subjectMax > 0 {
 		s.announcementSubjectMaxLen = subjectMax
@@ -56,9 +49,8 @@ func (s *PlaytesthubServiceServer) WithAnnouncementBounds(subjectMax, messageMax
 }
 
 // CreateAnnouncement materialises an admin-authored bulk DM broadcast.
-// Closed-playtest writes are rejected (errors.md). Recipients resolve
-// AT CALL TIME — adding an applicant after this call does NOT auto-
-// include them.
+// Recipients resolve AT CALL TIME — applicants added after this call
+// are NOT auto-included (PRD §5.4).
 func (s *PlaytesthubServiceServer) CreateAnnouncement(ctx context.Context, req *pb.CreateAnnouncementRequest) (*pb.CreateAnnouncementResponse, error) {
 	actor, err := requireActor(ctx)
 	if err != nil {
@@ -117,36 +109,24 @@ func (s *PlaytesthubServiceServer) CreateAnnouncement(ctx context.Context, req *
 	}
 	if s.audit != nil {
 		if err := repo.AppendAnnouncementCreate(ctx, s.audit, s.namespace, actor, saved.ID, playtestID, filter, int32(len(recipients))); err != nil {
-			// Audit append must not poison the broadcast — the row is
-			// already persisted. Log + continue per the existing
-			// auditlog soft-fail pattern.
-			s.logIfPossible("appending announcement.create audit", err)
+			s.loggerOrDefault().Warn("appending announcement.create audit failed", "error", err.Error())
 		}
 	}
 
-	// Inline fan-out. Best-effort per recipient — Sender errors are
-	// recorded on the per-recipient row so retries / re-broadcasts are
-	// possible without losing the audit trail.
 	s.fanOutAnnouncement(ctx, saved, recipients)
 
-	// Refresh status so the response reflects the final aggregate.
 	if err := s.announcement.FinaliseStatus(ctx, saved.ID); err != nil {
-		s.logIfPossible("finalising announcement status", err)
+		s.loggerOrDefault().Warn("finalising announcement status failed", "error", err.Error())
 	}
 
-	final, err := s.fetchAnnouncement(ctx, playtestID, saved.ID)
+	final, err := s.announcement.GetByID(ctx, saved.ID)
 	if err != nil {
-		// Already inserted; treat post-fan-out fetch failures as soft.
 		final = saved
 	}
 
 	return &pb.CreateAnnouncementResponse{Announcement: announcementToProto(final)}, nil
 }
 
-// ListAnnouncements returns the per-playtest history. Status is the
-// aggregate computed by FinaliseStatus on insert; subsequent edits to
-// recipient rows (e.g. async retries) would require a refresh — none
-// currently exists in M5.C.
 func (s *PlaytesthubServiceServer) ListAnnouncements(ctx context.Context, req *pb.ListAnnouncementsRequest) (*pb.ListAnnouncementsResponse, error) {
 	if _, err := requireActor(ctx); err != nil {
 		return nil, err
@@ -245,26 +225,6 @@ func (s *PlaytesthubServiceServer) fanOutAnnouncement(ctx context.Context, ann *
 	}
 }
 
-func (s *PlaytesthubServiceServer) fetchAnnouncement(ctx context.Context, playtestID, announcementID uuid.UUID) (*repo.Announcement, error) {
-	rows, err := s.announcement.ListByPlaytest(ctx, playtestID)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		if r.ID == announcementID {
-			return r, nil
-		}
-	}
-	return nil, errors.New("announcement not found post-insert")
-}
-
-func (s *PlaytesthubServiceServer) logIfPossible(msg string, err error) {
-	if s.logger == nil {
-		return
-	}
-	s.logger.Warn(msg, "error", err.Error())
-}
-
 func classifyAnnouncementSendError(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
@@ -316,15 +276,15 @@ func announcementStatusToPb(v string) pb.AnnouncementStatus {
 
 func announcementToProto(a *repo.Announcement) *pb.Announcement {
 	return &pb.Announcement{
-		Id:               a.ID.String(),
-		PlaytestId:       a.PlaytestID.String(),
-		SendToFilter:     announcementSendToFilterToPb(a.SendToFilter),
-		Subject:          a.Subject,
-		Message:          a.Message,
-		Status:           announcementStatusToPb(a.Status),
-		RecipientsTotal:  a.RecipientsTotal,
-		RecipientsSent:   a.RecipientsSent,
-		CreatedByUserId:  a.CreatedByUserID.String(),
-		CreatedAt:        timestamppb.New(a.CreatedAt),
+		Id:              a.ID.String(),
+		PlaytestId:      a.PlaytestID.String(),
+		SendToFilter:    announcementSendToFilterToPb(a.SendToFilter),
+		Subject:         a.Subject,
+		Message:         a.Message,
+		Status:          announcementStatusToPb(a.Status),
+		RecipientsTotal: a.RecipientsTotal,
+		RecipientsSent:  a.RecipientsSent,
+		CreatedByUserId: a.CreatedByUserID.String(),
+		CreatedAt:       timestamppb.New(a.CreatedAt),
 	}
 }

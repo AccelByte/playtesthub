@@ -1,24 +1,9 @@
-/**
- * DistributionTab — M5.C phase 5 / docs/STATUS_M5.md D6.
- *
- * Dispatches on playtest.distributionModel and renders the per-model
- * shape with a shared empty-state scaffold. The legacy CodePoolPage is
- * still reachable via the "Open code pool page" affordance for the
- * affordances that haven't been moved here yet (CSV upload UI, sync
- * action) — those stay on the legacy page during the M5.C transition.
- */
-
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
 import { Alert, Button, Card, Space, Statistic, Tag, Typography } from 'antd'
 import { useNavigate } from 'react-router'
 import type { V1Playtest } from '../playtesthubapi/generated-definitions/V1Playtest'
 import { usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId } from '../playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
-
-const DistributionModel = {
-  STEAM_KEYS: 'DISTRIBUTION_MODEL_STEAM_KEYS',
-  AGS_CAMPAIGN: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN',
-  ADT: 'DISTRIBUTION_MODEL_ADT'
-}
+import { DistributionModel } from '../shared/playtesthub-enums'
 
 export function DistributionTab({ playtest }: { playtest: V1Playtest }) {
   const model = playtest.distributionModel ?? ''
