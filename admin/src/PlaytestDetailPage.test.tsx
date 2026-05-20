@@ -15,6 +15,8 @@ const mockGetParticipants = vi.fn()
 const mockGetAnnouncements = vi.fn()
 const mockCreateAnnouncement = vi.fn()
 const mockGetCodes = vi.fn()
+const mockApprove = vi.fn()
+const mockReject = vi.fn()
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -29,7 +31,10 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_GetAnnouncements_ByPlaytestId: (...a: unknown[]) => mockGetAnnouncements(...a),
   usePlaytesthubServiceAdminApi_CreateAnnouncement_ByPlaytestIdMutation: (...a: unknown[]) =>
     mockCreateAnnouncement(...a),
-  usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId: (...a: unknown[]) => mockGetCodes(...a)
+  usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId: (...a: unknown[]) => mockGetCodes(...a),
+  usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdApproveMutation: (...a: unknown[]) =>
+    mockApprove(...a),
+  usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRejectMutation: (...a: unknown[]) => mockReject(...a)
 }))
 
 import { PlaytestDetailPage } from './PlaytestDetailPage'
@@ -77,6 +82,8 @@ beforeEach(() => {
   mockGetAnnouncements.mockReturnValue({ data: { announcements: [] }, isLoading: false, refetch: vi.fn() })
   mockCreateAnnouncement.mockReturnValue({ mutate: vi.fn(), isPending: false })
   mockGetCodes.mockReturnValue({ data: { stats: { total: 0, unused: 0, granted: 0 } }, isLoading: false })
+  mockApprove.mockReturnValue({ mutate: vi.fn() })
+  mockReject.mockReturnValue({ mutate: vi.fn() })
 })
 
 describe('PlaytestDetailPage shell', () => {
@@ -127,6 +134,39 @@ describe('PlaytestDetailPage shell', () => {
   it('surfaces a warning when the slug is unknown', () => {
     renderDetail('does-not-exist')
     expect(screen.getByText(/not found/i)).toBeInTheDocument()
+  })
+
+  it('Participants tab renders the 6-column table + capacity counter', async () => {
+    mockGetParticipants.mockReturnValue({
+      data: {
+        participants: [
+          {
+            applicantId: 'a1',
+            userId: 'u1',
+            discordHandle: 'alice#1',
+            signupAt: '2026-05-20T00:00:00Z',
+            ndaAcceptedAt: '2026-05-20T00:00:00Z',
+            codeSentAt: '2026-05-20T01:00:00Z',
+            status: 'APPLICANT_STATUS_APPROVED'
+          },
+          {
+            applicantId: 'a2',
+            userId: 'u2',
+            discordHandle: 'bob#2',
+            signupAt: '2026-05-20T00:00:00Z',
+            status: 'APPLICANT_STATUS_PENDING'
+          }
+        ]
+      },
+      isLoading: false
+    })
+    renderDetail('autumn-draft')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Participants' }))
+    expect(await screen.findByText('alice#1')).toBeInTheDocument()
+    expect(screen.getByText('bob#2')).toBeInTheDocument()
+    expect(screen.getByText('2 / ∞ enrolled')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Approve' })[0]).toBeInTheDocument()
   })
 
   it('Distribution tab renders the Steam empty state when pool is empty', async () => {
