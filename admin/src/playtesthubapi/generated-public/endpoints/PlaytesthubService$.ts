@@ -15,6 +15,7 @@ import { PlaytesthubServiceSubmitSurveyResponseBody } from '../../generated-defi
 import { V1AcceptNdaResponse } from '../../generated-definitions/V1AcceptNdaResponse.js'
 import { V1ExchangeDiscordCodeRequest } from '../../generated-definitions/V1ExchangeDiscordCodeRequest.js'
 import { V1ExchangeDiscordCodeResponse } from '../../generated-definitions/V1ExchangeDiscordCodeResponse.js'
+import { V1GetAdtDownloadInfoResponse } from '../../generated-definitions/V1GetAdtDownloadInfoResponse.js'
 import { V1GetApplicantStatusResponse } from '../../generated-definitions/V1GetApplicantStatusResponse.js'
 import { V1GetGrantedCodeResponse } from '../../generated-definitions/V1GetGrantedCodeResponse.js'
 import { V1GetPlaytestForPlayerResponse } from '../../generated-definitions/V1GetPlaytestForPlayerResponse.js'
@@ -122,7 +123,22 @@ export class PlaytesthubService$ {
     return Validate.validateOrReturnResponse(this.useSchemaValidation, () => resultPromise, V1AcceptNdaResponse, 'V1AcceptNdaResponse')
   }
   /**
-   * NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md).
+   * FailedPrecondition for non-ADT playtests. URL re-minted on every call so the player always sees a fresh (possibly per-applicant) URL.
+   */
+  getAdtDownloadPlayer_ByPlaytestId(playtestId: string): Promise<Response<V1GetAdtDownloadInfoResponse>> {
+    const params = {} as AxiosRequestConfig
+    const url = '/v1/player/playtests/{playtestId}/adtDownload'.replace('{playtestId}', playtestId)
+    const resultPromise = this.axiosInstance.get(url, { params })
+
+    return Validate.validateOrReturnResponse(
+      this.useSchemaValidation,
+      () => resultPromise,
+      V1GetAdtDownloadInfoResponse,
+      'V1GetAdtDownloadInfoResponse'
+    )
+  }
+  /**
+   * NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md). FailedPrecondition for ADT playtests — use GetADTDownloadInfo.
    */
   getGrantedCodePlayer_ByPlaytestId(playtestId: string): Promise<Response<V1GetGrantedCodeResponse>> {
     const params = {} as AxiosRequestConfig

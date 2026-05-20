@@ -37,6 +37,8 @@ import type { V1Applicant } from './playtesthubapi/generated-definitions/V1Appli
 import type { V1AuditLogEntry } from './playtesthubapi/generated-definitions/V1AuditLogEntry'
 import type { V1Code } from './playtesthubapi/generated-definitions/V1Code'
 import type { V1CodePoolStats } from './playtesthubapi/generated-definitions/V1CodePoolStats'
+import type { V1AdtBuild } from './playtesthubapi/generated-definitions/V1AdtBuild'
+import type { V1AdtLinkage } from './playtesthubapi/generated-definitions/V1AdtLinkage'
 import type { V1MultiChoiceOption } from './playtesthubapi/generated-definitions/V1MultiChoiceOption'
 import type { V1Playtest } from './playtesthubapi/generated-definitions/V1Playtest'
 import type { V1Survey } from './playtesthubapi/generated-definitions/V1Survey'
@@ -48,6 +50,7 @@ import type { V1WorkerHealthEntry } from './playtesthubapi/generated-definitions
 import {
   Key_PlaytesthubServiceAdmin,
   usePlaytesthubServiceAdminApi_CreateAdtLinkagesCompleteMutation,
+  usePlaytesthubServiceAdminApi_CreateAdtLinkagesStartMutation,
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdApproveMutation,
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRejectMutation,
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRetryDmMutation,
@@ -57,9 +60,12 @@ import {
   usePlaytesthubServiceAdminApi_CreatePlaytestMutation,
   usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation,
   usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation,
+  usePlaytesthubServiceAdminApi_DeleteAdtLinkage_ByAdtLinkageIdMutation,
   usePlaytesthubServiceAdminApi_DeletePlaytest_ByPlaytestIdMutation,
+  usePlaytesthubServiceAdminApi_GetAdtLinkages,
   usePlaytesthubServiceAdminApi_GetApplicants_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetAuditLog_ByPlaytestId,
+  usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId,
   usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetPlaytests,
@@ -105,7 +111,8 @@ const DmStatus = {
 const DistributionModel = {
   UNSPECIFIED: 'DISTRIBUTION_MODEL_UNSPECIFIED',
   STEAM_KEYS: 'DISTRIBUTION_MODEL_STEAM_KEYS',
-  AGS_CAMPAIGN: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'
+  AGS_CAMPAIGN: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN',
+  ADT: 'DISTRIBUTION_MODEL_ADT'
 } as const
 
 const STATUS_TAG: Record<string, { text: string; color: string }> = {
@@ -124,7 +131,8 @@ function StatusTag({ status, startsAt, endsAt }: { status: string | null | undef
 
 const DISTRIBUTION_LABEL: Record<string, string> = {
   [DistributionModel.STEAM_KEYS]: 'Steam keys',
-  [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign'
+  [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign',
+  [DistributionModel.ADT]: 'ADT'
 }
 
 // toastError builds the standard mutation onError handler. The verb is
@@ -389,6 +397,7 @@ function PlaytestsListPage() {
           pagination={{ pageSize: 20 }}
         />
       )}
+      <ADTLinkagesPanel />
     </>
   )
 }
@@ -406,6 +415,13 @@ type FormValues = {
   initialCodeQuantity?: number
   autoApprove?: boolean
   autoApproveLimit?: number
+  // M5.B ADT fields. adtLinkageId is the in-form selector; the create
+  // mutation submits adtNamespace from the picked linkage row.
+  adtLinkageId?: string
+  adtNamespace?: string
+  adtGameId?: string
+  adtBuildId?: string
+  adtFallbackDownloadUrl?: string
 }
 
 const AUTO_APPROVE_LIMIT_MIN = 1
@@ -423,6 +439,164 @@ const autoApproveLimitRule = ({ getFieldValue }: { getFieldValue: (name: string)
   }
 })
 
+// ADTLinkagesPanel renders the studio-scoped ADT linkages list + a
+// "Link new ADT Namespace" affordance. Lives at the bottom of the
+// PlaytestsListPage per STATUS_M5.md B7 — linkage is studio-scoped, not
+// playtest-scoped, so it stays out of the create-playtest form.
+function ADTLinkagesPanel() {
+  const { sdk } = useAppUIContext()
+  const queryClient = useQueryClient()
+  const { data, isLoading, error } = usePlaytesthubServiceAdminApi_GetAdtLinkages(sdk, {})
+  const unlinkMutation = usePlaytesthubServiceAdminApi_DeleteAdtLinkage_ByAdtLinkageIdMutation(sdk, {
+    onSuccess: () => {
+      message.success('ADT linkage removed')
+      queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.AdtLinkages] })
+    },
+    onError: toastError('unlink')
+  })
+  const [modalOpen, setModalOpen] = useState(false)
+  const linkages = (data?.linkages ?? []) as V1AdtLinkage[]
+
+  const columns = [
+    { title: 'ADT namespace', dataIndex: 'adtNamespace', key: 'adtNamespace' },
+    { title: 'Studio namespace', dataIndex: 'studioNamespace', key: 'studioNamespace' },
+    { title: 'Linked at', dataIndex: 'linkedAt', key: 'linkedAt' },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, row: V1AdtLinkage) => (
+        <Popconfirm
+          title="Unlink this ADT namespace?"
+          description="Subsequent ADT API calls will fail until re-linked."
+          onConfirm={() => unlinkMutation.mutate({ adtLinkageId: row.id ?? '' })}>
+          <Button size="small" danger>
+            Unlink
+          </Button>
+        </Popconfirm>
+      )
+    }
+  ]
+  return (
+    <div style={{ marginTop: 24 }} data-testid="adt-linkages-panel">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          ADT Linkages
+        </Typography.Title>
+        <Button onClick={() => setModalOpen(true)}>Link new ADT Namespace</Button>
+      </div>
+      <Typography.Paragraph type="secondary">
+        Studio-wide linkage — one row covers every game namespace under your studio.
+      </Typography.Paragraph>
+      {isLoading && <Spin />}
+      {error && <Alert type="error" message="Failed to load linkages" showIcon />}
+      {!isLoading && !error && (
+        <Table<V1AdtLinkage>
+          rowKey={row => row.id ?? ''}
+          dataSource={linkages}
+          columns={columns}
+          pagination={false}
+          locale={{ emptyText: 'No ADT linkages yet. Click "Link new ADT Namespace" to link one.' }}
+        />
+      )}
+      <LinkADTModal open={modalOpen} onClose={() => setModalOpen(false)} />
+    </div>
+  )
+}
+
+// LinkADTModal mirrors STATUS_M5.md B7's "Link new ADT Namespace"
+// modal: copy + Cancel / Proceed. Proceed calls StartADTLink → assigns
+// window.location.href to the returned linkUrl. Any in-progress create
+// form draft has already been persisted by the form's onValuesChange
+// hook (sessionStorage); operators land back on /adt-link-callback.
+function LinkADTModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { sdk } = useAppUIContext()
+  const startMutation = usePlaytesthubServiceAdminApi_CreateAdtLinkagesStartMutation(sdk, {
+    onSuccess: data => {
+      if (data?.linkUrl) {
+        window.location.href = data.linkUrl
+        return
+      }
+      message.error('ADT did not return a link URL')
+    },
+    onError: toastError('start ADT link')
+  })
+  return (
+    <Modal
+      open={open}
+      title="Link ADT Namespace"
+      okText="Proceed"
+      onOk={() => startMutation.mutate({ data: {} })}
+      confirmLoading={startMutation.isPending}
+      onCancel={onClose}>
+      <Typography.Paragraph>
+        You will be redirected to ADT to authorise the linkage. After ADT confirms, you'll return here automatically.
+      </Typography.Paragraph>
+      <Typography.Paragraph type="secondary">
+        No credential is exchanged — playtesthub authenticates to ADT via your studio's AGS service token on every API call.
+      </Typography.Paragraph>
+    </Modal>
+  )
+}
+
+// ADTCreateFields renders the ADT-only fields inside PlaytestCreatePage
+// when distribution_model = ADT. Pulls the studio's linkages + the
+// build list for the picked linkage; falls back to a free-text Input
+// when ADT's build endpoint is unavailable (STATUS_M5.md cut-if-behind).
+function ADTCreateFields({
+  form,
+  linkageId,
+  adtGameId
+}: {
+  form: ReturnType<typeof Form.useForm<FormValues>>[0]
+  linkageId: string
+  adtGameId: string
+}) {
+  const { sdk } = useAppUIContext()
+  const linkagesQuery = usePlaytesthubServiceAdminApi_GetAdtLinkages(sdk, {})
+  const buildsQuery = usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId(
+    sdk,
+    { adtLinkageId: linkageId, queryParams: { adtGameId } },
+    { enabled: !!linkageId && !!adtGameId }
+  )
+  const linkages = (linkagesQuery.data?.linkages ?? []) as V1AdtLinkage[]
+  const builds = (buildsQuery.data?.builds ?? []) as V1AdtBuild[]
+
+  return (
+    <>
+      <Form.Item label="ADT linkage" name="adtLinkageId" rules={[{ required: true, message: 'Pick a linked ADT namespace' }]}>
+        <Select
+          placeholder="Select a linked ADT namespace"
+          options={linkages.map(l => ({ value: l.id, label: `${l.adtNamespace ?? ''} (${l.studioNamespace ?? ''})` }))}
+          onChange={(_id: string) => {
+            const picked = linkages.find(l => l.id === _id)
+            form.setFieldValue('adtNamespace', picked?.adtNamespace ?? '')
+          }}
+        />
+      </Form.Item>
+      <Form.Item label="ADT game id" name="adtGameId" rules={[{ required: true, message: 'ADT game id is required' }]}>
+        <Input placeholder="e.g. mygame" />
+      </Form.Item>
+      <Form.Item label="ADT build id" name="adtBuildId" rules={[{ required: true, message: 'Pick a build' }]}>
+        {builds.length > 0 ? (
+          <Select
+            placeholder="Pick a build"
+            options={builds.map(b => ({ value: b.id, label: `${b.name ?? b.id} (${b.version ?? '—'})` }))}
+          />
+        ) : (
+          <Input placeholder="Build id (paste from ADT Hub)" disabled={!linkageId || !adtGameId} />
+        )}
+      </Form.Item>
+      <Form.Item
+        label="Static fallback download URL"
+        name="adtFallbackDownloadUrl"
+        rules={[{ type: 'url', message: 'Must be a URL' }]}
+        extra="Used when ADT cannot mint a per-applicant URL. https only.">
+        <Input placeholder="https://..." />
+      </Form.Item>
+    </>
+  )
+}
+
 function PlaytestCreatePage() {
   const { sdk } = useAppUIContext()
   const navigate = useNavigate()
@@ -439,6 +613,7 @@ function PlaytestCreatePage() {
   })
 
   const handleSubmit = (values: FormValues) => {
+    const isADT = values.distributionModel === DistributionModel.ADT
     createMutation.mutate({
       data: {
         slug: values.slug,
@@ -453,7 +628,11 @@ function PlaytestCreatePage() {
         distributionModel: values.distributionModel,
         initialCodeQuantity: values.initialCodeQuantity,
         autoApprove: values.autoApprove ?? false,
-        autoApproveLimit: values.autoApprove ? values.autoApproveLimit : undefined
+        autoApproveLimit: values.autoApprove ? values.autoApproveLimit : undefined,
+        adtNamespace: isADT ? values.adtNamespace : undefined,
+        adtGameId: isADT ? values.adtGameId : undefined,
+        adtBuildId: isADT ? values.adtBuildId : undefined,
+        adtFallbackDownloadUrl: isADT ? values.adtFallbackDownloadUrl : undefined
       }
     })
   }
@@ -516,6 +695,7 @@ function PlaytestCreatePage() {
           <Radio.Group>
             <Radio value={DistributionModel.STEAM_KEYS}>Steam keys</Radio>
             <Radio value={DistributionModel.AGS_CAMPAIGN}>AGS Campaign</Radio>
+            <Radio value={DistributionModel.ADT}>ADT</Radio>
           </Radio.Group>
         </Form.Item>
         <Form.Item
@@ -526,6 +706,19 @@ function PlaytestCreatePage() {
               <Form.Item label="Initial code quantity" name="initialCodeQuantity" rules={[{ type: 'number', min: 1, max: 50000 }]}>
                 <InputNumber min={1} max={50000} style={{ width: '100%' }} />
               </Form.Item>
+            )
+          }
+        </Form.Item>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prev: FormValues, next: FormValues) =>
+            prev.distributionModel !== next.distributionModel ||
+            prev.adtLinkageId !== next.adtLinkageId ||
+            prev.adtGameId !== next.adtGameId
+          }>
+          {({ getFieldValue }) =>
+            getFieldValue('distributionModel') === DistributionModel.ADT && (
+              <ADTCreateFields form={form} linkageId={getFieldValue('adtLinkageId') ?? ''} adtGameId={getFieldValue('adtGameId') ?? ''} />
             )
           }
         </Form.Item>

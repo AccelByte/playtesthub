@@ -37,6 +37,10 @@ const mockGetSurveyPlayer = vi.fn()
 const mockGetAuditLog = vi.fn()
 const mockGetWorkersHealth = vi.fn()
 const mockCompleteAdtLinkMutation = vi.fn()
+const mockGetAdtLinkages = vi.fn()
+const mockGetAdtBuilds = vi.fn()
+const mockStartAdtLinkMutation = vi.fn()
+const mockUnlinkAdtMutation = vi.fn()
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -47,7 +51,9 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
     Codes_ByPlaytestId: 'codes-by-playtest-id',
     Applicants_ByPlaytestId: 'applicants-by-playtest-id',
     Survey_ByPlaytestId: 'survey-by-playtest-id',
-    SurveyResponses_ByPlaytestId: 'survey-responses-by-playtest-id'
+    SurveyResponses_ByPlaytestId: 'survey-responses-by-playtest-id',
+    AdtLinkages: 'adt-linkages',
+    BuildsAdt_ByAdtLinkageId: 'adt-builds-by-linkage-id'
   },
   usePlaytesthubServiceAdminApi_GetPlaytests: (...args: unknown[]) => mockGetPlaytests(...args),
   usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId: (...args: unknown[]) => mockGetPlaytest(...args),
@@ -68,7 +74,11 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId: (...args: unknown[]) => mockGetSurveyResponses(...args),
   usePlaytesthubServiceAdminApi_GetAuditLog_ByPlaytestId: (...args: unknown[]) => mockGetAuditLog(...args),
   usePlaytesthubServiceAdminApi_GetWorkersHealth: (...args: unknown[]) => mockGetWorkersHealth(...args),
-  usePlaytesthubServiceAdminApi_CreateAdtLinkagesCompleteMutation: (...args: unknown[]) => mockCompleteAdtLinkMutation(...args)
+  usePlaytesthubServiceAdminApi_CreateAdtLinkagesCompleteMutation: (...args: unknown[]) => mockCompleteAdtLinkMutation(...args),
+  usePlaytesthubServiceAdminApi_GetAdtLinkages: (...args: unknown[]) => mockGetAdtLinkages(...args),
+  usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId: (...args: unknown[]) => mockGetAdtBuilds(...args),
+  usePlaytesthubServiceAdminApi_CreateAdtLinkagesStartMutation: (...args: unknown[]) => mockStartAdtLinkMutation(...args),
+  usePlaytesthubServiceAdminApi_DeleteAdtLinkage_ByAdtLinkageIdMutation: (...args: unknown[]) => mockUnlinkAdtMutation(...args)
 }))
 
 vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
@@ -111,6 +121,10 @@ beforeEach(() => {
   mockGetAuditLog.mockReset()
   mockGetWorkersHealth.mockReset()
   mockCompleteAdtLinkMutation.mockReset()
+  mockGetAdtLinkages.mockReset()
+  mockGetAdtBuilds.mockReset()
+  mockStartAdtLinkMutation.mockReset()
+  mockUnlinkAdtMutation.mockReset()
 
   // Default: empty list + no-op mutations.
   mockGetPlaytests.mockReturnValue({ data: { playtests: [] }, isLoading: false, error: null, refetch: vi.fn() })
@@ -134,6 +148,10 @@ beforeEach(() => {
   mockGetAuditLog.mockReturnValue({ data: { entries: [], nextPageToken: '' }, isLoading: false, error: null, refetch: vi.fn() })
   mockGetWorkersHealth.mockReturnValue({ data: { workers: [] }, isLoading: false, error: null })
   mockCompleteAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockGetAdtLinkages.mockReturnValue({ data: { linkages: [] }, isLoading: false, error: null })
+  mockGetAdtBuilds.mockReturnValue({ data: { builds: [] }, isLoading: false, error: null })
+  mockStartAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockUnlinkAdtMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
 })
 
 describe('PlaytestsListPage', () => {
@@ -294,6 +312,52 @@ describe('PlaytestCreatePage', () => {
       await screen.findByText('auto_approve_limit must be between 1 and 100000 when auto_approve is true')
     ).toBeInTheDocument()
     expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('offers the ADT distribution radio (M5.B)', () => {
+    renderAt('/new')
+    expect(screen.getByRole('radio', { name: /^ADT$/i })).toBeEnabled()
+  })
+
+  it('reveals the ADT field set when ADT is picked', async () => {
+    mockGetAdtLinkages.mockReturnValue({
+      data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A' }] },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/new')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+    expect(await screen.findByLabelText(/adt linkage/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/adt game id/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/adt build id/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/static fallback download url/i)).toBeInTheDocument()
+  })
+})
+
+describe('ADTLinkagesPanel', () => {
+  it('renders empty-state copy when no linkages exist', () => {
+    renderAt('/')
+    expect(screen.getByText(/no ADT linkages yet/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /link new ADT namespace/i })).toBeInTheDocument()
+  })
+
+  it('renders linkage rows + an Unlink button per row', () => {
+    mockGetAdtLinkages.mockReturnValue({
+      data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A', linkedAt: '2026-05-19T00:00:00Z' }] },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/')
+    expect(screen.getByText('adt-ns-1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /unlink/i })).toBeInTheDocument()
+  })
+
+  it('opens the Link ADT modal on click', async () => {
+    renderAt('/')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /link new ADT namespace/i }))
+    expect(await screen.findByText(/you will be redirected to ADT to authorise the linkage/i)).toBeInTheDocument()
   })
 })
 

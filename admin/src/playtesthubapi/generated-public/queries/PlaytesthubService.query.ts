@@ -18,6 +18,7 @@ import { PlaytesthubServiceSubmitSurveyResponseBody } from '../../generated-defi
 import { V1AcceptNdaResponse } from '../../generated-definitions/V1AcceptNdaResponse.js'
 import { V1ExchangeDiscordCodeRequest } from '../../generated-definitions/V1ExchangeDiscordCodeRequest.js'
 import { V1ExchangeDiscordCodeResponse } from '../../generated-definitions/V1ExchangeDiscordCodeResponse.js'
+import { V1GetAdtDownloadInfoResponse } from '../../generated-definitions/V1GetAdtDownloadInfoResponse.js'
 import { V1GetApplicantStatusResponse } from '../../generated-definitions/V1GetApplicantStatusResponse.js'
 import { V1GetGrantedCodeResponse } from '../../generated-definitions/V1GetGrantedCodeResponse.js'
 import { V1GetPlaytestForPlayerResponse } from '../../generated-definitions/V1GetPlaytestForPlayerResponse.js'
@@ -34,6 +35,7 @@ export const Key_PlaytesthubService = {
   ApplicantPlayer_BySlug: 'Playtesthubapi.PlaytesthubService.ApplicantPlayer_BySlug',
   SurveyPlayer_ByPlaytestId: 'Playtesthubapi.PlaytesthubService.SurveyPlayer_ByPlaytestId',
   PlayerPlaytest_ByPlaytestIdAcceptNda: 'Playtesthubapi.PlaytesthubService.PlayerPlaytest_ByPlaytestIdAcceptNda',
+  AdtDownloadPlayer_ByPlaytestId: 'Playtesthubapi.PlaytesthubService.AdtDownloadPlayer_ByPlaytestId',
   GrantedCodePlayer_ByPlaytestId: 'Playtesthubapi.PlaytesthubService.GrantedCodePlayer_ByPlaytestId',
   SurveySubmitPlayer_ByPlaytestId: 'Playtesthubapi.PlaytesthubService.SurveySubmitPlayer_ByPlaytestId'
 } as const
@@ -261,7 +263,41 @@ export const usePlaytesthubServiceApi_CreatePlayerPlaytest_ByPlaytestIdAcceptNda
 }
 
 /**
- * NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md).
+ * FailedPrecondition for non-ADT playtests. URL re-minted on every call so the player always sees a fresh (possibly per-applicant) URL.
+ *
+ * #### Default Query Options
+ * The default options include:
+ * ```
+ * {
+ *    queryKey: [Key_PlaytesthubService.AdtDownloadPlayer_ByPlaytestId, input]
+ * }
+ * ```
+ */
+export const usePlaytesthubServiceApi_GetAdtDownloadPlayer_ByPlaytestId = (
+  sdk: AccelByteSDK,
+  input: SdkSetConfigParam & { playtestId: string },
+  options?: Omit<UseQueryOptions<V1GetAdtDownloadInfoResponse, AxiosError<ApiError>>, 'queryKey'>,
+  callback?: (data: AxiosResponse<V1GetAdtDownloadInfoResponse>) => void
+): UseQueryResult<V1GetAdtDownloadInfoResponse, AxiosError<ApiError>> => {
+  const queryFn =
+    (sdk: AccelByteSDK, input: Parameters<typeof usePlaytesthubServiceApi_GetAdtDownloadPlayer_ByPlaytestId>[1]) => async () => {
+      const response = await PlaytesthubServiceApi(sdk, {
+        coreConfig: input.coreConfig,
+        axiosConfig: input.axiosConfig
+      }).getAdtDownloadPlayer_ByPlaytestId(input.playtestId)
+      callback?.(response)
+      return response.data
+    }
+
+  return useQuery<V1GetAdtDownloadInfoResponse, AxiosError<ApiError>>({
+    queryKey: [Key_PlaytesthubService.AdtDownloadPlayer_ByPlaytestId, input],
+    queryFn: queryFn(sdk, input),
+    ...options
+  })
+}
+
+/**
+ * NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md). FailedPrecondition for ADT playtests — use GetADTDownloadInfo.
  *
  * #### Default Query Options
  * The default options include:

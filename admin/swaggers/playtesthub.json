@@ -1286,10 +1286,47 @@
         ]
       }
     },
+    "/v1/player/playtests/{playtestId}/adtDownload": {
+      "get": {
+        "summary": "Get the ADT build download URL for the caller (authenticated player; APPROVED applicants only)",
+        "description": "FailedPrecondition for non-ADT playtests. URL re-minted on every call so the player always sees a fresh (possibly per-applicant) URL.",
+        "operationId": "PlaytesthubService_GetADTDownloadInfo",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetADTDownloadInfoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "playtestId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
     "/v1/player/playtests/{playtestId}/grantedCode": {
       "get": {
         "summary": "Get the granted code for the caller (authenticated player; APPROVED applicants only)",
-        "description": "NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md).",
+        "description": "NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md). FailedPrecondition for ADT playtests — use GetADTDownloadInfo.",
         "operationId": "PlaytesthubService_GetGrantedCode",
         "responses": {
           "200": {
@@ -1669,6 +1706,19 @@
         "autoApproveLimit": {
           "type": "integer",
           "format": "int32"
+        },
+        "adtNamespace": {
+          "type": "string",
+          "description": "ADT distribution (M5.B). Required when distribution_model = ADT;\nrejected when set on STEAM_KEYS / AGS_CAMPAIGN. The linkage row\ncovering (studio_namespace, adt_namespace) must already exist —\nCompleteADTLink first. adt_build_id is verified against\nadt.Client.ListBuilds(adt_namespace, adt_game_id) at create-time."
+        },
+        "adtGameId": {
+          "type": "string"
+        },
+        "adtBuildId": {
+          "type": "string"
+        },
+        "adtFallbackDownloadUrl": {
+          "type": "string"
         }
       }
     },
@@ -1724,6 +1774,10 @@
         "autoApproveLimit": {
           "type": "integer",
           "format": "int32"
+        },
+        "adtFallbackDownloadUrl": {
+          "type": "string",
+          "description": "ADT distribution (M5.B). adt_namespace / adt_game_id / adt_build_id\nare immutable post-create (mirrors ags_item_id); only the static\nfallback URL is editable so operators can repoint without\nrecreating the playtest."
         }
       },
       "description": "EditPlaytestRequest mutable-field whitelist tracks PRD §5.1 L146.\nImmutable fields (slug, namespace path params excluded, status,\ndistribution_model, initial_code_quantity, ags_*, timestamps) are\ndeliberately absent — clients that send them on the JSON body still have\nthem rejected at the handler layer."
@@ -2111,9 +2165,11 @@
       "enum": [
         "DISTRIBUTION_MODEL_UNSPECIFIED",
         "DISTRIBUTION_MODEL_STEAM_KEYS",
-        "DISTRIBUTION_MODEL_AGS_CAMPAIGN"
+        "DISTRIBUTION_MODEL_AGS_CAMPAIGN",
+        "DISTRIBUTION_MODEL_ADT"
       ],
-      "default": "DISTRIBUTION_MODEL_UNSPECIFIED"
+      "default": "DISTRIBUTION_MODEL_UNSPECIFIED",
+      "description": " - DISTRIBUTION_MODEL_ADT: ADT — AccelByte Development Toolkit build download. No code pool;\napprove resolves a per-applicant download URL (or static fallback)\nvia pkg/adt. PRD §4.8, schema.md §\"Playtest entity (ADT fields)\"."
     },
     "v1DmStatus": {
       "type": "string",
@@ -2173,6 +2229,24 @@
         "tokenType": {
           "type": "string",
           "description": "Always \"Bearer\" today; carried verbatim for forward-compat."
+        }
+      }
+    },
+    "v1GetADTDownloadInfoResponse": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Resolved download URL. Issued via adt.Client.IssueDownloadURL when\nADT can mint a per-applicant URL; falls back to the playtest's\nstatic adtFallbackDownloadUrl when ADT 4xx/5xx but the linkage row\nis still present."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional expiry; zero when ADT does not surface one."
+        },
+        "source": {
+          "type": "string",
+          "description": "\"issued\" (per-applicant ADT URL) or \"fallback\" (static playtest URL)."
         }
       }
     },
@@ -2504,6 +2578,19 @@
         "autoApproveLimit": {
           "type": "integer",
           "format": "int32"
+        },
+        "adtNamespace": {
+          "type": "string",
+          "description": "ADT distribution fields (PRD §5.1 / §4.8, M5.B). Populated when\ndistribution_model = DISTRIBUTION_MODEL_ADT; all three identifiers\nimmutable post-create. adt_fallback_download_url is the static\nper-playtest URL used when ADT can't mint a per-applicant URL."
+        },
+        "adtGameId": {
+          "type": "string"
+        },
+        "adtBuildId": {
+          "type": "string"
+        },
+        "adtFallbackDownloadUrl": {
+          "type": "string"
         }
       },
       "description": "Playtest is the full admin-visible entity. Field semantics: PRD §5.1."
