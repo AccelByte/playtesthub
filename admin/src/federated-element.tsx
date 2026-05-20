@@ -14,13 +14,11 @@ import {
   Select,
   Space,
   Spin,
-  Statistic,
   Switch,
   Table,
   Tag,
   Tooltip,
   Typography,
-  Upload,
   message
 } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -36,7 +34,6 @@ import { Route, Routes, useNavigate, useParams, useSearchParams } from 'react-ro
 import { PlaytestDetailPage } from './PlaytestDetailPage'
 import type { V1Applicant } from './playtesthubapi/generated-definitions/V1Applicant'
 import type { V1AuditLogEntry } from './playtesthubapi/generated-definitions/V1AuditLogEntry'
-import type { V1Code } from './playtesthubapi/generated-definitions/V1Code'
 import type { V1CodePoolStats } from './playtesthubapi/generated-definitions/V1CodePoolStats'
 import type { V1AdtBuild } from './playtesthubapi/generated-definitions/V1AdtBuild'
 import type { V1AdtLinkage } from './playtesthubapi/generated-definitions/V1AdtLinkage'
@@ -46,7 +43,6 @@ import type { V1Survey } from './playtesthubapi/generated-definitions/V1Survey'
 import type { V1SurveyAnswer } from './playtesthubapi/generated-definitions/V1SurveyAnswer'
 import type { V1SurveyQuestion } from './playtesthubapi/generated-definitions/V1SurveyQuestion'
 import type { V1SurveyResponse } from './playtesthubapi/generated-definitions/V1SurveyResponse'
-import type { V1UploadCodesRejection } from './playtesthubapi/generated-definitions/V1UploadCodesRejection'
 import type { V1WorkerHealthEntry } from './playtesthubapi/generated-definitions/V1WorkerHealthEntry'
 import {
   Key_PlaytesthubServiceAdmin,
@@ -55,9 +51,6 @@ import {
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdApproveMutation,
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRejectMutation,
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRetryDmMutation,
-  usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation,
-  usePlaytesthubServiceAdminApi_CreateCodesTopUp_ByPlaytestIdMutation,
-  usePlaytesthubServiceAdminApi_CreateCodesUpload_ByPlaytestIdMutation,
   usePlaytesthubServiceAdminApi_CreatePlaytestMutation,
   usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation,
   usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation,
@@ -146,7 +139,6 @@ export function FederatedElement() {
         <Route path="new" element={<PlaytestCreatePage />} />
         <Route path=":playtestId/edit" element={<PlaytestEditPage />} />
         <Route path=":playtestId/applicants" element={<ApplicantsPage />} />
-        <Route path=":playtestId/codes" element={<CodePoolPage />} />
         <Route path=":playtestId/survey" element={<SurveyBuilderPage />} />
         <Route path=":playtestId/survey/responses" element={<SurveyResponsesPage />} />
         <Route path=":playtestId/audit" element={<AuditLogPage />} />
@@ -273,9 +265,6 @@ function PlaytestsListPage() {
             </Button>
             <Button size="small" onClick={() => navigate(`${row.id}/applicants`)}>
               Applicants
-            </Button>
-            <Button size="small" onClick={() => navigate(`${row.id}/codes`)}>
-              Codes
             </Button>
             <Button size="small" onClick={() => navigate(`${row.id}/survey`)}>
               Survey
@@ -1170,217 +1159,6 @@ function ApplicantsPage() {
           />
         </Form.Item>
       </Modal>
-    </>
-  )
-}
-
-const CODE_STATE_TAG: Record<string, { text: string; color: string }> = {
-  CODE_STATE_UNUSED: { text: 'Unused', color: 'default' },
-  CODE_STATE_RESERVED: { text: 'Reserved', color: 'gold' },
-  CODE_STATE_GRANTED: { text: 'Granted', color: 'green' }
-}
-
-function CodePoolPage() {
-  const { sdk } = useAppUIContext()
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { playtestId = '' } = useParams()
-
-  const [csvText, setCsvText] = useState('')
-  const [csvFilename, setCsvFilename] = useState('')
-  const [topUpQty, setTopUpQty] = useState<number | null>(100)
-  const [rejections, setRejections] = useState<V1UploadCodesRejection[]>([])
-
-  const playtestQuery = usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId(
-    sdk,
-    { playtestId },
-    { enabled: !!playtestId }
-  )
-  const codesQuery = usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId(sdk, { playtestId }, { enabled: !!playtestId })
-
-  const invalidateCodes = () => queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Codes_ByPlaytestId] })
-
-  const uploadMutation = usePlaytesthubServiceAdminApi_CreateCodesUpload_ByPlaytestIdMutation(sdk, {
-    onSuccess: response => {
-      const r = (response.rejections ?? []) as V1UploadCodesRejection[]
-      setRejections(r)
-      if (r.length === 0) {
-        message.success(`Inserted ${response.inserted ?? 0} codes`)
-        setCsvText('')
-        setCsvFilename('')
-      } else {
-        message.warning(`Upload rejected: ${r.length} invalid line${r.length === 1 ? '' : 's'}`)
-      }
-      invalidateCodes()
-    },
-    onError: toastError('upload codes')
-  })
-
-  const topUpMutation = usePlaytesthubServiceAdminApi_CreateCodesTopUp_ByPlaytestIdMutation(sdk, {
-    onSuccess: response => {
-      message.success(`Generated ${response.added ?? 0} new codes`)
-      invalidateCodes()
-    },
-    onError: toastError('top up')
-  })
-
-  const syncMutation = usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation(sdk, {
-    onSuccess: response => {
-      message.success(`Synced ${response.added ?? 0} new codes from AGS`)
-      invalidateCodes()
-    },
-    onError: toastError('sync from AGS')
-  })
-
-  const playtest = playtestQuery.data?.playtest as V1Playtest | undefined
-  const stats = codesQuery.data?.stats
-  const codes = (codesQuery.data?.codes ?? []) as V1Code[]
-  const isAGS = playtest?.distributionModel === DistributionModel.AGS_CAMPAIGN
-
-  const handleFileChosen = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      setCsvText(typeof reader.result === 'string' ? reader.result : '')
-      setCsvFilename(file.name ?? '')
-      setRejections([])
-    }
-    reader.readAsText(file)
-    return false
-  }
-
-  const codeColumns = [
-    { title: 'Value', dataIndex: 'value', key: 'value', render: (v: string | null | undefined) => v ?? '—' },
-    {
-      title: 'State',
-      dataIndex: 'state',
-      key: 'state',
-      render: (v: string | null | undefined) => {
-        const info = CODE_STATE_TAG[v ?? ''] ?? { text: v ?? '—', color: 'default' }
-        return <Tag color={info.color}>{info.text}</Tag>
-      }
-    },
-    {
-      title: 'Created',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
-      render: (v: string | null | undefined) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '—')
-    }
-  ]
-
-  return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
-          <Typography.Title level={2} style={{ margin: 0 }}>
-            Code pool
-          </Typography.Title>
-          <Typography.Text type="secondary">
-            {playtest?.title ? `${playtest.title} (${playtest.slug})` : 'Loading playtest…'}
-            {playtest && (
-              <>
-                {' · '}
-                <code>{playtest.distributionModel}</code>
-              </>
-            )}
-          </Typography.Text>
-        </div>
-        <Space>
-          <Button onClick={() => navigate('/')}>Back</Button>
-          <Button onClick={() => codesQuery.refetch()}>Refresh</Button>
-        </Space>
-      </div>
-
-      <LowPoolBanner stats={stats} />
-
-      <div style={{ display: 'flex', gap: 24, marginBottom: 24, flexWrap: 'wrap' }}>
-        <Statistic title="Total" value={stats?.total ?? 0} />
-        <Statistic title="Unused" value={stats?.unused ?? 0} />
-        <Statistic title="Reserved" value={stats?.reserved ?? 0} />
-        <Statistic title="Granted" value={stats?.granted ?? 0} />
-      </div>
-
-      {!isAGS && (
-        <div style={{ marginBottom: 24 }}>
-          <Typography.Title level={4}>Upload Steam keys</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            One code per line. UTF-8, max 10 MB, max 50,000 lines, charset <code>[A-Za-z0-9._-]</code>, length 1–128. Any
-            invalid line rejects the whole file.
-          </Typography.Paragraph>
-          <Upload accept=".csv,.txt,text/plain,text/csv" beforeUpload={handleFileChosen} maxCount={1} showUploadList={false}>
-            <Button>Choose file</Button>
-          </Upload>
-          {csvFilename && (
-            <Typography.Paragraph style={{ marginTop: 8 }}>
-              Selected: <code>{csvFilename}</code>
-            </Typography.Paragraph>
-          )}
-          <Button
-            type="primary"
-            disabled={!csvText}
-            loading={uploadMutation.isPending}
-            style={{ marginTop: 8 }}
-            onClick={() => uploadMutation.mutate({ playtestId, data: { csvContent: csvText, filename: csvFilename || undefined } })}>
-            Upload
-          </Button>
-          {rejections.length > 0 && (
-            <Alert
-              type="error"
-              style={{ marginTop: 12 }}
-              message={`Upload rejected — ${rejections.length} invalid line${rejections.length === 1 ? '' : 's'}`}
-              description={
-                <ul style={{ margin: 0, paddingLeft: 20 }}>
-                  {rejections.slice(0, 50).map((rej, i) => (
-                    <li key={i}>
-                      Line {rej.lineNumber}: {rej.reason}
-                      {rej.value ? ` — ${rej.value}` : ''}
-                    </li>
-                  ))}
-                  {rejections.length > 50 && <li>…and {rejections.length - 50} more.</li>}
-                </ul>
-              }
-            />
-          )}
-        </div>
-      )}
-
-      {isAGS && (
-        <div style={{ marginBottom: 24 }}>
-          <Typography.Title level={4}>Generate / sync AGS Campaign codes</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            Top-up calls AGS to generate fresh codes. Sync re-fetches from AGS to recover from a previous failure (idempotent).
-          </Typography.Paragraph>
-          <Space>
-            <InputNumber min={1} max={50000} value={topUpQty} onChange={v => setTopUpQty(typeof v === 'number' ? v : null)} />
-            <Button
-              type="primary"
-              disabled={!topUpQty || topUpQty < 1}
-              loading={topUpMutation.isPending}
-              onClick={() => topUpQty && topUpMutation.mutate({ playtestId, data: { quantity: topUpQty } })}>
-              Generate more codes
-            </Button>
-            <Button loading={syncMutation.isPending} onClick={() => syncMutation.mutate({ playtestId, data: {} })}>
-              Sync from AGS
-            </Button>
-          </Space>
-        </div>
-      )}
-
-      <Typography.Title level={4}>Codes</Typography.Title>
-      {codesQuery.isLoading && <Spin description="Loading codes..." />}
-      {codesQuery.error && (
-        <Alert
-          type="error"
-          message="Failed to load codes."
-          action={
-            <Button size="small" onClick={() => codesQuery.refetch()}>
-              Retry
-            </Button>
-          }
-        />
-      )}
-      {!codesQuery.isLoading && !codesQuery.error && (
-        <Table<V1Code> rowKey={row => row.id ?? ''} dataSource={codes} columns={codeColumns} pagination={{ pageSize: 50 }} />
-      )}
     </>
   )
 }

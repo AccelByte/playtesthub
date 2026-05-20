@@ -15,6 +15,9 @@ const mockGetParticipants = vi.fn()
 const mockGetAnnouncements = vi.fn()
 const mockCreateAnnouncement = vi.fn()
 const mockGetCodes = vi.fn()
+const mockUploadCodes = vi.fn()
+const mockTopUpCodes = vi.fn()
+const mockSyncCodes = vi.fn()
 const mockApprove = vi.fn()
 const mockReject = vi.fn()
 const mockGetPublicConfig = vi.fn()
@@ -27,7 +30,8 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   Key_PlaytesthubServiceAdmin: {
     Playtests: 'playtests',
     Participants_ByPlaytestId: 'participants',
-    Announcements_ByPlaytestId: 'announcements'
+    Announcements_ByPlaytestId: 'announcements',
+    Codes_ByPlaytestId: 'codes-by-playtest-id'
   },
   usePlaytesthubServiceAdminApi_GetPlaytests: (...a: unknown[]) => mockGetPlaytests(...a),
   usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation: (...a: unknown[]) =>
@@ -37,6 +41,9 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_CreateAnnouncement_ByPlaytestIdMutation: (...a: unknown[]) =>
     mockCreateAnnouncement(...a),
   usePlaytesthubServiceAdminApi_GetCodes_ByPlaytestId: (...a: unknown[]) => mockGetCodes(...a),
+  usePlaytesthubServiceAdminApi_CreateCodesUpload_ByPlaytestIdMutation: (...a: unknown[]) => mockUploadCodes(...a),
+  usePlaytesthubServiceAdminApi_CreateCodesTopUp_ByPlaytestIdMutation: (...a: unknown[]) => mockTopUpCodes(...a),
+  usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation: (...a: unknown[]) => mockSyncCodes(...a),
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdApproveMutation: (...a: unknown[]) =>
     mockApprove(...a),
   usePlaytesthubServiceAdminApi_CreateApplicant_ByApplicantIdRejectMutation: (...a: unknown[]) => mockReject(...a)
@@ -86,7 +93,10 @@ beforeEach(() => {
   mockGetParticipants.mockReturnValue({ data: { participants: [] }, isLoading: false })
   mockGetAnnouncements.mockReturnValue({ data: { announcements: [] }, isLoading: false, refetch: vi.fn() })
   mockCreateAnnouncement.mockReturnValue({ mutate: vi.fn(), isPending: false })
-  mockGetCodes.mockReturnValue({ data: { stats: { total: 0, unused: 0, granted: 0 } }, isLoading: false })
+  mockGetCodes.mockReturnValue({ data: { stats: { total: 0, unused: 0, granted: 0 }, codes: [] }, isLoading: false, error: null, refetch: vi.fn() })
+  mockUploadCodes.mockReturnValue({ mutate: vi.fn(), isPending: false })
+  mockTopUpCodes.mockReturnValue({ mutate: vi.fn(), isPending: false })
+  mockSyncCodes.mockReturnValue({ mutate: vi.fn(), isPending: false })
   mockApprove.mockReturnValue({ mutate: vi.fn() })
   mockReject.mockReturnValue({ mutate: vi.fn() })
   mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: 'https://play.example.com' } })
@@ -211,13 +221,62 @@ describe('PlaytestDetailPage shell', () => {
     expect(screen.getAllByRole('button', { name: 'Approve' })[0]).toBeInTheDocument()
   })
 
-  it('Distribution tab renders the Steam empty state when pool is empty', async () => {
-    mockGetCodes.mockReturnValue({ data: { stats: { total: 0, unused: 0, granted: 0 } }, isLoading: false })
+  it('Distribution tab renders the inline Steam upload form + empty-state hint when pool is empty', async () => {
+    mockGetCodes.mockReturnValue({
+      data: { stats: { total: 0, unused: 0, granted: 0 }, codes: [] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
     renderDetail('autumn-draft')
     const user = userEvent.setup()
     await user.click(screen.getByRole('tab', { name: 'Distribution' }))
-    expect(await screen.findByText('No codes uploaded yet')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Upload Codes (CSV)' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /upload steam keys/i })).toBeInTheDocument()
+    expect(screen.getByText('No codes uploaded yet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^choose file$/i })).toBeInTheDocument()
+  })
+
+  it('Distribution tab reads + uploads a Steam keys CSV inline', async () => {
+    const mutate = vi.fn()
+    mockUploadCodes.mockReturnValue({ mutate, isPending: false })
+    const { container } = renderDetail('autumn-draft')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Distribution' }))
+    const csv = 'K7R2P-9M4XW-Q6V1B\nJ9L5T-B2N8R-M3K7P\n'
+    const file = new File([csv], 'dummycodes.txt', { type: 'text/plain' })
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(input, file)
+    await waitFor(() => expect(screen.getByText('dummycodes.txt')).toBeInTheDocument())
+    const uploadBtn = screen.getByRole('button', { name: /^upload$/i })
+    await waitFor(() => expect(uploadBtn).not.toBeDisabled())
+    await user.click(uploadBtn)
+    await waitFor(() =>
+      expect(mutate).toHaveBeenCalledWith({
+        playtestId: 'pt-draft',
+        data: { csvContent: csv, filename: 'dummycodes.txt' }
+      })
+    )
+  })
+
+  it('Distribution tab triggers AGS top-up + sync mutations inline', async () => {
+    const topUp = vi.fn()
+    const sync = vi.fn()
+    mockTopUpCodes.mockReturnValue({ mutate: topUp, isPending: false })
+    mockSyncCodes.mockReturnValue({ mutate: sync, isPending: false })
+    const agsPt = { ...DRAFT_PT, slug: 'autumn-ags', distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN' }
+    mockGetPlaytests.mockReturnValue({
+      data: { playtests: [agsPt] },
+      isLoading: false,
+      error: undefined,
+      refetch: vi.fn()
+    })
+    renderDetail('autumn-ags')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Distribution' }))
+    await user.click(await screen.findByRole('button', { name: /generate more codes/i }))
+    await waitFor(() => expect(topUp).toHaveBeenCalledWith({ playtestId: 'pt-draft', data: { quantity: 100 } }))
+    await user.click(screen.getByRole('button', { name: /sync from ags/i }))
+    await waitFor(() => expect(sync).toHaveBeenCalledWith({ playtestId: 'pt-draft', data: {} }))
   })
 
   it('Distribution tab renders ADT empty-state when adt_namespace is missing', async () => {
