@@ -119,6 +119,14 @@ type Config struct {
 	// sweep on every call so a positive value also bounds the table
 	// size. PRD §5.9.
 	ADTLinkagePendingTTLSeconds int
+
+	// AnnouncementSubjectMaxLen / AnnouncementMessageMaxLen cap the
+	// per-announcement subject + message lengths (PRD §5.4 "Bulk
+	// announcements" + §5.9). Defaults 200 / 4000 per CHECK constraints
+	// in migration 0007 — env-var overrides relax bounds for tests but
+	// must stay ≤ the CHECK ceiling, else inserts hit the DB.
+	AnnouncementSubjectMaxLen int
+	AnnouncementMessageMaxLen int
 }
 
 // MissingRequiredError lists every required env var that was unset or
@@ -246,6 +254,25 @@ func loadADT(cfg *Config) error {
 		return fmt.Errorf("ADT_LINKAGE_PENDING_TTL_SECONDS must be >= 1, got %d", ttl)
 	}
 	cfg.ADTLinkagePendingTTLSeconds = ttl
+
+	subjectMax, err := getInt("ANNOUNCEMENT_MAX_SUBJECT_LEN", 200)
+	if err != nil {
+		return err
+	}
+	if subjectMax < 1 {
+		return fmt.Errorf("ANNOUNCEMENT_MAX_SUBJECT_LEN must be >= 1, got %d", subjectMax)
+	}
+	cfg.AnnouncementSubjectMaxLen = subjectMax
+
+	messageMax, err := getInt("ANNOUNCEMENT_MAX_MESSAGE_LEN", 4000)
+	if err != nil {
+		return err
+	}
+	if messageMax < 1 {
+		return fmt.Errorf("ANNOUNCEMENT_MAX_MESSAGE_LEN must be >= 1, got %d", messageMax)
+	}
+	cfg.AnnouncementMessageMaxLen = messageMax
+
 	return nil
 }
 

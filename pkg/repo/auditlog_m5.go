@@ -13,6 +13,7 @@ const (
 	ActionApplicantAutoApproved = "applicant.auto_approved"
 	ActionADTLinkageCreate      = "adt_linkage.create"
 	ActionADTLinkageDelete      = "adt_linkage.delete"
+	ActionAnnouncementCreate    = "announcement.create"
 )
 
 // AppendApplicantAutoApproved records a successful auto-approve via the
@@ -48,6 +49,20 @@ func AppendADTLinkageCreate(ctx context.Context, store AuditLogStore, namespace 
 		"studioNamespace": studioNamespace,
 		"adtNamespace":    adtNamespace,
 		"linkedBy":        actor.String(),
+	})
+}
+
+// AppendAnnouncementCreate records a successful CreateAnnouncement
+// (PRD §5.4 "Bulk announcements"). Admin-attributed. **subject + message
+// are NEVER in the audit JSONB** — only IDs + counts. PII recovery for
+// the body lives on the announcement table itself.
+func AppendAnnouncementCreate(ctx context.Context, store AuditLogStore, namespace string, actor uuid.UUID, announcementID, playtestID uuid.UUID, sendToFilter string, recipientCount int32) error {
+	return appendAction(ctx, store, namespace, &playtestID, &actor, ActionAnnouncementCreate, map[string]any{
+		"announcementId": announcementID.String(),
+		"playtestId":     playtestID.String(),
+		"sendToFilter":   sendToFilter,
+		"recipientCount": recipientCount,
+		"createdBy":      actor.String(),
 	})
 }
 

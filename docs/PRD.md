@@ -294,7 +294,7 @@ Audit-event attribution (admin vs system) is defined in [`schema.md`](schema.md)
 
 **Code Sent Date — derived field** (M5.C; participants surface):
 
-- The admin participants table (M5.C `GetPlaytestParticipants`) surfaces a `codeSentAt` timestamp for STEAM_KEYS / AGS_CAMPAIGN applicants. This is **derived at read time** from the existing M2 `dm.sent` audit row for the applicant — there is no new `applicant.code_sent_at` column. The join is one LATERAL select against `audit_log` filtered on `action='dm.sent'` keyed by `applicantId`; the per-playtest index `AuditLog(playtestId, createdAt DESC)` already serves it.
+- The admin participants table (M5.C `GetPlaytestParticipants`) surfaces a `codeSentAt` timestamp for STEAM_KEYS / AGS_CAMPAIGN applicants. This is **derived at read time** from `applicant.last_dm_attempt_at` when `applicant.last_dm_status='sent'` — there is no new `applicant.code_sent_at` column. The applicant row already carries the latest DM attribution (PRD §5.4 "DM queue"); reading off that pair captures both the initial-approve DM and any subsequent successful `RetryDM`. Pending / failed DMs leave `codeSentAt` NULL.
 - ADT-distribution applicants have NULL `codeSentAt` in M5.C. The analogue is the per-applicant **Download Date** sourced from ADT telemetry — fully deferred to M6 alongside the four nullable applicant cache columns (`adtDownloadAt`, `adtTotalPlaytimeSeconds`, `adtHardwareSpecs`, `adtCrashCount`; see §5.1 and [`schema.md`](schema.md)). The columns ship dormant in M5.C so M6 lands the worker + endpoint hookup with zero schema churn.
 
 ### 5.5 Code pool — entity & state machine

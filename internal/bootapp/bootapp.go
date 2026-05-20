@@ -360,6 +360,11 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 	logger.Info("adt client: in-memory (live adapter pending ADT-eng endpoint shapes)")
 
 	adtLinkageStore := repo.NewPgADTLinkageStore(dbPool)
+	announcementStore := repo.NewPgAnnouncementStore(dbPool)
+	var announcementSender service.AnnouncementSender
+	if botClient != nil {
+		announcementSender = botClient
+	}
 
 	leaderStore := repo.NewPgLeaderStore(dbPool)
 	workers := []service.WorkerInfo{{
@@ -394,6 +399,8 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 			PendingTTLSeconds: cfg.ADTLinkagePendingTTLSeconds,
 		}).
 		WithStudioNamespaceResolver(buildStudioNamespaceResolver(cfg, httpClient)).
+		WithAnnouncementStore(announcementStore, announcementSender).
+		WithAnnouncementBounds(cfg.AnnouncementSubjectMaxLen, cfg.AnnouncementMessageMaxLen).
 		WithWorkerHealth(leaderStore, workers).
 		WithLogger(logger)
 	if botClient != nil {

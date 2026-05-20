@@ -55,6 +55,10 @@ func TestServiceDescriptorMethods(t *testing.T) {
 		"UnlinkADT":          true,
 		"ListADTBuilds":      true,
 		"GetADTDownloadInfo": true,
+		// M5.C (participants + announcements)
+		"GetPlaytestParticipants": true,
+		"CreateAnnouncement":      true,
+		"ListAnnouncements":       true,
 	}
 
 	methods := pb.PlaytesthubService_ServiceDesc.Methods

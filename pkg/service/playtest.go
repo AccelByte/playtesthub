@@ -82,6 +82,15 @@ type PlaytesthubServiceServer struct {
 	adtLinkConfig   ADTLinkConfig
 	studioNamespace StudioNamespaceResolver
 
+	// Announcement wiring (M5.C / PRD §5.4 "Bulk announcements"). nil
+	// announcement leaves CreateAnnouncement / ListAnnouncements
+	// returning Internal — bootapp wires both fields together when the
+	// announcement env vars are present.
+	announcement              repo.AnnouncementStore
+	announcementSender        AnnouncementSender
+	announcementSubjectMaxLen int
+	announcementMessageMaxLen int
+
 	// leaderLease + workers back GetWorkerHealth (STATUS_M4.md phase 5).
 	// Wired via WithWorkerHealth from main.go. nil leaderLease leaves
 	// the RPC returning entries with stale=true for every worker —

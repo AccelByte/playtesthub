@@ -625,6 +625,63 @@ service PlaytesthubService {
       }
     };
   }
+
+  // M5.C — participants surface backing the detail page Participants tab.
+  // Cache-only read; the four ADT telemetry cache columns ship dormant in
+  // M5.C (NULL/zero across the milestone — M6 lights them up).
+  rpc GetPlaytestParticipants(GetPlaytestParticipantsRequest) returns (GetPlaytestParticipantsResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/playtests/{playtest_id}/participants"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List participants with derived code-sent timestamps (admin; M5.C detail page)"
+      description: "Read joins applicant + the latest dm.sent audit row to derive code_sent_at for STEAM_KEYS / AGS_CAMPAIGN rows; ADT rows return NULL code_sent_at. Four ADT telemetry cache fields ship in the response shape but stay NULL/zero across M5.C."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  // M5.C — bulk announcement broadcast (PRD §5.4 "Bulk announcements").
+  // Resolves the recipient set at call time; fans out via the existing
+  // M2 RetryDM machinery.
+  rpc CreateAnnouncement(CreateAnnouncementRequest) returns (CreateAnnouncementResponse) {
+    option (playtesthub.v1.action) = ACTION_CREATE;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {
+      post: "/v1/admin/namespaces/{namespace}/playtests/{playtest_id}/announcements"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Create a bulk DM broadcast for a playtest (admin)"
+      description: "Resolves recipients at call time (NOT a stored snapshot). Subject + message are PII-sensitive and are never written to audit JSONB or structured logs."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc ListAnnouncements(ListAnnouncementsRequest) returns (ListAnnouncementsResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/playtests/{playtest_id}/announcements"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List announcement history for a playtest (admin)"
+      description: "Per-row status aggregated from announcement_recipient.dm_status: SENT (all sent), SENDING (any queued), PARTIAL (mix sent + failed), FAILED (all failed)."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
 }
 
 // ---------------- enums ----------------
@@ -676,6 +733,25 @@ enum CodeState {
   CODE_STATE_UNUSED = 1;
   CODE_STATE_RESERVED = 2;
   CODE_STATE_GRANTED = 3;
+}
+
+// M5.C — announcement send-to filter (PRD §5.4 "Bulk announcements").
+// Resolved at call time, NOT a stored snapshot.
+enum AnnouncementSendToFilter {
+  ANNOUNCEMENT_SEND_TO_FILTER_UNSPECIFIED = 0;
+  ANNOUNCEMENT_SEND_TO_FILTER_ALL = 1;
+  ANNOUNCEMENT_SEND_TO_FILTER_APPROVED_ONLY = 2;
+  ANNOUNCEMENT_SEND_TO_FILTER_PENDING_ONLY = 3;
+}
+
+// M5.C — announcement aggregate status computed at read time from
+// announcement_recipient.dm_status (PRD §5.4 "Bulk announcements" + schema.md).
+enum AnnouncementStatus {
+  ANNOUNCEMENT_STATUS_UNSPECIFIED = 0;
+  ANNOUNCEMENT_STATUS_SENDING = 1;
+  ANNOUNCEMENT_STATUS_SENT = 2;
+  ANNOUNCEMENT_STATUS_PARTIAL = 3;
+  ANNOUNCEMENT_STATUS_FAILED = 4;
 }
 
 // ---------------- entities ----------------
@@ -1393,6 +1469,78 @@ message ListADTBuildsRequest {
 }
 message ListADTBuildsResponse {
   repeated ADTBuild builds = 1;
+}
+
+// ---------------- M5.C entities + messages ----------------
+
+// ParticipantRow — one row per applicant for the M5.C Participants tab.
+// Cache-only read; the four ADT telemetry fields ship dormant across
+// M5.C (always NULL / 0 — M6 fills them).
+message ParticipantRow {
+  string applicant_id = 1;
+  string user_id = 2;
+  string discord_handle = 3;
+  google.protobuf.Timestamp signup_at = 4;
+  google.protobuf.Timestamp nda_accepted_at = 5;
+  // STEAM_KEYS / AGS_CAMPAIGN only — derived at read time from the
+  // latest dm.sent audit row (PRD §5.4 "Code Sent Date — derived field").
+  // ADT rows leave this NULL; the analogue (Download Date) is deferred to M6.
+  google.protobuf.Timestamp code_sent_at = 6;
+  ApplicantStatus status = 7;
+  bool auto_approved = 8;
+  // Four dormant ADT telemetry cache fields (M5.C → M6 forward-compat).
+  // All are NULL / 0 across M5.C.
+  google.protobuf.Timestamp adt_download_at = 9;
+  optional int32 adt_total_playtime_seconds = 10;
+  optional string adt_hardware_specs_json = 11;
+  int32 adt_crash_count = 12;
+}
+
+message GetPlaytestParticipantsRequest {
+  string namespace = 1;
+  string playtest_id = 2;
+  // Optional status filter; UNSPECIFIED → no filter.
+  ApplicantStatus status_filter = 3;
+}
+
+message GetPlaytestParticipantsResponse {
+  repeated ParticipantRow participants = 1;
+}
+
+// Announcement — one row per admin-authored broadcast. Subject + message
+// are PII-sensitive (never logged / audited).
+message Announcement {
+  string id = 1;
+  string playtest_id = 2;
+  AnnouncementSendToFilter send_to_filter = 3;
+  string subject = 4;
+  string message = 5;
+  AnnouncementStatus status = 6;
+  int32 recipients_total = 7;
+  int32 recipients_sent = 8;
+  string created_by_user_id = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message CreateAnnouncementRequest {
+  string namespace = 1;
+  string playtest_id = 2;
+  AnnouncementSendToFilter send_to_filter = 3;
+  string subject = 4;
+  string message = 5;
+}
+
+message CreateAnnouncementResponse {
+  Announcement announcement = 1;
+}
+
+message ListAnnouncementsRequest {
+  string namespace = 1;
+  string playtest_id = 2;
+}
+
+message ListAnnouncementsResponse {
+  repeated Announcement announcements = 1;
 }
 
 // ---------------- swagger root ----------------

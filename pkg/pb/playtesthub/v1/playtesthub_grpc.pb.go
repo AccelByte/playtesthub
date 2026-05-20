@@ -54,6 +54,9 @@ const (
 	PlaytesthubService_CompleteADTLink_FullMethodName          = "/playtesthub.v1.PlaytesthubService/CompleteADTLink"
 	PlaytesthubService_UnlinkADT_FullMethodName                = "/playtesthub.v1.PlaytesthubService/UnlinkADT"
 	PlaytesthubService_ListADTBuilds_FullMethodName            = "/playtesthub.v1.PlaytesthubService/ListADTBuilds"
+	PlaytesthubService_GetPlaytestParticipants_FullMethodName  = "/playtesthub.v1.PlaytesthubService/GetPlaytestParticipants"
+	PlaytesthubService_CreateAnnouncement_FullMethodName       = "/playtesthub.v1.PlaytesthubService/CreateAnnouncement"
+	PlaytesthubService_ListAnnouncements_FullMethodName        = "/playtesthub.v1.PlaytesthubService/ListAnnouncements"
 )
 
 // PlaytesthubServiceClient is the client API for PlaytesthubService service.
@@ -109,6 +112,15 @@ type PlaytesthubServiceClient interface {
 	CompleteADTLink(ctx context.Context, in *CompleteADTLinkRequest, opts ...grpc.CallOption) (*CompleteADTLinkResponse, error)
 	UnlinkADT(ctx context.Context, in *UnlinkADTRequest, opts ...grpc.CallOption) (*UnlinkADTResponse, error)
 	ListADTBuilds(ctx context.Context, in *ListADTBuildsRequest, opts ...grpc.CallOption) (*ListADTBuildsResponse, error)
+	// M5.C — participants surface backing the detail page Participants tab.
+	// Cache-only read; the four ADT telemetry cache columns ship dormant in
+	// M5.C (NULL/zero across the milestone — M6 lights them up).
+	GetPlaytestParticipants(ctx context.Context, in *GetPlaytestParticipantsRequest, opts ...grpc.CallOption) (*GetPlaytestParticipantsResponse, error)
+	// M5.C — bulk announcement broadcast (PRD §5.4 "Bulk announcements").
+	// Resolves the recipient set at call time; fans out via the existing
+	// M2 RetryDM machinery.
+	CreateAnnouncement(ctx context.Context, in *CreateAnnouncementRequest, opts ...grpc.CallOption) (*CreateAnnouncementResponse, error)
+	ListAnnouncements(ctx context.Context, in *ListAnnouncementsRequest, opts ...grpc.CallOption) (*ListAnnouncementsResponse, error)
 }
 
 type playtesthubServiceClient struct {
@@ -469,6 +481,36 @@ func (c *playtesthubServiceClient) ListADTBuilds(ctx context.Context, in *ListAD
 	return out, nil
 }
 
+func (c *playtesthubServiceClient) GetPlaytestParticipants(ctx context.Context, in *GetPlaytestParticipantsRequest, opts ...grpc.CallOption) (*GetPlaytestParticipantsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetPlaytestParticipantsResponse)
+	err := c.cc.Invoke(ctx, PlaytesthubService_GetPlaytestParticipants_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *playtesthubServiceClient) CreateAnnouncement(ctx context.Context, in *CreateAnnouncementRequest, opts ...grpc.CallOption) (*CreateAnnouncementResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateAnnouncementResponse)
+	err := c.cc.Invoke(ctx, PlaytesthubService_CreateAnnouncement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *playtesthubServiceClient) ListAnnouncements(ctx context.Context, in *ListAnnouncementsRequest, opts ...grpc.CallOption) (*ListAnnouncementsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAnnouncementsResponse)
+	err := c.cc.Invoke(ctx, PlaytesthubService_ListAnnouncements_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PlaytesthubServiceServer is the server API for PlaytesthubService service.
 // All implementations should embed UnimplementedPlaytesthubServiceServer
 // for forward compatibility.
@@ -522,6 +564,15 @@ type PlaytesthubServiceServer interface {
 	CompleteADTLink(context.Context, *CompleteADTLinkRequest) (*CompleteADTLinkResponse, error)
 	UnlinkADT(context.Context, *UnlinkADTRequest) (*UnlinkADTResponse, error)
 	ListADTBuilds(context.Context, *ListADTBuildsRequest) (*ListADTBuildsResponse, error)
+	// M5.C — participants surface backing the detail page Participants tab.
+	// Cache-only read; the four ADT telemetry cache columns ship dormant in
+	// M5.C (NULL/zero across the milestone — M6 lights them up).
+	GetPlaytestParticipants(context.Context, *GetPlaytestParticipantsRequest) (*GetPlaytestParticipantsResponse, error)
+	// M5.C — bulk announcement broadcast (PRD §5.4 "Bulk announcements").
+	// Resolves the recipient set at call time; fans out via the existing
+	// M2 RetryDM machinery.
+	CreateAnnouncement(context.Context, *CreateAnnouncementRequest) (*CreateAnnouncementResponse, error)
+	ListAnnouncements(context.Context, *ListAnnouncementsRequest) (*ListAnnouncementsResponse, error)
 }
 
 // UnimplementedPlaytesthubServiceServer should be embedded to have
@@ -635,6 +686,15 @@ func (UnimplementedPlaytesthubServiceServer) UnlinkADT(context.Context, *UnlinkA
 }
 func (UnimplementedPlaytesthubServiceServer) ListADTBuilds(context.Context, *ListADTBuildsRequest) (*ListADTBuildsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListADTBuilds not implemented")
+}
+func (UnimplementedPlaytesthubServiceServer) GetPlaytestParticipants(context.Context, *GetPlaytestParticipantsRequest) (*GetPlaytestParticipantsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPlaytestParticipants not implemented")
+}
+func (UnimplementedPlaytesthubServiceServer) CreateAnnouncement(context.Context, *CreateAnnouncementRequest) (*CreateAnnouncementResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateAnnouncement not implemented")
+}
+func (UnimplementedPlaytesthubServiceServer) ListAnnouncements(context.Context, *ListAnnouncementsRequest) (*ListAnnouncementsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAnnouncements not implemented")
 }
 func (UnimplementedPlaytesthubServiceServer) testEmbeddedByValue() {}
 
@@ -1286,6 +1346,60 @@ func _PlaytesthubService_ListADTBuilds_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlaytesthubService_GetPlaytestParticipants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPlaytestParticipantsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlaytesthubServiceServer).GetPlaytestParticipants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlaytesthubService_GetPlaytestParticipants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlaytesthubServiceServer).GetPlaytestParticipants(ctx, req.(*GetPlaytestParticipantsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlaytesthubService_CreateAnnouncement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAnnouncementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlaytesthubServiceServer).CreateAnnouncement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlaytesthubService_CreateAnnouncement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlaytesthubServiceServer).CreateAnnouncement(ctx, req.(*CreateAnnouncementRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlaytesthubService_ListAnnouncements_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAnnouncementsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlaytesthubServiceServer).ListAnnouncements(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlaytesthubService_ListAnnouncements_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlaytesthubServiceServer).ListAnnouncements(ctx, req.(*ListAnnouncementsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PlaytesthubService_ServiceDesc is the grpc.ServiceDesc for PlaytesthubService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1432,6 +1546,18 @@ var PlaytesthubService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListADTBuilds",
 			Handler:    _PlaytesthubService_ListADTBuilds_Handler,
+		},
+		{
+			MethodName: "GetPlaytestParticipants",
+			Handler:    _PlaytesthubService_GetPlaytestParticipants_Handler,
+		},
+		{
+			MethodName: "CreateAnnouncement",
+			Handler:    _PlaytesthubService_CreateAnnouncement_Handler,
+		},
+		{
+			MethodName: "ListAnnouncements",
+			Handler:    _PlaytesthubService_ListAnnouncements_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
