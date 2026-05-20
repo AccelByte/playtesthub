@@ -82,6 +82,29 @@ var catalogue = []commandSpec{
 		Example:       "pth --namespace mygame --profile admin adt linkage unlink --id 01J0...",
 	},
 	{
+		Name:        "announcement create",
+		Milestone:   "M5.C",
+		Description: "Admin: send a bulk Discord DM broadcast (PRD §5.4 \"Bulk announcements\"). Recipients resolve at call time per the --send-to filter.",
+		RequiredFlags: []flagSpec{
+			{Name: "--playtest-id", Description: "playtest UUID", ValueType: "uuid"},
+			{Name: "--subject", Description: "broadcast subject (1-200 chars; rejected with byte-exact errors.md string outside that range)", ValueType: "string"},
+			{Name: "--message", Description: "broadcast message body (1-4000 chars)", ValueType: "string"},
+		},
+		OptionalFlags: []flagSpec{
+			{Name: "--send-to", Description: "recipient filter: ALL|APPROVED_ONLY|PENDING_ONLY (default APPROVED_ONLY)", ValueType: "string"},
+			dryRunFlag(),
+		},
+		Example: "pth --namespace mygame --profile admin announcement create --playtest-id 01J0... --send-to APPROVED_ONLY --subject \"Build update\" --message \"New patch live\"",
+	},
+	{
+		Name:          "announcement list",
+		Milestone:     "M5.C",
+		Description:   "Admin: list announcement history for a playtest (PRD §5.4 \"Bulk announcements\").",
+		RequiredFlags: []flagSpec{{Name: "--playtest-id", Description: "playtest UUID", ValueType: "uuid"}},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin announcement list --playtest-id 01J0...",
+	},
+	{
 		Name:          "applicant accept-nda",
 		Milestone:     "M2",
 		Description:   "Persist a versioned NDA acceptance for the calling player (cli.md §6.2).",

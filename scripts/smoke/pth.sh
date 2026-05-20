@@ -636,6 +636,32 @@ log "pth adt build list --dry-run prints the request body"
 "$PTH_BIN" --namespace smoke adt build list --linkage-id 01234567-89ab-cdef-0123-456789abcdef --game-id game-x --dry-run >/dev/null \
     || fail "adt build list --dry-run exited non-zero"
 
+# --- pth announcement dry-run probes (M5.C) --------------------------
+log "pth announcement create --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke announcement create \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef \
+    --send-to APPROVED_ONLY \
+    --subject "smoke subject" --message "smoke message" \
+    --dry-run >/dev/null \
+    || fail "announcement create --dry-run exited non-zero"
+log "pth announcement list --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke announcement list \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef --dry-run >/dev/null \
+    || fail "announcement list --dry-run exited non-zero"
+log "pth announcement create rejects empty subject"
+if "$PTH_BIN" --namespace smoke announcement create \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef \
+    --subject "" --message "msg" --dry-run >/dev/null 2>&1; then
+    fail "announcement create --subject '' should have exited non-zero"
+fi
+log "pth announcement create rejects bogus --send-to"
+if "$PTH_BIN" --namespace smoke announcement create \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef \
+    --send-to EVERYBODY \
+    --subject "s" --message "m" --dry-run >/dev/null 2>&1; then
+    fail "announcement create --send-to=EVERYBODY should have exited non-zero"
+fi
+
 # --- pth M2 subcommand catalogue presence -----------------------------
 # Phase 12 commits the §6.2 surface to the catalogue. The byte-exact
 # diff lives in cmd/pth/testdata/describe.golden.json — this probe is a

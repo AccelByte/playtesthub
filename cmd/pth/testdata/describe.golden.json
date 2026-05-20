@@ -100,6 +100,61 @@
       "example": "pth --namespace mygame --profile admin adt linkage unlink --id 01J0..."
     },
     {
+      "name": "announcement create",
+      "milestone": "M5.C",
+      "description": "Admin: send a bulk Discord DM broadcast (PRD §5.4 \"Bulk announcements\"). Recipients resolve at call time per the --send-to filter.",
+      "requiredFlags": [
+        {
+          "name": "--playtest-id",
+          "description": "playtest UUID",
+          "valueType": "uuid"
+        },
+        {
+          "name": "--subject",
+          "description": "broadcast subject (1-200 chars; rejected with byte-exact errors.md string outside that range)",
+          "valueType": "string"
+        },
+        {
+          "name": "--message",
+          "description": "broadcast message body (1-4000 chars)",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--send-to",
+          "description": "recipient filter: ALL|APPROVED_ONLY|PENDING_ONLY (default APPROVED_ONLY)",
+          "valueType": "string"
+        },
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin announcement create --playtest-id 01J0... --send-to APPROVED_ONLY --subject \"Build update\" --message \"New patch live\""
+    },
+    {
+      "name": "announcement list",
+      "milestone": "M5.C",
+      "description": "Admin: list announcement history for a playtest (PRD §5.4 \"Bulk announcements\").",
+      "requiredFlags": [
+        {
+          "name": "--playtest-id",
+          "description": "playtest UUID",
+          "valueType": "uuid"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin announcement list --playtest-id 01J0..."
+    },
+    {
       "name": "applicant accept-nda",
       "milestone": "M2",
       "description": "Persist a versioned NDA acceptance for the calling player (cli.md §6.2).",
