@@ -162,10 +162,8 @@ func (c *HTTPClient) IssueDownloadURL(ctx context.Context, params IssueDownloadU
 		"/builds/" + url.PathEscape(params.ADTBuildID) + "/downloadUrls?limit=20"
 
 	var raw struct {
-		URLs []struct {
-			URL       string `json:"url"`
-			ExpiresAt string `json:"expires_at"`
-		} `json:"download_urls"`
+		URLs      []string `json:"urls"`
+		ExpiresAt string   `json:"expires_at"`
 	}
 	if err := c.Policy.Run(ctx, "IssueDownloadURL", func(attemptCtx context.Context) error {
 		return c.doJSON(attemptCtx, http.MethodGet, endpoint, "IssueDownloadURL", &raw)
@@ -175,14 +173,13 @@ func (c *HTTPClient) IssueDownloadURL(ctx context.Context, params IssueDownloadU
 	if len(raw.URLs) == 0 {
 		return IssuedDownloadURL{}, &ClientError{StatusCode: http.StatusNotFound, Op: "IssueDownloadURL", Message: "no download urls returned"}
 	}
-	first := raw.URLs[0]
 	var expires time.Time
-	if first.ExpiresAt != "" {
-		if t, err := time.Parse(time.RFC3339, first.ExpiresAt); err == nil {
+	if raw.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, raw.ExpiresAt); err == nil {
 			expires = t
 		}
 	}
-	return IssuedDownloadURL{URL: first.URL, ExpiresAt: expires}, nil
+	return IssuedDownloadURL{URL: raw.URLs[0], ExpiresAt: expires}, nil
 }
 
 // DeleteLinkage best-effort drops the ADT-side linkage flag — the

@@ -185,9 +185,11 @@ func TestHTTPClient_IssueDownloadURL_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path + "?" + r.URL.RawQuery
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"download_urls": []map[string]any{
-				{"url": "https://cdn.example/build.zip", "expires_at": expiry},
+			"urls": []string{
+				"https://cdn.example/build.zip",
+				"https://cdn.example/build-asset-2.bin",
 			},
+			"expires_at": expiry,
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -217,10 +219,54 @@ func TestHTTPClient_IssueDownloadURL_HappyPath(t *testing.T) {
 	}
 }
 
+// TestHTTPClient_IssueDownloadURL_RejectsLegacyEnvelope locks the live
+// ADT downloadUrls response shape: `{"urls": [string,...], "expires_at":
+// RFC3339}`. The legacy `{"download_urls": [{url, expires_at}]}`
+// expectation (Bug 3 from the 2026-05-21 probe report) surfaces zero
+// URLs and so collapses to ClientError 404 — the only behaviour test
+// that catches a future regression back to the per-URL-object shape.
+func TestHTTPClient_IssueDownloadURL_RejectsLegacyEnvelope(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"download_urls":[{"url":"https://cdn.example/build.zip","expires_at":"2026-05-21T00:00:00Z"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	_, err := c.IssueDownloadURL(context.Background(), adt.IssueDownloadURLParams{ADTNamespace: "n", ADTGameID: "g", ADTBuildID: "b"})
+	if !adt.IsClientError(err) {
+		t.Fatalf("err = %v, want ClientError (legacy download_urls envelope must NOT be decoded)", err)
+	}
+}
+
+// TestHTTPClient_IssueDownloadURL_TopLevelExpiresAt verifies the single
+// top-level expires_at is parsed from the live response shape — Bug 3's
+// "expiry moved from per-URL object to top-level" half.
+func TestHTTPClient_IssueDownloadURL_TopLevelExpiresAt(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"urls":["https://cdn.example/build.zip"],"expires_at":"2026-05-22T00:00:00Z"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	got, err := c.IssueDownloadURL(context.Background(), adt.IssueDownloadURLParams{ADTNamespace: "n", ADTGameID: "g", ADTBuildID: "b"})
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	wantExpiry, _ := time.Parse(time.RFC3339, "2026-05-22T00:00:00Z")
+	if !got.ExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("ExpiresAt = %v, want %v", got.ExpiresAt, wantExpiry)
+	}
+	if got.URL != "https://cdn.example/build.zip" {
+		t.Errorf("URL = %q", got.URL)
+	}
+}
+
 func TestHTTPClient_IssueDownloadURL_EmptyListIsClientError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"download_urls":[]}`))
+		_, _ = w.Write([]byte(`{"urls":[],"expires_at":"2026-05-21T00:00:00Z"}`))
 	}))
 	t.Cleanup(srv.Close)
 
