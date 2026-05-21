@@ -3,8 +3,10 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Button,
+  Card,
   Checkbox,
   DatePicker,
+  Dropdown,
   Form,
   Input,
   InputNumber,
@@ -19,7 +21,8 @@ import {
   Tag,
   Tooltip,
   Typography,
-  message
+  message,
+  type MenuProps
 } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
 import {
@@ -61,11 +64,12 @@ const PLATFORMS = [
 ] as const
 
 import { DistributionModel, PlaytestStatus } from './shared/playtesthub-enums'
+import { usePlaytesthubServiceApi_GetConfig } from './playtesthubapi/generated-public/queries/PlaytesthubService.query'
 import { toastError } from './shared/api-error'
 
 const STATUS_TAG: Record<string, { text: string; color: string }> = {
   [PlaytestStatus.DRAFT]: { text: 'Draft', color: 'default' },
-  [PlaytestStatus.OPEN]: { text: 'Open', color: 'green' },
+  [PlaytestStatus.OPEN]: { text: 'Published', color: 'green' },
   [PlaytestStatus.CLOSED]: { text: 'Closed', color: 'red' }
 }
 
@@ -78,9 +82,9 @@ function StatusTag({ status, startsAt, endsAt }: { status: string | null | undef
 }
 
 const DISTRIBUTION_LABEL: Record<string, string> = {
-  [DistributionModel.STEAM_KEYS]: 'Steam keys',
-  [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign',
-  [DistributionModel.ADT]: 'ADT'
+  [DistributionModel.STEAM_KEYS]: 'Steam Keys',
+  [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign Codes',
+  [DistributionModel.ADT]: 'Direct Download (ADT)'
 }
 
 function WorkerHealthBanner() {
@@ -183,6 +187,9 @@ function PlaytestsListPage() {
   const queryClient = useQueryClient()
 
   const { data, isLoading, error, refetch } = usePlaytesthubServiceAdminApi_GetPlaytests(sdk, {})
+  const publicConfigQuery = usePlaytesthubServiceApi_GetConfig(sdk, {})
+  const playerBaseUrl = publicConfigQuery.data?.playerBaseUrl ?? ''
+
   const deleteMutation = usePlaytesthubServiceAdminApi_DeletePlaytest_ByPlaytestIdMutation(sdk, {
     onSuccess: () => {
       message.success('Playtest deleted')
@@ -200,14 +207,74 @@ function PlaytestsListPage() {
 
   const playtests = (data?.playtests ?? []) as V1Playtest[]
 
+  const copyLink = (slug: string) => {
+    if (!playerBaseUrl) {
+      message.error('Player app URL not configured — set PLAYER_BASE_URL on the backend')
+      return
+    }
+    const link = `${playerBaseUrl.replace(/\/$/, '')}/#/playtest/${slug}`
+    void navigator.clipboard?.writeText(link).then(
+      () => message.success('Playtest link copied'),
+      () => message.error('Clipboard unavailable')
+    )
+  }
+
+  const confirmPublish = (row: V1Playtest) =>
+    Modal.confirm({
+      title: 'Publish this playtest?',
+      content: 'Players will be able to see it and sign up.',
+      okText: 'Publish',
+      onOk: () =>
+        new Promise<void>((resolve, reject) => {
+          transitionMutation.mutate(
+            { playtestId: row.id ?? '', data: { targetStatus: PlaytestStatus.OPEN } },
+            { onSuccess: () => resolve(), onError: () => reject() }
+          )
+        })
+    })
+
+  const confirmStop = (row: V1Playtest) =>
+    Modal.confirm({
+      title: 'Stop this playtest?',
+      content: 'Players can no longer sign up. Existing applicants keep their state.',
+      okText: 'Stop Playtest',
+      okButtonProps: { danger: true },
+      onOk: () =>
+        new Promise<void>((resolve, reject) => {
+          transitionMutation.mutate(
+            { playtestId: row.id ?? '', data: { targetStatus: PlaytestStatus.CLOSED } },
+            { onSuccess: () => resolve(), onError: () => reject() }
+          )
+        })
+    })
+
+  const confirmDelete = (row: V1Playtest) =>
+    Modal.confirm({
+      title: 'Soft-delete this playtest?',
+      content: 'Row will be hidden from players. Applicants + codes are preserved.',
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      onOk: () =>
+        new Promise<void>((resolve, reject) => {
+          deleteMutation.mutate(
+            { playtestId: row.id ?? '' },
+            { onSuccess: () => resolve(), onError: () => reject() }
+          )
+        })
+    })
+
   const columns = [
-    { title: 'Slug', dataIndex: 'slug', key: 'slug' },
-    { title: 'Title', dataIndex: 'title', key: 'title' },
     {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (_: unknown, row: V1Playtest) => <StatusTag status={row.status} startsAt={row.startsAt} endsAt={row.endsAt} />
+      title: 'Title',
+      dataIndex: 'title',
+      key: 'title',
+      render: (value: string | null | undefined) => <Typography.Text strong>{value ?? '—'}</Typography.Text>
+    },
+    {
+      title: 'Slug',
+      dataIndex: 'slug',
+      key: 'slug',
+      render: (value: string | null | undefined) => (value ? <Typography.Text code>{value}</Typography.Text> : '—')
     },
     {
       title: 'Distribution',
@@ -216,68 +283,53 @@ function PlaytestsListPage() {
       render: (value: string | null | undefined) => DISTRIBUTION_LABEL[value ?? ''] ?? value ?? '—'
     },
     {
-      title: 'Created',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
-      render: (value: string | null | undefined) => (value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—')
+      title: 'Approval',
+      dataIndex: 'autoApprove',
+      key: 'autoApprove',
+      render: (value: boolean | null | undefined) =>
+        value ? <Tag color="green">Auto-Approve</Tag> : <Tag color="orange">Manual</Tag>
     },
     {
-      title: 'Actions',
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (_: unknown, row: V1Playtest) => <StatusTag status={row.status} startsAt={row.startsAt} endsAt={row.endsAt} />
+    },
+    {
+      title: 'Updated',
+      dataIndex: 'updatedAt',
+      key: 'updatedAt',
+      render: (value: string | null | undefined) => (value ? dayjs(value).format('M/D/YYYY, h:mm A') : '—')
+    },
+    {
+      title: 'Action',
       key: 'actions',
       render: (_: unknown, row: V1Playtest) => {
         const isDraft = row.status === PlaytestStatus.DRAFT
         const isOpen = row.status === PlaytestStatus.OPEN
+
+        const menuItems: MenuProps['items'] = [
+          { key: 'edit', label: 'Edit', onClick: () => navigate(`${row.id}/edit`) },
+          { key: 'copy', label: 'Copy Link', onClick: () => copyLink(row.slug ?? '') },
+          ...(isDraft
+            ? [{ key: 'publish', label: 'Publish', onClick: () => confirmPublish(row) }]
+            : []),
+          ...(isOpen
+            ? [{ key: 'stop', label: 'Stop Playtest', danger: true, onClick: () => confirmStop(row) }]
+            : []),
+          { key: 'delete', label: 'Delete', danger: true, onClick: () => confirmDelete(row) }
+        ]
+
         return (
-          <Space wrap>
-            <Button size="small" type="primary" onClick={() => navigate(`playtest/${row.slug ?? ''}`)}>
+          <Space size="small">
+            <Button type="link" size="small" onClick={() => navigate(`playtest/${row.slug ?? ''}`)}>
               View
             </Button>
-            <Button size="small" onClick={() => navigate(`${row.id}/edit`)}>
-              Edit
-            </Button>
-            {isDraft && (
-              <Popconfirm
-                title="Publish this playtest?"
-                description="Players will be able to see it and sign up."
-                okText="Publish"
-                onConfirm={() =>
-                  transitionMutation.mutate({
-                    playtestId: row.id ?? '',
-                    data: { targetStatus: PlaytestStatus.OPEN }
-                  })
-                }>
-                <Button size="small" type="primary">
-                  Publish
-                </Button>
-              </Popconfirm>
-            )}
-            {isOpen && (
-              <Popconfirm
-                title="Close this playtest?"
-                description="Players can no longer sign up. Existing applicants keep their state."
-                okText="Close"
-                okButtonProps={{ danger: true }}
-                onConfirm={() =>
-                  transitionMutation.mutate({
-                    playtestId: row.id ?? '',
-                    data: { targetStatus: PlaytestStatus.CLOSED }
-                  })
-                }>
-                <Button size="small" danger>
-                  Close
-                </Button>
-              </Popconfirm>
-            )}
-            <Popconfirm
-              title="Soft-delete this playtest?"
-              description="Row will be hidden from players. Applicants + codes are preserved."
-              okText="Delete"
-              okButtonProps={{ danger: true }}
-              onConfirm={() => deleteMutation.mutate({ playtestId: row.id ?? '' })}>
-              <Button size="small" danger>
-                Delete
+            <Dropdown menu={{ items: menuItems }} trigger={['click']} placement="bottomRight">
+              <Button type="text" size="small" aria-label="More actions">
+                ⋯
               </Button>
-            </Popconfirm>
+            </Dropdown>
           </Space>
         )
       }
@@ -287,25 +339,19 @@ function PlaytestsListPage() {
   return (
     <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div>
-          <Typography.Title level={2} style={{ margin: 0 }}>
-            Playtests
-          </Typography.Title>
-          <Typography.Text type="secondary">Create, edit, and soft-delete playtests in this namespace.</Typography.Text>
-        </div>
-        <Space>
-          <Button onClick={() => refetch()}>Refresh</Button>
-          <Button type="primary" onClick={() => navigate('new')}>
-            New playtest
-          </Button>
-        </Space>
+        <Typography.Title level={2} style={{ margin: 0 }}>
+          Playtest Hub
+        </Typography.Title>
+        <Button type="primary" onClick={() => navigate('new')}>
+          + Create Playtest
+        </Button>
       </div>
 
-      {isLoading && <Spin description="Loading playtests..." />}
       {error && (
         <Alert
           type="error"
           message="Failed to load playtests."
+          style={{ marginBottom: 16 }}
           action={
             <Button size="small" onClick={() => refetch()}>
               Retry
@@ -313,14 +359,18 @@ function PlaytestsListPage() {
           }
         />
       )}
-      {!isLoading && !error && (
-        <Table<V1Playtest>
-          rowKey={row => row.id ?? row.slug ?? ''}
-          dataSource={playtests}
-          columns={columns}
-          pagination={{ pageSize: 20 }}
-        />
-      )}
+      <Card title="Playtest List">
+        {isLoading ? (
+          <Spin description="Loading playtests..." />
+        ) : (
+          <Table<V1Playtest>
+            rowKey={row => row.id ?? row.slug ?? ''}
+            dataSource={playtests}
+            columns={columns}
+            pagination={{ pageSize: 20 }}
+          />
+        )}
+      </Card>
       <ADTLinkagesPanel />
     </>
   )

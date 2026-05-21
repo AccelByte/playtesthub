@@ -33,7 +33,7 @@ import { SurveyTab } from './tabs/SurveyTab'
 
 const STATUS_PILL: Record<string, { text: string; color: string }> = {
   [PlaytestStatus.DRAFT]: { text: 'Draft', color: 'default' },
-  [PlaytestStatus.OPEN]: { text: 'Open', color: 'green' },
+  [PlaytestStatus.OPEN]: { text: 'Published', color: 'green' },
   [PlaytestStatus.CLOSED]: { text: 'Closed', color: 'red' }
 }
 

@@ -36,6 +36,11 @@ const mockGetAdtLinkages = vi.fn()
 const mockGetAdtBuilds = vi.fn()
 const mockStartAdtLinkMutation = vi.fn()
 const mockUnlinkAdtMutation = vi.fn()
+const mockGetPublicConfig = vi.fn()
+
+vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
+  usePlaytesthubServiceApi_GetConfig: (...a: unknown[]) => mockGetPublicConfig(...a)
+}))
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -105,6 +110,7 @@ beforeEach(() => {
   mockGetAdtBuilds.mockReset()
   mockStartAdtLinkMutation.mockReset()
   mockUnlinkAdtMutation.mockReset()
+  mockGetPublicConfig.mockReset()
 
   // Default: empty list + no-op mutations.
   mockGetPlaytests.mockReturnValue({ data: { playtests: [] }, isLoading: false, error: null, refetch: vi.fn() })
@@ -127,13 +133,20 @@ beforeEach(() => {
   mockGetAdtBuilds.mockReturnValue({ data: { builds: [] }, isLoading: false, error: null })
   mockStartAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
   mockUnlinkAdtMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: 'https://play.example.com' } })
 })
 
+async function openRowMenu() {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: /more actions/i }))
+  return { user, menu: await screen.findByRole('menu') }
+}
+
 describe('PlaytestsListPage', () => {
-  it('renders empty state heading and a new-playtest button', () => {
+  it('renders Playtest Hub header and a Create Playtest button', () => {
     renderAt('/')
-    expect(screen.getByRole('heading', { name: /playtests/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /new playtest/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /playtest hub/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /create playtest/i })).toBeInTheDocument()
   })
 
   it('renders each returned playtest in the table', () => {
@@ -146,7 +159,8 @@ describe('PlaytestsListPage', () => {
             title: 'Summer Alpha',
             status: 'PLAYTEST_STATUS_OPEN',
             distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
-            createdAt: '2026-04-19T00:00:00Z'
+            autoApprove: true,
+            updatedAt: '2026-04-19T14:30:00Z'
           }
         ]
       },
@@ -158,11 +172,49 @@ describe('PlaytestsListPage', () => {
     renderAt('/')
     expect(screen.getByText('summer-alpha')).toBeInTheDocument()
     expect(screen.getByText('Summer Alpha')).toBeInTheDocument()
-    expect(screen.getByText('Open')).toBeInTheDocument()
-    expect(screen.getByText('Steam keys')).toBeInTheDocument()
+    expect(screen.getByText('Published')).toBeInTheDocument()
+    expect(screen.getByText('Steam Keys')).toBeInTheDocument()
+    expect(screen.getByText('Auto-Approve')).toBeInTheDocument()
   })
 
-  it('shows a Publish button on DRAFT rows that transitions to OPEN', async () => {
+  it('renders Manual approval tag when autoApprove is false', () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [
+          {
+            id: 'pt_1',
+            slug: 'summer-alpha',
+            title: 'Summer Alpha',
+            status: 'PLAYTEST_STATUS_OPEN',
+            distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN',
+            autoApprove: false
+          }
+        ]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+
+    renderAt('/')
+    expect(screen.getByText('Manual')).toBeInTheDocument()
+    expect(screen.getByText('AGS Campaign Codes')).toBeInTheDocument()
+  })
+
+  it('renders ADT distribution label as "Direct Download (ADT)"', () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [{ id: 'pt_1', slug: 'adt-alpha', title: 'ADT', status: 'PLAYTEST_STATUS_DRAFT', distributionModel: 'DISTRIBUTION_MODEL_ADT' }]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/')
+    expect(screen.getByText('Direct Download (ADT)')).toBeInTheDocument()
+  })
+
+  it('publishes a DRAFT row via the row menu', async () => {
     const mutate = vi.fn()
     mockTransitionMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     mockGetPlaytests.mockReturnValue({
@@ -173,17 +225,19 @@ describe('PlaytestsListPage', () => {
     })
 
     renderAt('/')
-    const user = userEvent.setup()
-    const publishBtn = screen.getByRole('button', { name: /^publish$/i })
-    await user.click(publishBtn)
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^publish$/i }))
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Publish'))
+    const confirmOk = await screen.findByRole('button', { name: /^publish$/i })
+    await user.click(confirmOk)
     await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_OPEN' } })
+      expect(mutate).toHaveBeenCalledWith(
+        { playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_OPEN' } },
+        expect.anything()
+      )
     )
   })
 
-  it('shows a Close button on OPEN rows that transitions to CLOSED', async () => {
+  it('stops an OPEN row via the row menu', async () => {
     const mutate = vi.fn()
     mockTransitionMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     mockGetPlaytests.mockReturnValue({
@@ -194,17 +248,19 @@ describe('PlaytestsListPage', () => {
     })
 
     renderAt('/')
-    const user = userEvent.setup()
-    const closeBtn = screen.getByRole('button', { name: /^close$/i })
-    await user.click(closeBtn)
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^close$/i }))
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Stop Playtest'))
+    const confirmOk = await screen.findByRole('button', { name: /^stop playtest$/i })
+    await user.click(confirmOk)
     await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_CLOSED' } })
+      expect(mutate).toHaveBeenCalledWith(
+        { playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_CLOSED' } },
+        expect.anything()
+      )
     )
   })
 
-  it('does not show a transition button on CLOSED rows', () => {
+  it('omits Publish and Stop Playtest from menu on CLOSED rows', async () => {
     mockGetPlaytests.mockReturnValue({
       data: { playtests: [{ id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha', status: 'PLAYTEST_STATUS_CLOSED' }] },
       isLoading: false,
@@ -212,11 +268,12 @@ describe('PlaytestsListPage', () => {
       refetch: vi.fn()
     })
     renderAt('/')
-    expect(screen.queryByRole('button', { name: /^publish$/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^close$/i })).not.toBeInTheDocument()
+    const { menu } = await openRowMenu()
+    expect(within(menu).queryByText('Publish')).not.toBeInTheDocument()
+    expect(within(menu).queryByText('Stop Playtest')).not.toBeInTheDocument()
   })
 
-  it('calls DeletePlaytest mutation when soft-delete is confirmed', async () => {
+  it('calls DeletePlaytest mutation via the row menu', async () => {
     const mutate = vi.fn()
     mockDeleteMutation.mockReturnValue({ mutate, isPending: false })
     mockGetPlaytests.mockReturnValue({
@@ -227,12 +284,29 @@ describe('PlaytestsListPage', () => {
     })
 
     renderAt('/')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /^delete$/i }))
-    // Popconfirm renders "Delete" in the confirm popup as well — pick the danger one inside the popup.
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^delete$/i }))
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1' }))
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Delete'))
+    const confirmOk = await screen.findByRole('button', { name: /^delete$/i })
+    await user.click(confirmOk)
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1' }, expect.anything()))
+  })
+
+  it('copies the playtest player link from the row menu', async () => {
+    mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: 'https://play.example.com' } })
+    mockGetPlaytests.mockReturnValue({
+      data: { playtests: [{ id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha', status: 'PLAYTEST_STATUS_DRAFT' }] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+
+    renderAt('/')
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Copy Link'))
+    await waitFor(async () => {
+      const text = await navigator.clipboard.readText()
+      expect(text).toBe('https://play.example.com/#/playtest/summer-alpha')
+    })
   })
 })
 
@@ -476,7 +550,7 @@ describe('Playtest window (M4)', () => {
     })
     renderAt('/')
     const user = userEvent.setup()
-    await user.hover(screen.getByText('Open'))
+    await user.hover(screen.getByText('Published'))
     const tip = await screen.findByRole('tooltip')
     expect(tip.textContent).toMatch(/Auto-closes/)
   })
