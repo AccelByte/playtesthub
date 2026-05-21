@@ -80,6 +80,21 @@ type Client interface {
 	// playtest's adtFallbackDownloadUrl when ADT returns a non-401
 	// transient error and surfaces Unavailable when retries exhaust.
 	IssueDownloadURL(ctx context.Context, params IssueDownloadURLParams) (IssuedDownloadURL, error)
+
+	// DeleteLinkage best-effort drops the ADT-side linkage flag — the
+	// unlink half of B4 / PRD §4.8. studioNamespace is for symmetry +
+	// test bookkeeping; ADT derives studio identity from the bearer
+	// token on every call.
+	//
+	// Best-effort semantics: ADT eventual-consistency is tolerated.
+	// ErrLinkageMissing surfaces on 401/403 (ADT already has no flag
+	// for this pair), and callers are expected to swallow it — the
+	// post-state is what we want. Transient errors (ErrUnavailable /
+	// 5xx-retry exhaustion) also surface; UnlinkADT logs + bumps a
+	// metric on those but still completes the local soft-delete so an
+	// ADT outage cannot strand the operator (see pkg/service/adt.go
+	// UnlinkADT).
+	DeleteLinkage(ctx context.Context, studioNamespace, adtNamespace string) error
 }
 
 // Build is the minimum build row the admin UI / pth CLI needs to drive

@@ -33,12 +33,13 @@ type MemClient struct {
 	games   map[linkKey][]Game
 	issued  []IssuedDownloadURLLog
 
-	// ListBuildsErr / IssueDownloadURLErr / ListGamesErr force the
-	// next call to that method to return the configured error and
-	// consume the slot (mirrors pkg/ags.MemClient).
+	// ListBuildsErr / IssueDownloadURLErr / ListGamesErr /
+	// DeleteLinkageErr force the next call to that method to return the
+	// configured error and consume the slot (mirrors pkg/ags.MemClient).
 	ListBuildsErr       []error
 	IssueDownloadURLErr []error
 	ListGamesErr        []error
+	DeleteLinkageErr    []error
 
 	// URLTTL is the synthetic expiry MemClient stamps on every
 	// IssuedDownloadURL. Zero (the default) leaves ExpiresAt zero so
@@ -213,6 +214,25 @@ func (c *MemClient) IssueDownloadURL(_ context.Context, params IssueDownloadURLP
 		IssuedAt:        time.Now(),
 	})
 	return IssuedDownloadURL{URL: url, ExpiresAt: expires}, nil
+}
+
+// DeleteLinkage best-effort clears the linkage flag for (studio,
+// adtNamespace). Mirrors HTTPClient.DeleteLinkage: ErrLinkageMissing
+// surfaces when the flag was already absent (idempotent post-state
+// match). DeleteLinkageErr consumes one slot per call for retry-policy
+// tests.
+func (c *MemClient) DeleteLinkage(_ context.Context, studioNamespace, adtNamespace string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := pop(&c.DeleteLinkageErr); err != nil {
+		return err
+	}
+	key := linkKey{studio: studioNamespace, adt: adtNamespace}
+	if !c.linkage[key] {
+		return ErrLinkageMissing
+	}
+	delete(c.linkage, key)
+	return nil
 }
 
 func pop(slot *[]error) error {

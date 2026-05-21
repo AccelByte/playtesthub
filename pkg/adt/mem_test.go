@@ -197,3 +197,39 @@ func TestMemClient_ListGames_InjectedFailure(t *testing.T) {
 		t.Fatalf("ListGames after slot consumed: %v", err)
 	}
 }
+
+func TestMemClient_DeleteLinkage_HappyPath(t *testing.T) {
+	c := adt.NewMemClient()
+	c.RecordLinkage("studio-A", "adt-ns-1")
+
+	if err := c.DeleteLinkage(context.Background(), "studio-A", "adt-ns-1"); err != nil {
+		t.Fatalf("DeleteLinkage: %v", err)
+	}
+	if c.IsLinked("studio-A", "adt-ns-1") {
+		t.Fatal("linkage flag still present after DeleteLinkage")
+	}
+	// Second call against the now-missing flag surfaces
+	// ErrLinkageMissing — callers are expected to swallow it because
+	// the post-state matches.
+	if err := c.DeleteLinkage(context.Background(), "studio-A", "adt-ns-1"); !errors.Is(err, adt.ErrLinkageMissing) {
+		t.Fatalf("second DeleteLinkage err = %v, want ErrLinkageMissing", err)
+	}
+}
+
+func TestMemClient_DeleteLinkage_InjectedFailure(t *testing.T) {
+	c := adt.NewMemClient()
+	c.RecordLinkage("studio-A", "adt-ns-1")
+	boom := errors.New("boom-delete")
+	c.DeleteLinkageErr = []error{boom}
+
+	if err := c.DeleteLinkage(context.Background(), "studio-A", "adt-ns-1"); !errors.Is(err, boom) {
+		t.Fatalf("DeleteLinkage err = %v, want boom-delete", err)
+	}
+	if !c.IsLinked("studio-A", "adt-ns-1") {
+		t.Fatal("injected-error path must not consume the flag")
+	}
+	// Slot consumed → next call uses the happy path.
+	if err := c.DeleteLinkage(context.Background(), "studio-A", "adt-ns-1"); err != nil {
+		t.Fatalf("DeleteLinkage after slot consumed: %v", err)
+	}
+}

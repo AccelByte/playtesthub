@@ -275,6 +275,81 @@ func TestHTTPClient_ListGames_TokenGetterFailurePropagates(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_DeleteLinkage_HappyPath(t *testing.T) {
+	t.Parallel()
+	var capturedAuth, capturedPath, capturedMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedAuth = r.Header.Get("Authorization")
+		capturedPath = r.URL.Path
+		capturedMethod = r.Method
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	if err := c.DeleteLinkage(context.Background(), "studio-ns", "adt-ns"); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if capturedMethod != http.MethodDelete {
+		t.Errorf("method = %q, want DELETE", capturedMethod)
+	}
+	if capturedAuth != "Bearer svc-jwt" {
+		t.Errorf("Authorization = %q", capturedAuth)
+	}
+	if !strings.Contains(capturedPath, "/profiling/namespaces/adt-ns/agsplaytesthub/linkage") {
+		t.Errorf("path = %q", capturedPath)
+	}
+}
+
+func TestHTTPClient_DeleteLinkage_401MapsToLinkageMissing(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	err := c.DeleteLinkage(context.Background(), "studio-ns", "adt-ns")
+	if !errors.Is(err, adt.ErrLinkageMissing) {
+		t.Fatalf("err = %v, want ErrLinkageMissing", err)
+	}
+}
+
+func TestHTTPClient_DeleteLinkage_5xxRetriesThenExhausts(t *testing.T) {
+	t.Parallel()
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	err := c.DeleteLinkage(context.Background(), "studio-ns", "adt-ns")
+	if !errors.Is(err, adt.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 4 {
+		t.Fatalf("calls = %d, want 4 (1 + 3 retries)", got)
+	}
+}
+
+func TestHTTPClient_DeleteLinkage_TokenGetterFailurePropagates(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		t.Fatal("ADT should not be called when token getter fails")
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, func(_ context.Context) (string, error) {
+		return "", fmt.Errorf("ags down")
+	})
+	err := c.DeleteLinkage(context.Background(), "s", "n")
+	if !errors.Is(err, adt.ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable (token failure)", err)
+	}
+}
+
 func TestHTTPClient_TokenGetterFailurePropagates(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

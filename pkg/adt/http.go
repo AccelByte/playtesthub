@@ -185,11 +185,14 @@ func (c *HTTPClient) IssueDownloadURL(ctx context.Context, params IssueDownloadU
 	return IssuedDownloadURL{URL: first.URL, ExpiresAt: expires}, nil
 }
 
-// DeleteLinkage best-effort drops the ADT-side linkage flag (the unlink
-// half of B4). Not part of Client today because UnlinkADT does not yet
-// call it — kept here so a follow-up can wire it without rebuilding the
-// transport surface.
-func (c *HTTPClient) DeleteLinkage(ctx context.Context, adtNamespace string) error {
+// DeleteLinkage best-effort drops the ADT-side linkage flag — the
+// unlink half of B4 / PRD §4.8. studioNamespace is for interface
+// symmetry + unit-test bookkeeping; ADT derives studio identity from
+// the bearer token. Best-effort: callers (service.UnlinkADT) log +
+// metric the error but still finish the local soft-delete so an ADT
+// outage cannot strand an operator who wants to drop their own row.
+func (c *HTTPClient) DeleteLinkage(ctx context.Context, studioNamespace, adtNamespace string) error {
+	_ = studioNamespace
 	if c.BaseURL == "" {
 		return fmt.Errorf("adt: HTTPClient BaseURL is empty")
 	}
