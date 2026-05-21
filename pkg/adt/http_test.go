@@ -174,8 +174,8 @@ func TestHTTPClient_ListBuilds_401ErrorCode401MapsToUnauthenticated(t *testing.T
 // TestHTTPClient_ListBuilds_401ErrorCode20001MapsToPermissionDenied
 // covers the token-valid-but-route-perm-missing surface (e.g. M6
 // telemetry endpoints): HTTP 401 + `{"errorCode": 20001,
-// "errorMessage": "unauthorized access"}` (verified 2026-05-21).
-// Bug 4.
+// "errorMessage": "unauthorized access"}` (verified 2026-05-21
+// against the live API).
 func TestHTTPClient_ListBuilds_401ErrorCode20001MapsToPermissionDenied(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

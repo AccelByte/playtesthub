@@ -9,12 +9,32 @@
 // MemClient is the default in bootapp until then so the full ADT code
 // path runs through the smoke harness without a real ADT round-trip.
 //
+// Canonical spec reference: the live ADT swagger at
+// https://develop.blackbox.accelbyte.io/profiling/apidocs/api.json
+// (no auth required, v1.35.0 as of 2026-05-21). Treat this as
+// authoritative over any stale local copies (e.g. earlier
+// /home/ab/Downloads/adt-spec.txt drops).
+//
 // Auth: every ADT API call carries the playtesthub AGS service IAM JWT
 // (existing AGS_IAM_CLIENT_* env vars) as Authorization: Bearer …; ADT
 // validates against AGS JWKS and reads studio identity from the
 // token's iss URL + union_namespace claim. No separate credential is
 // exchanged at link time — see STATUS_M5.md D2 and the no-credential
 // resolution row.
+//
+// Error envelopes (verified 2026-05-21 against live API): non-2xx
+// responses carry `{"errorCode": int, "errorMessage": string}` when
+// Content-Type is application/json; mux-level routing misses carry
+// plaintext bodies like "404: Page Not Found". The retry classifier
+// dispatches on errorCode first (errors.go for the full mapping) and
+// falls back to HTTP status for plaintext bodies.
+//
+// Response envelopes (verified 2026-05-21):
+//   - ListGames + ListBuilds: `{"data": [row,...], ...}` (NOT
+//     `{"games": [...]}` / `{"builds": [...]}` as earlier drafts read).
+//   - downloadUrls: `{"urls": [string,...], "expires_at": "RFC3339"}`
+//     — flat string list with a single top-level expiry, NOT per-URL
+//     objects.
 package adt
 
 import (

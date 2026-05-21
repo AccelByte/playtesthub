@@ -279,6 +279,28 @@ All Track B open questions are now resolved by the 2026-05-20 ADT-eng API spec (
 - Mapping into `pkg/adt.Game` (new value type — mirrors `Build`): `ID ← id`, `Name ← name`, `CreatedAt ← created_at`.
 - Drives the create-playtest build-picker top-level dropdown so operators no longer type the `adt_game_id` by hand. Unblocks the picker-modal UX (B13).
 
+**Addendum 2026-05-21 — live-API probe corrections (against develop.blackbox.accelbyte.io v1.35.0, public swagger at `/profiling/apidocs/api.json`):**
+
+Six bugs in the live `HTTPClient` adapter were discovered by direct probing today. All fixes shipped in commits `81da056`, `21b06bc`, `219558b`, `ac37ada` against `pkg/adt/http.go` + `pkg/adt/errors.go` + `pkg/adt/retry.go` + `pkg/service/adt.go`. The canonical reference for ADT shapes is now the live swagger URL above — supersedes the earlier `/home/ab/Downloads/adt-spec.txt` drop.
+
+- **Bug 1 — `ListBuilds` envelope was wrong.** Old decoder expected `{"builds": [...]}`; live API returns `{"data": [...]}`. Silent zero-row failure mode against real ADT.
+- **Bug 2 — `ListGames` envelope was wrong** (same root cause, same shape: `{"data": [...]}`, not `{"games": [...]}`).
+- **Bug 3 — `IssueDownloadURL` envelope was wrong.** Old decoder expected `{"download_urls": [{url, expires_at}, ...]}`; live API returns `{"urls": [string, ...], "expires_at": "RFC3339"}` — flat string list with a single top-level expiry. The "first URL wins" semantic preserved; `IssuedDownloadURL.ExpiresAt` now sources the top-level expiry.
+- **Bug 4 — Error classification was wrong.** Old code mapped HTTP 401 → `ErrLinkageMissing`. Live API uses a JSON `{errorCode, errorMessage}` envelope whose value is decoupled from the HTTP status:
+  - `HTTP 404 + errorCode=99` ("Namespace is not registered") = real linkage-missing → `ErrLinkageMissing`.
+  - `HTTP 401 + errorCode=401` ("unauthorized") = bearer broken → new `ErrUnauthenticated` (operator rotates `AGS_IAM_CLIENT_*`).
+  - `HTTP 401 + errorCode=20001` ("unauthorized access") = token valid, route perm absent → new `ErrPermissionDenied` (ADT-eng grant request).
+  - Helpers: `IsUnauthenticated(err)`, `IsPermissionDenied(err)` mirror existing `IsLinkageMissing`. Service-layer `recordUnlinkADTSideFailure` adds matching reason labels to `adt_unlink_adt_side_failures_total`. `RecoverADTLinkage` surfaces distinct `FailedPrecondition` messages so operators see the right action.
+- **Bug 5 — Content-Type-aware error parsing.** ADT returns two body kinds on errors: JSON (`application/json`) carries the `errorCode` envelope; plaintext (`text/plain`) carries mux-level routing misses like `"404: Page Not Found"`. `doJSON` now branches on Content-Type before attempting `json.Unmarshal`; plaintext bodies fall through to HTTP-status classification without a spurious parse error.
+- **Bug 6 — `Authorization: Bearer …` canary.** Live ADT rejects lowercase `bearer`. Production already uses capital `B`; the canary test pins the literal so a future refactor cannot silently downcase it. No production-code change for Bug 6.
+
+Other live-probe intel (recorded; out of scope for the current PR):
+- `?sortBy=field:dir` is the canonical sort syntax — not used today.
+- `?offset=` works on `/games` but not on `/builds`; `?buildIds=uuid,uuid` filter exists on `/builds` — neither used today.
+- M6 telemetry surface is reachable on the same host but gated by `NAMESPACE:{ns}:SESSION [READ]` — a permission-grant ask for ADT-eng, not a new-endpoint ask.
+
+The pre-2026-05-21 paragraph "401 semantics → … `ErrLinkageMissing`" three rows above is superseded by the dispatch table here; left in place for change history.
+
 **Implementation impact (carried through 2026-05-20 doc + code patches):**
 
 - `pkg/adt.Build` now carries `Platform` (was missing); proto `ADTBuild.platform` added (field 5).
