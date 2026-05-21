@@ -130,11 +130,17 @@ func TestHTTPClient_ListBuilds_HappyPath(t *testing.T) {
 	}
 }
 
-func TestHTTPClient_ListBuilds_401MapsToLinkageMissing(t *testing.T) {
+// TestHTTPClient_ListBuilds_404ErrorCode99MapsToLinkageMissing covers
+// the live ADT "linkage missing" surface: HTTP 404 + JSON envelope
+// `{"errorCode": 99, "errorMessage": "...Namespace is not registered"}`
+// (verified 2026-05-21 against the live API). Replaces the legacy
+// "401 → ErrLinkageMissing" mapping — see Bug 4.
+func TestHTTPClient_ListBuilds_404ErrorCode99MapsToLinkageMissing(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"linkage missing"}`))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errorCode":99,"errorMessage":"unable to process request: Namespace is not registered"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -142,6 +148,71 @@ func TestHTTPClient_ListBuilds_401MapsToLinkageMissing(t *testing.T) {
 	_, err := c.ListBuilds(context.Background(), "studio-ns", "adt-ns", "game-1")
 	if !errors.Is(err, adt.ErrLinkageMissing) {
 		t.Fatalf("err = %v, want ErrLinkageMissing", err)
+	}
+}
+
+// TestHTTPClient_ListBuilds_401ErrorCode401MapsToUnauthenticated covers
+// the bearer-broken surface: HTTP 401 + `{"errorCode": 401,
+// "errorMessage": "unauthorized"}` (verified 2026-05-21). Distinct
+// operator action from linkage-missing — Bug 4.
+func TestHTTPClient_ListBuilds_401ErrorCode401MapsToUnauthenticated(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"errorCode":401,"errorMessage":"unauthorized"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	_, err := c.ListBuilds(context.Background(), "studio-ns", "adt-ns", "game-1")
+	if !errors.Is(err, adt.ErrUnauthenticated) {
+		t.Fatalf("err = %v, want ErrUnauthenticated", err)
+	}
+}
+
+// TestHTTPClient_ListBuilds_401ErrorCode20001MapsToPermissionDenied
+// covers the token-valid-but-route-perm-missing surface (e.g. M6
+// telemetry endpoints): HTTP 401 + `{"errorCode": 20001,
+// "errorMessage": "unauthorized access"}` (verified 2026-05-21).
+// Bug 4.
+func TestHTTPClient_ListBuilds_401ErrorCode20001MapsToPermissionDenied(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"errorCode":20001,"errorMessage":"unauthorized access"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	_, err := c.ListBuilds(context.Background(), "studio-ns", "adt-ns", "game-1")
+	if !errors.Is(err, adt.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+}
+
+// TestHTTPClient_PlaintextMuxError_FallsThroughToStatus covers Bug 5:
+// ADT mux-level routing misses (unknown sub-paths) reply with
+// `Content-Type: text/plain` + `404: Page Not Found`. The body must NOT
+// be parsed as JSON, and classification must fall back to the HTTP
+// status (404 → *ClientError, not a panic + not ErrLinkageMissing).
+func TestHTTPClient_PlaintextMuxError_FallsThroughToStatus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("404: Page Not Found"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	_, err := c.ListBuilds(context.Background(), "studio-ns", "adt-ns", "game-1")
+	if errors.Is(err, adt.ErrLinkageMissing) {
+		t.Fatalf("plaintext 404 must NOT map to ErrLinkageMissing; got %v", err)
+	}
+	if !adt.IsClientError(err) {
+		t.Fatalf("err = %v, want *ClientError", err)
 	}
 }
 
@@ -313,10 +384,12 @@ func TestHTTPClient_ListGames_HappyPath(t *testing.T) {
 	}
 }
 
-func TestHTTPClient_ListGames_401MapsToLinkageMissing(t *testing.T) {
+func TestHTTPClient_ListGames_404ErrorCode99MapsToLinkageMissing(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errorCode":99,"errorMessage":"unable to process request: Namespace is not registered"}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -402,10 +475,12 @@ func TestHTTPClient_DeleteLinkage_HappyPath(t *testing.T) {
 	}
 }
 
-func TestHTTPClient_DeleteLinkage_401MapsToLinkageMissing(t *testing.T) {
+func TestHTTPClient_DeleteLinkage_404ErrorCode99MapsToLinkageMissing(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errorCode":99,"errorMessage":"unable to process request: Namespace is not registered"}`))
 	}))
 	t.Cleanup(srv.Close)
 

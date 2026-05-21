@@ -113,6 +113,57 @@ func TestRecoverADTLinkage_ADTTransient_Unavailable(t *testing.T) {
 	requireStatus(t, err, codes.Unavailable)
 }
 
+// TestRecoverADTLinkage_ADTUnauthenticated_FailedPrecondition pins the
+// distinct operator-action message for `ErrUnauthenticated` (Bug 4 /
+// 2026-05-21 probe): ADT rejected the bearer token, so the
+// recover-button retry is futile — operators need to rotate
+// AGS_IAM_CLIENT_* and restart the backend.
+func TestRecoverADTLinkage_ADTUnauthenticated_FailedPrecondition(t *testing.T) {
+	svr, _, _ := newTestServer()
+	link := newFakeADTLinkageStore()
+	mem := adt.NewMemClient()
+	mem.RecordLinkage(testStudioNamespace, testADTNamespace)
+	mem.ListGamesErr = []error{adt.ErrUnauthenticated}
+	svr.
+		WithADTLinkageStore(link).
+		WithADTClient(mem).
+		WithStudioNamespaceResolver(func(context.Context) (string, error) {
+			return testStudioNamespace, nil
+		})
+
+	_, err := svr.RecoverADTLinkage(authCtx(uuid.New()), &pb.RecoverADTLinkageRequest{
+		Namespace:    testNamespace,
+		AdtNamespace: testADTNamespace,
+	})
+	requireStatus(t, err, codes.FailedPrecondition)
+	requireMsgContains(t, err, "ADT rejected the backend service token")
+}
+
+// TestRecoverADTLinkage_ADTPermissionDenied_FailedPrecondition pins the
+// distinct operator-action message for `ErrPermissionDenied` (Bug 4 /
+// 2026-05-21 probe): the bearer is valid but ADT IAM denies the route
+// — operators need a permission-grant ticket, not a credential rotate.
+func TestRecoverADTLinkage_ADTPermissionDenied_FailedPrecondition(t *testing.T) {
+	svr, _, _ := newTestServer()
+	link := newFakeADTLinkageStore()
+	mem := adt.NewMemClient()
+	mem.RecordLinkage(testStudioNamespace, testADTNamespace)
+	mem.ListGamesErr = []error{adt.ErrPermissionDenied}
+	svr.
+		WithADTLinkageStore(link).
+		WithADTClient(mem).
+		WithStudioNamespaceResolver(func(context.Context) (string, error) {
+			return testStudioNamespace, nil
+		})
+
+	_, err := svr.RecoverADTLinkage(authCtx(uuid.New()), &pb.RecoverADTLinkageRequest{
+		Namespace:    testNamespace,
+		AdtNamespace: testADTNamespace,
+	})
+	requireStatus(t, err, codes.FailedPrecondition)
+	requireMsgContains(t, err, "lacks required ADT permission scope")
+}
+
 func TestRecoverADTLinkage_MissingADTNamespace_InvalidArgument(t *testing.T) {
 	h := newADTTestServer(t)
 	_, err := h.svr.RecoverADTLinkage(authCtx(uuid.New()), &pb.RecoverADTLinkageRequest{

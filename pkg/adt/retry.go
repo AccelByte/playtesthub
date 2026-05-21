@@ -44,10 +44,25 @@ type HTTPStatusCarrier interface {
 	HTTPStatus() int
 }
 
+// ADTErrorCodeCarrier is implemented by transport errors that expose
+// the JSON `errorCode` ADT surfaces in 4xx response bodies (live API
+// shape verified 2026-05-21 against the public swagger). Zero means
+// "no errorCode present" (plaintext mux-level errors). classify
+// dispatches on it before falling through to HTTPStatus so a 404 with
+// errorCode=99 maps to ErrLinkageMissing while a plain 404 does not.
+type ADTErrorCodeCarrier interface {
+	ADTErrorCode() int
+}
+
 // Run executes op per the retry policy. The returned error is one of:
 //   - nil on success;
 //   - ErrRateLimited on HTTP 429 (no retry);
-//   - ErrLinkageMissing on HTTP 401 / 403 (no retry — see B6);
+//   - ErrLinkageMissing when ADT surfaces errorCode=99 ("Namespace is
+//     not registered" — Bug 4 / 2026-05-21 probe);
+//   - ErrUnauthenticated when ADT surfaces errorCode=401 (bearer
+//     missing/garbage; no retry);
+//   - ErrPermissionDenied when ADT surfaces errorCode=20001 (token
+//     valid, route permission absent; no retry);
 //   - *ClientError on any other HTTP 4xx (no retry);
 //   - ErrUnavailable when retries on 5xx/timeout are exhausted;
 //   - the raw op error for non-HTTP failures (e.g. ctx cancellation).
@@ -104,9 +119,22 @@ func (p RetryPolicy) shouldRetry(err error) bool {
 }
 
 // classify converts a raw error into the package's sentinel surface.
-// 401 / 403 collapse to ErrLinkageMissing because (per B6) the only
-// path for a properly-signed AGS service JWT to be rejected is the
-// linkage flag being absent on ADT's side.
+//
+// Dispatch order (Bug 4 / 2026-05-21 probe):
+//  1. Context cancel / deadline → ErrUnavailable (retry exhaustion or
+//     caller abort — same sentinel either way).
+//  2. JSON errorCode in the response body (when ADTErrorCodeCarrier is
+//     satisfied AND the code is nonzero): 99 → ErrLinkageMissing,
+//     401 → ErrUnauthenticated, 20001 → ErrPermissionDenied.
+//  3. HTTP status fallback for plaintext bodies / unknown errorCodes:
+//     429 → ErrRateLimited, 5xx → ErrUnavailable, other 4xx →
+//     *ClientError.
+//
+// The "401 → ErrLinkageMissing" collapse of the original 2026-05-19 spec
+// is gone: the live API uses HTTP 404 + errorCode=99 for linkage
+// missing, and 401 is reserved for bearer-broken (now
+// ErrUnauthenticated) and route-permission-missing (now
+// ErrPermissionDenied, surfaced via errorCode=20001).
 func classify(err error, opName string) error {
 	if err == nil {
 		return nil
@@ -114,14 +142,23 @@ func classify(err error, opName string) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return ErrUnavailable
 	}
+	var codeCarrier ADTErrorCodeCarrier
+	if errors.As(err, &codeCarrier) {
+		switch codeCarrier.ADTErrorCode() {
+		case 99:
+			return ErrLinkageMissing
+		case 401:
+			return ErrUnauthenticated
+		case 20001:
+			return ErrPermissionDenied
+		}
+	}
 	var carrier HTTPStatusCarrier
 	if errors.As(err, &carrier) {
 		s := carrier.HTTPStatus()
 		switch {
 		case s == http.StatusTooManyRequests:
 			return ErrRateLimited
-		case s == http.StatusUnauthorized, s == http.StatusForbidden:
-			return ErrLinkageMissing
 		case s >= 400 && s <= 499:
 			return &ClientError{StatusCode: s, Op: opName, Message: err.Error()}
 		case s >= 500 && s <= 599:

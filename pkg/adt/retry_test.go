@@ -12,11 +12,13 @@ import (
 )
 
 type httpErr struct {
-	status int
+	status    int
+	errorCode int
 }
 
-func (e *httpErr) Error() string   { return fmt.Sprintf("http %d", e.status) }
-func (e *httpErr) HTTPStatus() int { return e.status }
+func (e *httpErr) Error() string     { return fmt.Sprintf("http %d errorCode=%d", e.status, e.errorCode) }
+func (e *httpErr) HTTPStatus() int   { return e.status }
+func (e *httpErr) ADTErrorCode() int { return e.errorCode }
 
 func nopSleep(d time.Duration) {}
 
@@ -72,26 +74,52 @@ func TestRetry_429FailsImmediately(t *testing.T) {
 	}
 }
 
-func TestRetry_401MapsToLinkageMissing(t *testing.T) {
+func TestRetry_404ErrorCode99MapsToLinkageMissing(t *testing.T) {
 	calls := 0
 	err := policyForTest().Run(context.Background(), "Op", func(_ context.Context) error {
 		calls++
-		return &httpErr{status: 401}
+		return &httpErr{status: 404, errorCode: 99}
 	})
 	if !errors.Is(err, adt.ErrLinkageMissing) {
 		t.Fatalf("err = %v, want ErrLinkageMissing", err)
 	}
 	if calls != 1 {
-		t.Fatalf("calls = %d, want 1 (no retry on 401)", calls)
+		t.Fatalf("calls = %d, want 1 (no retry on linkage-missing)", calls)
 	}
 }
 
-func TestRetry_403MapsToLinkageMissing(t *testing.T) {
+func TestRetry_401ErrorCode401MapsToUnauthenticated(t *testing.T) {
+	calls := 0
 	err := policyForTest().Run(context.Background(), "Op", func(_ context.Context) error {
-		return &httpErr{status: 403}
+		calls++
+		return &httpErr{status: 401, errorCode: 401}
 	})
-	if !errors.Is(err, adt.ErrLinkageMissing) {
-		t.Fatalf("err = %v, want ErrLinkageMissing", err)
+	if !errors.Is(err, adt.ErrUnauthenticated) {
+		t.Fatalf("err = %v, want ErrUnauthenticated", err)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (no retry on unauthenticated)", calls)
+	}
+}
+
+func TestRetry_401ErrorCode20001MapsToPermissionDenied(t *testing.T) {
+	err := policyForTest().Run(context.Background(), "Op", func(_ context.Context) error {
+		return &httpErr{status: 401, errorCode: 20001}
+	})
+	if !errors.Is(err, adt.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+}
+
+// Bare 401 with no JSON errorCode (e.g. plaintext mux-level reply)
+// falls through to *ClientError per the 2026-05-21 classification
+// order — no longer collapses to ErrLinkageMissing.
+func TestRetry_BarePlaintext401IsClientError(t *testing.T) {
+	err := policyForTest().Run(context.Background(), "Op", func(_ context.Context) error {
+		return &httpErr{status: 401}
+	})
+	if !adt.IsClientError(err) {
+		t.Fatalf("err = %v, want *ClientError (no errorCode → status fallback)", err)
 	}
 }
 

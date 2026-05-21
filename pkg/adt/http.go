@@ -58,18 +58,32 @@ func NewHTTPClient(baseURL string, httpClient *http.Client, token TokenGetter) *
 
 // httpStatusError is the internal error type returned to RetryPolicy
 // from request roundtrips. It satisfies HTTPStatusCarrier so classify
-// can map status → sentinel.
+// can map status → sentinel, and ADTErrorCodeCarrier so classify can
+// dispatch on the live ADT errorCode envelope when one is present
+// (Bug 4 / 2026-05-21 probe).
 type httpStatusError struct {
-	status int
-	op     string
-	body   string
+	status       int
+	op           string
+	body         string
+	errorCode    int
+	errorMessage string
 }
 
 func (e *httpStatusError) Error() string {
+	if e.errorCode != 0 {
+		return fmt.Sprintf("adt: %s: http %d: errorCode=%d %s", e.op, e.status, e.errorCode, e.errorMessage)
+	}
 	return fmt.Sprintf("adt: %s: http %d: %s", e.op, e.status, e.body)
 }
 
 func (e *httpStatusError) HTTPStatus() int { return e.status }
+
+// ADTErrorCode returns the JSON `errorCode` field surfaced in the
+// response body. Zero means "absent" (e.g. plaintext mux-level 404 /
+// 405 from an unknown sub-path). Satisfies ADTErrorCodeCarrier so
+// classify can dispatch on it before falling through to the HTTP
+// status.
+func (e *httpStatusError) ADTErrorCode() int { return e.errorCode }
 
 // ListGames implements Client.ListGames against the live ADT API.
 // Endpoint per the 2026-05-21 ADT-eng addendum (STATUS_M5.md):
@@ -227,8 +241,8 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, endpoint, op string, ds
 	defer drainBody(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &httpStatusError{status: resp.StatusCode, op: op, body: strings.TrimSpace(string(body))}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return newHTTPStatusError(resp.StatusCode, op, resp.Header.Get("Content-Type"), body)
 	}
 	if dst == nil {
 		return nil
@@ -245,4 +259,28 @@ func drainBody(rc io.ReadCloser) {
 	}
 	_, _ = io.Copy(io.Discard, rc)
 	_ = rc.Close()
+}
+
+// newHTTPStatusError builds the typed error returned by doJSON on a
+// non-2xx response. Content-Type-aware: a JSON body
+// (`application/json…`) is parsed for the live ADT `{errorCode,
+// errorMessage}` envelope (Bug 4 fix); plaintext bodies (mux-level 404
+// / 405) are kept as-is so classify can fall back to the HTTP status.
+// Either way the raw body is preserved on .body for log readability.
+func newHTTPStatusError(status int, op, contentType string, body []byte) *httpStatusError {
+	trimmed := strings.TrimSpace(string(body))
+	e := &httpStatusError{status: status, op: op, body: trimmed}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "application/json") {
+		return e
+	}
+	var env struct {
+		ErrorCode    int    `json:"errorCode"`
+		ErrorMessage string `json:"errorMessage"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return e
+	}
+	e.errorCode = env.ErrorCode
+	e.errorMessage = env.ErrorMessage
+	return e
 }

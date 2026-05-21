@@ -343,11 +343,23 @@ func (s *PlaytesthubServiceServer) UnlinkADT(ctx context.Context, req *pb.Unlink
 // DELETE error, logs at warn level (structured, no PII — adt_namespace
 // is operator-supplied identifier; PRD §6 redacts NDA/survey/code, not
 // linkage identifiers), and increments ADTUnlinkADTSideFailures.
+//
+// New reason labels per Bug 4 / 2026-05-21 probe:
+//   - "unauthenticated"   — bearer broken (ADT errorCode=401)
+//   - "permission_denied" — token valid, route perm missing (errorCode=20001)
+//
+// These join "linkage_missing", "transient", and "unknown" so SRE can
+// see which class of failure is trending without diffing the existing
+// labels.
 func (s *PlaytesthubServiceServer) recordUnlinkADTSideFailure(adtNamespace string, err error) {
 	reason := "unknown"
 	switch {
 	case adt.IsLinkageMissing(err):
 		reason = "linkage_missing"
+	case adt.IsUnauthenticated(err):
+		reason = "unauthenticated"
+	case adt.IsPermissionDenied(err):
+		reason = "permission_denied"
 	case adt.IsUnavailable(err), adt.IsRateLimited(err):
 		reason = "transient"
 	}
@@ -406,6 +418,12 @@ func (s *PlaytesthubServiceServer) RecoverADTLinkage(ctx context.Context, req *p
 	if _, err := s.adtClient.ListGames(ctx, studio, req.GetAdtNamespace()); err != nil {
 		if errors.Is(err, adt.ErrLinkageMissing) {
 			return nil, status.Error(codes.FailedPrecondition, "no ADT-side linkage found for that namespace; use StartADTLink to create one")
+		}
+		if errors.Is(err, adt.ErrUnauthenticated) {
+			return nil, status.Error(codes.FailedPrecondition, "ADT rejected the backend service token; rotate AGS IAM client credentials and restart the backend")
+		}
+		if errors.Is(err, adt.ErrPermissionDenied) {
+			return nil, status.Error(codes.FailedPrecondition, "backend service token lacks required ADT permission scope; ask ADT-eng to grant the missing permission")
 		}
 		return nil, status.Errorf(codes.Unavailable, "ADT temporarily unavailable while probing linkage: %v", err)
 	}

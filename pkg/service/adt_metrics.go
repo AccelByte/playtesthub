@@ -44,9 +44,11 @@ var ADTLinkFailures = prometheus.NewCounterVec(
 // Labels:
 //
 //	reason — narrow vocabulary mirroring ADTLinkFailures:
-//	         "linkage_missing" — ADT returned 401/403 (flag already absent on ADT's side; benign)
-//	         "transient"       — ErrUnavailable / ErrRateLimited (5xx-retry exhausted or 429)
-//	         "unknown"         — any other error class (logged + counted but otherwise opaque)
+//	         "linkage_missing"   — ADT returned errorCode=99 (Bug 4 fix; flag already absent on ADT's side; benign)
+//	         "unauthenticated"   — ADT returned errorCode=401 (bearer broken; rotate AGS_IAM_CLIENT_* + restart)
+//	         "permission_denied" — ADT returned errorCode=20001 (token valid, route perm absent; needs ADT-eng grant)
+//	         "transient"         — ErrUnavailable / ErrRateLimited (5xx-retry exhausted or 429)
+//	         "unknown"           — any other error class (logged + counted but otherwise opaque)
 var ADTUnlinkADTSideFailures = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Namespace: "playtesthub",
