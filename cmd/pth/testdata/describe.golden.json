@@ -27,6 +27,26 @@
       "example": "pth --namespace mygame --profile admin adt build list --linkage-id 01J0... --game-id mygame"
     },
     {
+      "name": "adt games list",
+      "milestone": "M5.B",
+      "description": "Admin: list ADT games under a linkage's namespace (cli.md §6.4, PRD §4.8; STATUS_M5.md B12).",
+      "requiredFlags": [
+        {
+          "name": "--linkage-id",
+          "description": "adt_linkage_id (from `adt linkage list`)",
+          "valueType": "uuid"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin adt games list --linkage-id 01J0..."
+    },
+    {
       "name": "adt linkage complete",
       "milestone": "M5.B",
       "description": "Admin: finalize an ADT link by consuming the state nonce + adt_namespace echoed on the callback URL (PRD §4.8.2).",

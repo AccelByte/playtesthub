@@ -156,10 +156,13 @@ func TestApproveApplicant_ADT_FallbackURLWhenADTUnavailable(t *testing.T) {
 }
 
 // erroringADTClient always fails with a generic (non-linkage-missing)
-// error, exercising the fallback path. ListBuilds is unused.
+// error, exercising the fallback path. ListBuilds / ListGames are unused.
 type erroringADTClient struct{ baseURL string }
 
 func (erroringADTClient) ListBuilds(context.Context, string, string, string) ([]adt.Build, error) {
+	return nil, nil
+}
+func (erroringADTClient) ListGames(context.Context, string, string) ([]adt.Game, error) {
 	return nil, nil
 }
 func (erroringADTClient) IssueDownloadURL(context.Context, adt.IssueDownloadURLParams) (adt.IssuedDownloadURL, error) {

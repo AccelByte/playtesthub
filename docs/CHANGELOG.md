@@ -1,5 +1,17 @@
 # playtesthub — Full Version History
 
+## v2.6.1 — 2026-05-21
+
+**ADT-eng games-list endpoint** — adds one read-only admin RPC behind the existing `pkg/adt.Client` abstraction so the create-playtest build-picker can drive its top-level dropdown from ADT instead of forcing operators to type `adt_game_id` by hand (STATUS_M5.md B12 + "Addendum 2026-05-21 — games-list endpoint"). Pure abstraction extension — no behavior change to existing playtests.
+
+- §4.7 — one new RPC: `ListADTGames(adtLinkageId)` (admin; proxies `adt.Client.ListGames`; returns `[]Game` shaped `{id, name, createdAt}`; mirrors `ListADTBuilds` for studio-scope check + 401 → `FailedPrecondition` linkage-missing mapping).
+- `errors.md` — one new row mirroring `ListADTBuilds`'s linkage-not-found case (`ListADTGames` with an `adtLinkageId` that does not match any live linkage for the caller's studio → `FailedPrecondition` "no ADT linkage matches this id for the caller's studio; link an ADT namespace first"). The `adt linkage no longer exists or service token rejected, re-link required` mapping documented for `ApproveApplicant` (row 67) applies identically to `ListADTGames` / `ListADTBuilds` when ADT returns 401.
+- `pkg/adt` — new `Game` value type (`{ID, Name, CreatedAt}`) mirroring `Build`; `Client.ListGames(ctx, studioNamespace, adtNamespace) → []Game` added to the interface with `MemClient.SeedGames` + `ListGamesErr` slot + `HTTPClient.ListGames` live adapter hitting `GET <BaseURL>/profiling/namespaces/<ns>/agsplaytesthub/games` and reusing `doJSON` + retry policy (401 → `ErrLinkageMissing`, 429 → `ErrRateLimited`, 5xx-retry → `ErrUnavailable`).
+- `pth` CLI — new `pth adt games list --linkage-id=…` subcommand mirrors `pth adt builds list`; `describe.golden.json` regenerated to add the catalogue entry.
+- Smoke (`scripts/smoke/pth.sh`) gains a dry-run probe; `scripts/smoke/cloud.sh` gains a 401 reachability probe so the new route surface is checked at deploy time.
+- M5 build plan tracker [`STATUS_M5.md`](STATUS_M5.md) — B12 lands (`ListADTGames` endpoint plumbing); B13 (admin build-picker modal) remains as the follow-up consumer of the new RPC.
+- **Backwards compatibility note**: pure addition. No schema migration, no env var change, no admin or player UI surface change in this entry (B13 is the UI consumer, tracked separately). Existing `pkg/adt.Client` consumers (`ListBuilds` / `IssueDownloadURL`) are unchanged; in-process test stubs that mock the interface must now also stub `ListGames` (a trivial mirror of `ListBuilds`).
+
 ## v2.6 — 2026-05-20
 
 **UX revamp + admin shell restructure (M5 Track C scope freeze)** — admin shell shifts from list+modal to a list + detail-page-with-tabs shape; new bulk-DM broadcast surface for admin-authored announcements; per-applicant ADT telemetry deferred to M6 entirely (this milestone ships the dormant cache columns for forward-compat only).

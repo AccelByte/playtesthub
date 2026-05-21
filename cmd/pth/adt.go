@@ -12,18 +12,20 @@ import (
 )
 
 // runADT is the entry point for the `pth adt …` group introduced in
-// M5.B phase 9. Subcommands:
+// M5.B phase 9 (linkage / build) and extended in B12 (games).
+// Subcommands:
 //
 //	adt linkage list                          — list studio linkages
 //	adt linkage start                         — mint a linkUrl + state
 //	adt linkage complete --state --adt-namespace
 //	adt linkage unlink   --id <adt_linkage_id>
 //	adt build   list     --linkage-id <id> --game-id <id>
+//	adt games   list     --linkage-id <id>
 //
-// PRD §4.8 / STATUS_M5.md B9.
+// PRD §4.8 / STATUS_M5.md B9 + B12.
 func runADT(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "adt: usage: pth adt {linkage|build} ...")
+		fmt.Fprintln(stderr, "adt: usage: pth adt {linkage|build|games} ...")
 		return exitLocalError
 	}
 	group, rest := args[0], args[1:]
@@ -32,6 +34,8 @@ func runADT(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []st
 		return runADTLinkage(ctx, stdout, stderr, g, rest, factory)
 	case "build":
 		return runADTBuild(ctx, stdout, stderr, g, rest, factory)
+	case "games":
+		return runADTGames(ctx, stdout, stderr, g, rest, factory)
 	default:
 		fmt.Fprintf(stderr, "adt: unknown group %q\n", group)
 		return exitLocalError
@@ -183,5 +187,39 @@ func runADTBuild(ctx context.Context, stdout, stderr io.Writer, g *Globals, args
 	return invokePlaytest(ctx, stdout, stderr, g, factory, "ListADTBuilds", req, *dryRun,
 		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
 			return c.ListADTBuilds(cctx, req)
+		})
+}
+
+func runADTGames(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "adt games: usage: pth adt games list --linkage-id <id>")
+		return exitLocalError
+	}
+	action, rest := args[0], args[1:]
+	if action != actionList {
+		fmt.Fprintf(stderr, "adt games: unknown action %q\n", action)
+		return exitLocalError
+	}
+	fs := flag.NewFlagSet("adt games list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	linkageID := fs.String("linkage-id", "", "adt_linkage_id (required)")
+	dryRun := fs.Bool("dry-run", false, "print the request JSON and exit without dialling")
+	if err := fs.Parse(rest); err != nil {
+		return exitLocalError
+	}
+	if *linkageID == "" {
+		fmt.Fprintln(stderr, "adt games list: --linkage-id is required")
+		return exitLocalError
+	}
+	if !g.requireNamespace(stderr, "adt games list") {
+		return exitLocalError
+	}
+	req := &pb.ListADTGamesRequest{
+		Namespace:    g.Namespace,
+		AdtLinkageId: *linkageID,
+	}
+	return invokePlaytest(ctx, stdout, stderr, g, factory, "ListADTGames", req, *dryRun,
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.ListADTGames(cctx, req)
 		})
 }

@@ -151,3 +151,49 @@ func TestMemClient_InjectedFailures(t *testing.T) {
 		t.Fatalf("IssueDownloadURL err = %v, want boom", err)
 	}
 }
+
+func TestMemClient_ListGames_HappyPath(t *testing.T) {
+	c := adt.NewMemClient()
+	c.RecordLinkage("studio-A", "adt-ns-1")
+	older := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
+	c.SeedGames("studio-A", "adt-ns-1", []adt.Game{
+		{ID: "g1", Name: "Aces", CreatedAt: older},
+		{ID: "g2", Name: "Bombers", CreatedAt: newer},
+	})
+
+	got, err := c.ListGames(context.Background(), "studio-A", "adt-ns-1")
+	if err != nil {
+		t.Fatalf("ListGames: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].ID != "g2" {
+		t.Fatalf("first game ID = %q, want g2 (newest-first sort)", got[0].ID)
+	}
+}
+
+func TestMemClient_ListGames_LinkageMissing(t *testing.T) {
+	c := adt.NewMemClient()
+	c.SeedGames("studio-A", "adt-ns-1", []adt.Game{{ID: "g1"}})
+
+	_, err := c.ListGames(context.Background(), "studio-A", "adt-ns-1")
+	if !errors.Is(err, adt.ErrLinkageMissing) {
+		t.Fatalf("err = %v, want ErrLinkageMissing", err)
+	}
+}
+
+func TestMemClient_ListGames_InjectedFailure(t *testing.T) {
+	c := adt.NewMemClient()
+	c.RecordLinkage("studio-A", "adt-ns-1")
+	boom := errors.New("boom-games")
+	c.ListGamesErr = []error{boom}
+
+	if _, err := c.ListGames(context.Background(), "studio-A", "adt-ns-1"); !errors.Is(err, boom) {
+		t.Fatalf("ListGames err = %v, want boom-games", err)
+	}
+	if _, err := c.ListGames(context.Background(), "studio-A", "adt-ns-1"); err != nil {
+		t.Fatalf("ListGames after slot consumed: %v", err)
+	}
+}

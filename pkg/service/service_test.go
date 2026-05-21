@@ -56,6 +56,7 @@ func TestServiceDescriptorMethods(t *testing.T) {
 		"CompleteADTLink":    true,
 		"UnlinkADT":          true,
 		"ListADTBuilds":      true,
+		"ListADTGames":       true,
 		"GetADTDownloadInfo": true,
 		// M5.C (participants + announcements)
 		"GetPlaytestParticipants": true,

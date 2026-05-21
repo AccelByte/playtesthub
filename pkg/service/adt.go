@@ -346,6 +346,65 @@ func (s *PlaytesthubServiceServer) ListADTBuilds(ctx context.Context, req *pb.Li
 	return &pb.ListADTBuildsResponse{Builds: out}, nil
 }
 
+// ListADTGames proxies adt.Client.ListGames for the linkage. Drives the
+// admin create-playtest build-picker's top-level dropdown (STATUS_M5.md
+// B12 + Addendum 2026-05-21) so operators no longer type adt_game_id by
+// hand. Mirrors ListADTBuilds: linkage-id resolution → studio scope →
+// adt.Client.ListGames → 401 → FailedPrecondition.
+func (s *PlaytesthubServiceServer) ListADTGames(ctx context.Context, req *pb.ListADTGamesRequest) (*pb.ListADTGamesResponse, error) {
+	if _, err := requireActor(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.checkNamespace(req.GetNamespace()); err != nil {
+		return nil, err
+	}
+	id, err := parseReqUUID("adt_linkage_id", req.GetAdtLinkageId())
+	if err != nil {
+		return nil, err
+	}
+	if s.adtClient == nil {
+		return nil, status.Error(codes.Internal, "ADT client not configured")
+	}
+	store, err := s.requireADTLinkageStore()
+	if err != nil {
+		return nil, err
+	}
+	studio, err := s.resolveStudioNamespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	linkage, err := store.GetByID(ctx, studio, id)
+	if errors.Is(err, repo.ErrNotFound) || (linkage != nil && linkage.DeletedAt != nil) {
+		return nil, status.Error(codes.FailedPrecondition, "no ADT linkage matches this id for the caller's studio; link an ADT namespace first")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "loading adt_linkage: %v", err)
+	}
+	games, err := s.adtClient.ListGames(ctx, studio, linkage.ADTNamespace)
+	if errors.Is(err, adt.ErrLinkageMissing) {
+		return nil, status.Error(codes.FailedPrecondition, "adt linkage no longer exists or service token rejected, re-link required")
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "calling ADT ListGames: %v", err)
+	}
+	out := make([]*pb.ADTGame, 0, len(games))
+	for _, g := range games {
+		out = append(out, adtGameToProto(g))
+	}
+	return &pb.ListADTGamesResponse{Games: out}, nil
+}
+
+func adtGameToProto(g adt.Game) *pb.ADTGame {
+	out := &pb.ADTGame{
+		Id:   g.ID,
+		Name: g.Name,
+	}
+	if !g.CreatedAt.IsZero() {
+		out.CreatedAt = timestamppb.New(g.CreatedAt)
+	}
+	return out
+}
+
 func adtLinkageToProto(r *repo.ADTLinkage) *pb.ADTLinkage {
 	out := &pb.ADTLinkage{
 		Id:              r.ID.String(),

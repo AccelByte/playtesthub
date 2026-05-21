@@ -57,8 +57,14 @@ type stubPlaytestClient struct {
 	listSurveyRespFunc  func(ctx context.Context, in *pb.ListSurveyResponsesRequest, opts ...grpc.CallOption) (*pb.ListSurveyResponsesResponse, error)
 	retryFailedDmsFunc  func(ctx context.Context, in *pb.RetryFailedDmsRequest, opts ...grpc.CallOption) (*pb.RetryFailedDmsResponse, error)
 	publicConfigFunc    func(ctx context.Context, in *pb.GetPublicConfigRequest, opts ...grpc.CallOption) (*pb.GetPublicConfigResponse, error)
+	listADTGamesFunc    func(ctx context.Context, in *pb.ListADTGamesRequest, opts ...grpc.CallOption) (*pb.ListADTGamesResponse, error)
 
 	calls int
+}
+
+func (s *stubPlaytestClient) ListADTGames(ctx context.Context, in *pb.ListADTGamesRequest, opts ...grpc.CallOption) (*pb.ListADTGamesResponse, error) {
+	s.calls++
+	return s.listADTGamesFunc(ctx, in, opts...)
 }
 
 func (s *stubPlaytestClient) GetPublicConfig(ctx context.Context, in *pb.GetPublicConfigRequest, opts ...grpc.CallOption) (*pb.GetPublicConfigResponse, error) {

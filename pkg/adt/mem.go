@@ -30,13 +30,15 @@ type MemClient struct {
 
 	linkage map[linkKey]bool
 	builds  map[buildsKey][]Build
+	games   map[linkKey][]Game
 	issued  []IssuedDownloadURLLog
 
-	// ListBuildsErr / IssueDownloadURLErr force the next call to that
-	// method to return the configured error and consume the slot
-	// (mirrors pkg/ags.MemClient).
+	// ListBuildsErr / IssueDownloadURLErr / ListGamesErr force the
+	// next call to that method to return the configured error and
+	// consume the slot (mirrors pkg/ags.MemClient).
 	ListBuildsErr       []error
 	IssueDownloadURLErr []error
+	ListGamesErr        []error
 
 	// URLTTL is the synthetic expiry MemClient stamps on every
 	// IssuedDownloadURL. Zero (the default) leaves ExpiresAt zero so
@@ -71,6 +73,7 @@ func NewMemClient() *MemClient {
 	return &MemClient{
 		linkage: make(map[linkKey]bool),
 		builds:  make(map[buildsKey][]Build),
+		games:   make(map[linkKey][]Game),
 	}
 }
 
@@ -114,6 +117,18 @@ func (c *MemClient) SeedBuilds(adtNamespace, adtGameID string, builds []Build) {
 	c.builds[key] = cp
 }
 
+// SeedGames registers the game fixture ListGames returns for the
+// (studio_namespace, adt_namespace) pair. Mirrors SeedBuilds. Test
+// fixtures call this before driving ListGames.
+func (c *MemClient) SeedGames(studioNamespace, adtNamespace string, games []Game) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := linkKey{studio: studioNamespace, adt: adtNamespace}
+	cp := make([]Game, len(games))
+	copy(cp, games)
+	c.games[key] = cp
+}
+
 // IssuedURLs returns a snapshot of every URL minted by
 // IssueDownloadURL (test helper).
 func (c *MemClient) IssuedURLs() []IssuedDownloadURLLog {
@@ -122,6 +137,28 @@ func (c *MemClient) IssuedURLs() []IssuedDownloadURLLog {
 	out := make([]IssuedDownloadURLLog, len(c.issued))
 	copy(out, c.issued)
 	return out
+}
+
+// ListGames returns the seeded games for (studio_namespace,
+// adt_namespace) or ErrLinkageMissing when the linkage flag is absent.
+func (c *MemClient) ListGames(_ context.Context, studioNamespace, adtNamespace string) ([]Game, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := pop(&c.ListGamesErr); err != nil {
+		return nil, err
+	}
+	if !c.linkage[linkKey{studio: studioNamespace, adt: adtNamespace}] {
+		return nil, ErrLinkageMissing
+	}
+	src := c.games[linkKey{studio: studioNamespace, adt: adtNamespace}]
+	out := make([]Game, len(src))
+	copy(out, src)
+	// Newest-first sort so the admin picker can show "latest game at
+	// the top" without re-sorting client-side (mirrors ListBuilds).
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // ListBuilds returns the seeded builds for (adt_namespace,

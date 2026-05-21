@@ -31,8 +31,10 @@ import (
 // FailedPrecondition "adt linkage no longer exists or service token
 // rejected, re-link required" per docs/errors.md.
 //
-// Per the 2026-05-20 ADT-eng spec (docs/STATUS_M5.md Open Questions §1):
+// Per the 2026-05-20 ADT-eng spec (docs/STATUS_M5.md Open Questions §1)
+// plus the 2026-05-21 games-list addendum:
 //
+//	GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/games
 //	GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/games/<ADT_GAME_ID>/builds
 //	GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/games/<ADT_GAME_ID>/builds/<ADT_BUILD_ID>/downloadUrls
 //	DELETE <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/linkage
@@ -45,6 +47,17 @@ import (
 // the applicant id through so audit logs can still attribute the
 // download attempt to a specific applicant.
 type Client interface {
+	// ListGames returns every game registered under the given ADT
+	// namespace. Drives the create-playtest build-picker's top-level
+	// dropdown (STATUS_M5.md B12 + Addendum 2026-05-21) so operators no
+	// longer type adt_game_id by hand.
+	//
+	// studioNamespace is the calling playtesthub studio derived from
+	// the backend's AGS service token; ADT validates the linkage flag
+	// keyed on (adt_namespace, studio_namespace) and returns 401 →
+	// ErrLinkageMissing when the flag is absent.
+	ListGames(ctx context.Context, studioNamespace, adtNamespace string) ([]Game, error)
+
 	// ListBuilds returns every build under the given ADT namespace +
 	// game. Used by the admin create-playtest form's build picker and
 	// by CreatePlaytest's defense-in-depth check that the supplied
@@ -89,6 +102,22 @@ type Build struct {
 	// Platform is the ADT-reported target platform ("windows" /
 	// "linux" / etc.). Empty when ADT does not surface it.
 	Platform string
+}
+
+// Game is the minimum game row the admin UI / pth CLI needs to drive
+// the create-playtest build-picker's top-level dropdown. Mirrors
+// pkg/adt.Build's shape so the proto + admin codegen stay symmetrical.
+//
+// Field mapping from the 2026-05-21 ADT-eng addendum (STATUS_M5.md
+// "Addendum 2026-05-21 — games-list endpoint"):
+//
+//	ID        ← ADT `id`         (uuid)
+//	Name      ← ADT `name`       (operator-visible game label)
+//	CreatedAt ← ADT `created_at` (RFC3339)
+type Game struct {
+	ID        string
+	Name      string
+	CreatedAt time.Time
 }
 
 // IssueDownloadURLParams is the input shape for IssueDownloadURL.

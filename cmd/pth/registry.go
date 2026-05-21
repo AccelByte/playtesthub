@@ -49,6 +49,14 @@ var catalogue = []commandSpec{
 		Example:       "pth --namespace mygame --profile admin adt build list --linkage-id 01J0... --game-id mygame",
 	},
 	{
+		Name:          "adt games list",
+		Milestone:     "M5.B",
+		Description:   "Admin: list ADT games under a linkage's namespace (cli.md §6.4, PRD §4.8; STATUS_M5.md B12).",
+		RequiredFlags: []flagSpec{{Name: "--linkage-id", Description: "adt_linkage_id (from `adt linkage list`)", ValueType: "uuid"}},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin adt games list --linkage-id 01J0...",
+	},
+	{
 		Name:        "adt linkage complete",
 		Milestone:   "M5.B",
 		Description: "Admin: finalize an ADT link by consuming the state nonce + adt_namespace echoed on the callback URL (PRD §4.8.2).",

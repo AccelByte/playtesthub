@@ -648,6 +648,22 @@ service PlaytesthubService {
     };
   }
 
+  rpc ListADTGames(ListADTGamesRequest) returns (ListADTGamesResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/adt/linkages/{adt_linkage_id}/games"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List games registered under an ADT linkage's namespace (admin)"
+      description: "Proxies adt.Client.ListGames keyed on the studio derived from the caller's token. Drives the create-playtest build-picker's top-level dropdown (STATUS_M5.md B12 + Addendum 2026-05-21). Returns FailedPrecondition when ADT reports the linkage flag missing."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
   // M5.C — participants surface backing the detail page Participants tab.
   // Cache-only read; the four ADT telemetry cache columns ship dormant in
   // M5.C (NULL/zero across the milestone — M6 lights them up).
@@ -1515,6 +1531,23 @@ message ListADTBuildsRequest {
 }
 message ListADTBuildsResponse {
   repeated ADTBuild builds = 1;
+}
+
+// ADTGame is the minimum game row the admin UI / pth CLI needs to drive
+// the create-playtest build-picker's top-level dropdown. Mirrors
+// pkg/adt.Game (STATUS_M5.md "Addendum 2026-05-21 — games-list endpoint").
+message ADTGame {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message ListADTGamesRequest {
+  string namespace = 1;
+  string adt_linkage_id = 2;
+}
+message ListADTGamesResponse {
+  repeated ADTGame games = 1;
 }
 
 // ---------------- M5.C entities + messages ----------------

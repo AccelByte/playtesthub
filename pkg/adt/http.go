@@ -71,6 +71,42 @@ func (e *httpStatusError) Error() string {
 
 func (e *httpStatusError) HTTPStatus() int { return e.status }
 
+// ListGames implements Client.ListGames against the live ADT API.
+// Endpoint per the 2026-05-21 ADT-eng addendum (STATUS_M5.md):
+//
+//	GET <BaseURL>/profiling/namespaces/<adtNamespace>/agsplaytesthub/games
+func (c *HTTPClient) ListGames(ctx context.Context, studioNamespace, adtNamespace string) ([]Game, error) {
+	_ = studioNamespace // ADT scopes the linkage flag server-side from the bearer token.
+	if c.BaseURL == "" {
+		return nil, fmt.Errorf("adt: HTTPClient BaseURL is empty")
+	}
+	endpoint := c.BaseURL + "/profiling/namespaces/" + url.PathEscape(adtNamespace) + "/agsplaytesthub/games"
+
+	var raw struct {
+		Games []struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			CreatedAt string `json:"created_at"`
+		} `json:"games"`
+	}
+	if err := c.Policy.Run(ctx, "ListGames", func(attemptCtx context.Context) error {
+		return c.doJSON(attemptCtx, http.MethodGet, endpoint, "ListGames", &raw)
+	}); err != nil {
+		return nil, err
+	}
+	out := make([]Game, 0, len(raw.Games))
+	for _, g := range raw.Games {
+		var createdAt time.Time
+		if g.CreatedAt != "" {
+			if t, err := time.Parse(time.RFC3339, g.CreatedAt); err == nil {
+				createdAt = t
+			}
+		}
+		out = append(out, Game{ID: g.ID, Name: g.Name, CreatedAt: createdAt})
+	}
+	return out, nil
+}
+
 // ListBuilds implements Client.ListBuilds against the live ADT API.
 func (c *HTTPClient) ListBuilds(ctx context.Context, studioNamespace, adtNamespace, adtGameID string) ([]Build, error) {
 	if c.BaseURL == "" {

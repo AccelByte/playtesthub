@@ -1,0 +1,81 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
+	"google.golang.org/grpc"
+)
+
+// TestRunADTGamesList_DryRun pins that the new `pth adt games list`
+// subcommand emits a request JSON body and does NOT dial. Mirrors
+// TestRunAuditList_DryRun.
+func TestRunADTGamesList_DryRun(t *testing.T) {
+	stub := &stubPlaytestClient{
+		listADTGamesFunc: func(_ context.Context, _ *pb.ListADTGamesRequest, _ ...grpc.CallOption) (*pb.ListADTGamesResponse, error) {
+			t.Fatal("dry-run must not dial")
+			return nil, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{
+		"games", "list",
+		"--linkage-id", "01234567-89ab-cdef-0123-456789abcdef",
+		"--dry-run",
+	}, factoryFor(stub))
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("stdout not JSON: %v: %q", err, stdout.String())
+	}
+	if got["namespace"] != testNamespaceDev {
+		t.Errorf("namespace = %v, want %s", got["namespace"], testNamespaceDev)
+	}
+	if got["adt_linkage_id"] != "01234567-89ab-cdef-0123-456789abcdef" {
+		t.Errorf("adt_linkage_id = %v", got["adt_linkage_id"])
+	}
+}
+
+func TestRunADTGamesList_RequiresLinkageID(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{"games", "list", "--dry-run"}, factoryFor(&stubPlaytestClient{}))
+	if code != exitLocalError {
+		t.Fatalf("exit=%d, want %d", code, exitLocalError)
+	}
+	if !strings.Contains(stderr.String(), "--linkage-id") {
+		t.Errorf("stderr missing --linkage-id hint: %q", stderr.String())
+	}
+}
+
+func TestRunADTGamesList_RequiresNamespace(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565"}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{
+		"games", "list",
+		"--linkage-id", "01234567-89ab-cdef-0123-456789abcdef",
+		"--dry-run",
+	}, factoryFor(&stubPlaytestClient{}))
+	if code != exitLocalError {
+		t.Fatalf("exit=%d, want %d", code, exitLocalError)
+	}
+	if !strings.Contains(stderr.String(), "--namespace") {
+		t.Errorf("stderr missing --namespace hint: %q", stderr.String())
+	}
+}
+
+func TestRunADTGames_UnknownAction(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565"}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{"games", "explode"}, factoryFor(&stubPlaytestClient{}))
+	if code != exitLocalError {
+		t.Fatalf("exit=%d, want %d", code, exitLocalError)
+	}
+}

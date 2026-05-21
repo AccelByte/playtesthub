@@ -56,6 +56,7 @@ const (
 	PlaytesthubService_CompleteADTLink_FullMethodName          = "/playtesthub.v1.PlaytesthubService/CompleteADTLink"
 	PlaytesthubService_UnlinkADT_FullMethodName                = "/playtesthub.v1.PlaytesthubService/UnlinkADT"
 	PlaytesthubService_ListADTBuilds_FullMethodName            = "/playtesthub.v1.PlaytesthubService/ListADTBuilds"
+	PlaytesthubService_ListADTGames_FullMethodName             = "/playtesthub.v1.PlaytesthubService/ListADTGames"
 	PlaytesthubService_GetPlaytestParticipants_FullMethodName  = "/playtesthub.v1.PlaytesthubService/GetPlaytestParticipants"
 	PlaytesthubService_CreateAnnouncement_FullMethodName       = "/playtesthub.v1.PlaytesthubService/CreateAnnouncement"
 	PlaytesthubService_ListAnnouncements_FullMethodName        = "/playtesthub.v1.PlaytesthubService/ListAnnouncements"
@@ -116,6 +117,7 @@ type PlaytesthubServiceClient interface {
 	CompleteADTLink(ctx context.Context, in *CompleteADTLinkRequest, opts ...grpc.CallOption) (*CompleteADTLinkResponse, error)
 	UnlinkADT(ctx context.Context, in *UnlinkADTRequest, opts ...grpc.CallOption) (*UnlinkADTResponse, error)
 	ListADTBuilds(ctx context.Context, in *ListADTBuildsRequest, opts ...grpc.CallOption) (*ListADTBuildsResponse, error)
+	ListADTGames(ctx context.Context, in *ListADTGamesRequest, opts ...grpc.CallOption) (*ListADTGamesResponse, error)
 	// M5.C — participants surface backing the detail page Participants tab.
 	// Cache-only read; the four ADT telemetry cache columns ship dormant in
 	// M5.C (NULL/zero across the milestone — M6 lights them up).
@@ -505,6 +507,16 @@ func (c *playtesthubServiceClient) ListADTBuilds(ctx context.Context, in *ListAD
 	return out, nil
 }
 
+func (c *playtesthubServiceClient) ListADTGames(ctx context.Context, in *ListADTGamesRequest, opts ...grpc.CallOption) (*ListADTGamesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListADTGamesResponse)
+	err := c.cc.Invoke(ctx, PlaytesthubService_ListADTGames_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *playtesthubServiceClient) GetPlaytestParticipants(ctx context.Context, in *GetPlaytestParticipantsRequest, opts ...grpc.CallOption) (*GetPlaytestParticipantsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetPlaytestParticipantsResponse)
@@ -590,6 +602,7 @@ type PlaytesthubServiceServer interface {
 	CompleteADTLink(context.Context, *CompleteADTLinkRequest) (*CompleteADTLinkResponse, error)
 	UnlinkADT(context.Context, *UnlinkADTRequest) (*UnlinkADTResponse, error)
 	ListADTBuilds(context.Context, *ListADTBuildsRequest) (*ListADTBuildsResponse, error)
+	ListADTGames(context.Context, *ListADTGamesRequest) (*ListADTGamesResponse, error)
 	// M5.C — participants surface backing the detail page Participants tab.
 	// Cache-only read; the four ADT telemetry cache columns ship dormant in
 	// M5.C (NULL/zero across the milestone — M6 lights them up).
@@ -718,6 +731,9 @@ func (UnimplementedPlaytesthubServiceServer) UnlinkADT(context.Context, *UnlinkA
 }
 func (UnimplementedPlaytesthubServiceServer) ListADTBuilds(context.Context, *ListADTBuildsRequest) (*ListADTBuildsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListADTBuilds not implemented")
+}
+func (UnimplementedPlaytesthubServiceServer) ListADTGames(context.Context, *ListADTGamesRequest) (*ListADTGamesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListADTGames not implemented")
 }
 func (UnimplementedPlaytesthubServiceServer) GetPlaytestParticipants(context.Context, *GetPlaytestParticipantsRequest) (*GetPlaytestParticipantsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPlaytestParticipants not implemented")
@@ -1414,6 +1430,24 @@ func _PlaytesthubService_ListADTBuilds_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlaytesthubService_ListADTGames_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListADTGamesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlaytesthubServiceServer).ListADTGames(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlaytesthubService_ListADTGames_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlaytesthubServiceServer).ListADTGames(ctx, req.(*ListADTGamesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlaytesthubService_GetPlaytestParticipants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetPlaytestParticipantsRequest)
 	if err := dec(in); err != nil {
@@ -1622,6 +1656,10 @@ var PlaytesthubService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListADTBuilds",
 			Handler:    _PlaytesthubService_ListADTBuilds_Handler,
+		},
+		{
+			MethodName: "ListADTGames",
+			Handler:    _PlaytesthubService_ListADTGames_Handler,
 		},
 		{
 			MethodName: "GetPlaytestParticipants",
