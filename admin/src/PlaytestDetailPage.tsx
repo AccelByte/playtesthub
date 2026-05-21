@@ -271,7 +271,14 @@ function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; pl
       <Card
         title="Playtest Information"
         extra={
-          <Button onClick={() => navigate(`/${playtest.id ?? ''}/edit`)} data-testid="playtest-info-edit">
+          <Button
+            onClick={() =>
+              navigate(`/${playtest.id ?? ''}/edit`, {
+                state: { from: `/playtest/${playtest.slug ?? ''}` }
+              })
+            }
+            data-testid="playtest-info-edit"
+          >
             Edit
           </Button>
         }

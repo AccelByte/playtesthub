@@ -33,7 +33,7 @@ import {
   dateRangeWindowRule
 } from './window'
 import { useEffect, useMemo, useState } from 'react'
-import { Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { PlaytestDetailPage } from './PlaytestDetailPage'
 import type { V1AdtBuild } from './playtesthubapi/generated-definitions/V1AdtBuild'
 import type { V1AdtLinkage } from './playtesthubapi/generated-definitions/V1AdtLinkage'
@@ -309,7 +309,7 @@ function PlaytestsListPage() {
         const isOpen = row.status === PlaytestStatus.OPEN
 
         const menuItems: MenuProps['items'] = [
-          { key: 'edit', label: 'Edit', onClick: () => navigate(`${row.id}/edit`) },
+          { key: 'edit', label: 'Edit', onClick: () => navigate(`${row.id}/edit`, { state: { from: '/' } }) },
           { key: 'copy', label: 'Copy Link', onClick: () => copyLink(row.slug ?? '') },
           ...(isDraft
             ? [{ key: 'publish', label: 'Publish', onClick: () => confirmPublish(row) }]
@@ -762,6 +762,7 @@ function PlaytestCreatePage() {
 function PlaytestEditPage() {
   const { sdk } = useAppUIContext()
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const { playtestId = '' } = useParams()
   const [form] = Form.useForm<FormValues>()
@@ -774,13 +775,18 @@ function PlaytestEditPage() {
 
   const playtest = data?.playtest as V1Playtest | undefined
 
+  const returnTo = (): string => {
+    const from = (location.state as { from?: string } | null)?.from
+    if (from) return from
+    return playtest?.slug ? `/playtest/${playtest.slug}` : '/'
+  }
+
   const editMutation = usePlaytesthubServiceAdminApi_PatchPlaytest_ByPlaytestIdMutation(sdk, {
     onSuccess: () => {
       message.success('Playtest updated')
       queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtests] })
       queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtest_ByPlaytestId] })
-      const slug = playtest?.slug
-      navigate(slug ? `/playtest/${slug}` : '/')
+      navigate(returnTo())
     },
     onError: toastError('update')
   })
@@ -899,7 +905,7 @@ function PlaytestEditPage() {
         )}
         <Form.Item style={{ marginBottom: 0 }}>
           <Space>
-            <Button onClick={() => navigate(playtest.slug ? `/playtest/${playtest.slug}` : '/')}>Cancel</Button>
+            <Button onClick={() => navigate(returnTo())}>Cancel</Button>
             <Button type="primary" htmlType="submit" loading={editMutation.isPending}>
               Save
             </Button>
