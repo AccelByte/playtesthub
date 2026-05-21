@@ -181,6 +181,12 @@ B9. `[x]` **`pth` CLI ADT subcommands + `pth flow golden-m5`** —
 B10. `[x]` **E2E + smoke (`pth flow golden-m5`)** — [`e2e/golden_m5_test.go`](../e2e/golden_m5_test.go) reuses `suiteHarness`; in-process `adt.MemClient`; asserts 11 `status=OK` NDJSON lines + non-empty download URL + `auto_approved=true` + one `applicant.auto_approved` audit row. Smoke (`pth.sh`) extends with ADT dry-run probes. `cloud.sh` adds 6 M5-RPC 401 probes. The live HTTPClient round-trip against `develop.blackbox.accelbyte.io` is an operator validation step on a deployed namespace (mirrors M2 phase 8.1's "set the env var + exercise the golden flow against a real namespace" convention); B3.1 covers the unit-level coverage.
 B11. `[x]` **README walkthrough (Track B cadence) + `runbooks/adt-linking.md`** — README adds "ADT distribution (M5.B)" paragraph; new runbook walks the operator side: env var ladder (`ADT_BASE_URL` + `ADT_REDIRECT_BASE_URL` + `ADT_LINKAGE_PENDING_TTL_SECONDS`), link redirect flow with screenshots, "How `studio_namespace` is derived from the backend's AGS service IAM JWT (NOT the calling admin's token)" callout, "Why there's no credential rotation step" (auth is the existing AGS service IAM JWT — rotation happens automatically via `pkg/ags`), unlink-then-relink recovery path. No new CI jobs.
 
+#### Addendum (2026-05-21 ADT-eng spec patch — games-list endpoint)
+
+B12. `[ ]` **`ListADTGames` endpoint plumbing** — new `Game` value type in `pkg/adt` (`{ID, Name, CreatedAt}`); `Client.ListGames(ctx, studioNamespace, adtNamespace) → []Game` added to the interface with matching `MemClient` (deterministic fixtures keyed on `(studio_namespace, adt_namespace)`) and `HTTPClient` (live adapter, hits `GET <base>/profiling/namespaces/<ns>/agsplaytesthub/games` per spec §6, reuses the existing `TokenGetter` + `RetryPolicy`). Proto gains `ListADTGames(adtLinkageId) → []Game` admin RPC + matching request/response messages; `pkg/service/adt.go` proxies through. New `pth adt games --linkage-id=…` subcommand mirrors B9's surface. `errors.md` row for the linkage-not-found case (mirrors `ListADTBuilds`). Smoke probe added to `scripts/smoke/pth.sh`; `cloud.sh` gains a 401 probe. Pure abstraction extension — no behavior change to existing playtests.
+
+B13. `[ ]` **Build picker modal in `PlaytestCreatePage` — namespace → game → version → build** — `admin/src/federated-element.tsx` `ADTCreateFields` replaced with a Modal-driven picker matching the operator-supplied mockup ([`images/screenshot_20260521_122031.png`](images/screenshot_20260521_122031.png)): top-level Game `Select` populated by `ListADTGames(adtLinkageId)`; left rail renders versions by grouping `ListADTBuilds` rows on `game_version_name` with build counts; right rail renders per-platform build cards (`platform_name`, `created_at`, `id`); "Use This Build" sets `adtBuildId` on the form. Falls back gracefully when `ListADTGames` is unavailable (typed game-id Input + flat build list — current B7 behavior). Optional: thread `buildName` query param through if the list grows past the soft cap. Vitest +6 cases (games dropdown loads, version grouping, platform card render, fallback path when games-list 5xx, "Use This Build" wires the form, modal close preserves form state). Smoke unchanged (backend tests cover B12; B13 is pure admin UI).
+
 ### Track C — UX revamp + admin telemetry surfaces (priority 3, blocked on Track B)
 
 C1. `[x]` **PRD §4 + §5.1 + §5.4 + §5.7 + §5.9 Track C revision + [`schema.md`](schema.md) shape additions + [`errors.md`](errors.md) rows + [`CHANGELOG.md`](CHANGELOG.md) v2.6** —
@@ -242,7 +248,7 @@ C12. `[x]` **README walkthrough (Track C cadence) + `runbooks/admin-shell-tour.m
 
 ## Open questions (resolved)
 
-All Track B open questions are now resolved by the 2026-05-20 ADT-eng API spec. The live HTTPClient (B3.1) ships against the canonical endpoints below; B1–B10's unit + smoke + e2e coverage continues to run against `adt.MemClient` because the spec leaves the abstractions intact.
+All Track B open questions are now resolved by the 2026-05-20 ADT-eng API spec (with a 2026-05-21 addendum adding the games-list endpoint — see B12 below). The live HTTPClient (B3.1) ships against the canonical endpoints below; B1–B10's unit + smoke + e2e coverage continues to run against `adt.MemClient` because the spec leaves the abstractions intact.
 
 **Resolved in the 2026-05-20 ADT-eng API spec:**
 
@@ -252,6 +258,10 @@ All Track B open questions are now resolved by the 2026-05-20 ADT-eng API spec. 
 - List-linkages endpoint → NICE-TO-HAVE, marked optional. `GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/linkages` returns `{ "linkages": [{ "adt_namespace", "linked_at" }] }`. Playtesthub keeps `ListADTLinkages` as its own read against `adt_linkage` (the local-write-of-record); the ADT-side endpoint is reconciliation-only.
 - 401 semantics → ADT returns 401 specifically when the linkage flag is missing or revoked — already mapped to `adt.ErrLinkageMissing` → `FailedPrecondition` "adt linkage no longer exists or service token rejected, re-link required" in `pkg/service/approve.go`.
 - Production base URLs → `develop.blackbox.accelbyte.io`, `staging.blackbox.accelbyte.io`, `blackbox.accelbyte.io` (set via `ADT_BASE_URL`).
+
+**Addendum 2026-05-21 — games-list endpoint (promised by ADT-eng; pending implementation, see B12):**
+
+- `GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/games` returns `{ "games": [{ "id", "name", "created_at" }] }` scoped to the linked `(adt_namespace, studio_namespace)` pair (same 401 semantics as the builds endpoint). Drives the create-playtest build-picker top-level dropdown so operators no longer type the `adt_game_id` by hand. Unblocks the picker-modal UX (B13).
 
 **Implementation impact (carried through 2026-05-20 doc + code patches):**
 
