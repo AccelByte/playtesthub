@@ -135,6 +135,13 @@ function ADTLinkCallbackPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const [error, setError] = useState<string | null>(null)
+  // canRetry is true only when the error came from the CompleteADTLink
+  // mutation itself (network blip / gateway 5xx / backend Internal).
+  // In that case the URL's state nonce may still be live (the backend
+  // never reached ConsumePending), so refiring the mutation can
+  // succeed. ADT-reported failures and missing-param errors have no
+  // retry path — the operator must restart the link flow.
+  const [canRetry, setCanRetry] = useState(false)
 
   const state = params.get('state') ?? ''
   const result = params.get('result') ?? ''
@@ -147,16 +154,25 @@ function ADTLinkCallbackPage() {
     },
     onError: (err: { message?: string }) => {
       setError(err.message ?? 'ADT linking failed')
+      setCanRetry(true)
     }
   })
+
+  const runComplete = () => {
+    setError(null)
+    setCanRetry(false)
+    completeMutation.mutate({ data: { state, adtNamespace } })
+  }
 
   useEffect(() => {
     if (result === 'failed') {
       setError(params.get('reason') ?? 'ADT reported the link as failed')
+      setCanRetry(false)
       return
     }
     if (!state || !adtNamespace) {
       setError('Callback is missing the state or adt_namespace query parameter')
+      setCanRetry(false)
       return
     }
     completeMutation.mutate({ data: { state, adtNamespace } })
@@ -169,7 +185,19 @@ function ADTLinkCallbackPage() {
     return (
       <Space direction="vertical" style={{ width: '100%' }} data-testid="adt-link-callback">
         <Alert type="error" message="ADT linking failed" description={error} showIcon />
-        <Button onClick={() => navigate('/')}>Back to playtests</Button>
+        <Space>
+          {canRetry && (
+            <Button
+              type="primary"
+              onClick={runComplete}
+              loading={completeMutation.isPending}
+              data-testid="adt-link-callback-retry"
+            >
+              Retry
+            </Button>
+          )}
+          <Button onClick={() => navigate('/')}>Back to playtests</Button>
+        </Space>
       </Space>
     )
   }

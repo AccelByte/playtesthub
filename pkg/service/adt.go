@@ -139,9 +139,11 @@ func (s *PlaytesthubServiceServer) StartADTLink(ctx context.Context, req *pb.Sta
 		return nil, err
 	}
 	if s.adtLinkConfig.ADTBaseURL == "" {
+		ADTLinkFailures.WithLabelValues("start", "config_missing").Inc()
 		return nil, status.Error(codes.FailedPrecondition, "ADT_BASE_URL is not configured on this backend; ADT linkage is disabled")
 	}
 	if s.adtLinkConfig.RedirectBaseURL == "" {
+		ADTLinkFailures.WithLabelValues("start", "config_missing").Inc()
 		return nil, status.Error(codes.FailedPrecondition, "ADT_REDIRECT_BASE_URL is not configured on this backend; ADT linkage is disabled")
 	}
 	store, err := s.requireADTLinkageStore()
@@ -150,11 +152,13 @@ func (s *PlaytesthubServiceServer) StartADTLink(ctx context.Context, req *pb.Sta
 	}
 	studio, err := s.resolveStudioNamespace(ctx)
 	if err != nil {
+		ADTLinkFailures.WithLabelValues("start", "studio_unresolved").Inc()
 		return nil, err
 	}
 
 	state, err := mintState()
 	if err != nil {
+		ADTLinkFailures.WithLabelValues("start", "store_error").Inc()
 		return nil, status.Errorf(codes.Internal, "minting state nonce: %v", err)
 	}
 	ttl := s.adtLinkConfig.PendingTTLSeconds
@@ -169,6 +173,7 @@ func (s *PlaytesthubServiceServer) StartADTLink(ctx context.Context, req *pb.Sta
 		ExpiresAt:       expiresAt,
 	}
 	if err := store.InsertPending(ctx, pending); err != nil {
+		ADTLinkFailures.WithLabelValues("start", "store_error").Inc()
 		return nil, status.Errorf(codes.Internal, "persisting adt_link_pending: %v", err)
 	}
 	linkURL := buildADTLinkURL(s.adtLinkConfig.ADTBaseURL, s.adtLinkConfig.RedirectBaseURL, state, studio)
@@ -190,9 +195,11 @@ func (s *PlaytesthubServiceServer) CompleteADTLink(ctx context.Context, req *pb.
 		return nil, err
 	}
 	if req.GetState() == "" {
+		ADTLinkFailures.WithLabelValues("complete", "state_invalid").Inc()
 		return nil, status.Error(codes.InvalidArgument, "linking state is invalid or expired")
 	}
 	if req.GetAdtNamespace() == "" {
+		ADTLinkFailures.WithLabelValues("complete", "adt_namespace_missing").Inc()
 		return nil, status.Error(codes.InvalidArgument, "adt_namespace is required on the callback")
 	}
 	store, err := s.requireADTLinkageStore()
@@ -201,9 +208,11 @@ func (s *PlaytesthubServiceServer) CompleteADTLink(ctx context.Context, req *pb.
 	}
 	pending, err := store.ConsumePending(ctx, req.GetState(), time.Now())
 	if errors.Is(err, repo.ErrNotFound) {
+		ADTLinkFailures.WithLabelValues("complete", "state_invalid").Inc()
 		return nil, status.Error(codes.InvalidArgument, "linking state is invalid or expired")
 	}
 	if err != nil {
+		ADTLinkFailures.WithLabelValues("complete", "store_error").Inc()
 		return nil, status.Errorf(codes.Internal, "consuming adt_link_pending: %v", err)
 	}
 
@@ -219,16 +228,19 @@ func (s *PlaytesthubServiceServer) CompleteADTLink(ctx context.Context, req *pb.
 		// attempts that overlap.
 		existing, lookupErr := store.GetLive(ctx, pending.StudioNamespace, req.GetAdtNamespace())
 		if lookupErr != nil {
+			ADTLinkFailures.WithLabelValues("complete", "store_error").Inc()
 			return nil, status.Errorf(codes.Internal, "loading existing adt_linkage: %v", lookupErr)
 		}
 		return &pb.CompleteADTLinkResponse{Linkage: adtLinkageToProto(existing)}, nil
 	}
 	if err != nil {
+		ADTLinkFailures.WithLabelValues("complete", "store_error").Inc()
 		return nil, status.Errorf(codes.Internal, "inserting adt_linkage: %v", err)
 	}
 
 	if s.audit != nil {
 		if auditErr := repo.AppendADTLinkageCreate(ctx, s.audit, s.namespace, pending.StartedByUserID, got.ID, got.StudioNamespace, got.ADTNamespace); auditErr != nil {
+			ADTLinkFailures.WithLabelValues("complete", "audit_failed").Inc()
 			s.loggerOrDefault().Warn("audit append failed", "action", repo.ActionADTLinkageCreate, "err", auditErr)
 		}
 	}

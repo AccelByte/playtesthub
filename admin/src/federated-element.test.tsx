@@ -622,5 +622,28 @@ describe('ADTLinkCallbackPage', () => {
     renderAt('/adt-link-callback?state=abc&adt_namespace=adt-studio-1&result=failed&reason=user_declined')
     expect(await screen.findByText(/user_declined/)).toBeInTheDocument()
     expect(mutate).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('adt-link-callback-retry')).not.toBeInTheDocument()
+  })
+
+  it('offers Retry when CompleteADTLink mutation errors and refires the mutation on click', async () => {
+    const user = userEvent.setup()
+    // Capture the onError callback the hook receives so we can drive it synchronously.
+    let capturedOnError: ((err: { message?: string }) => void) | undefined
+    const mutate = vi.fn()
+    mockCompleteAdtLinkMutation.mockImplementation((_sdk: unknown, opts: { onError?: (err: { message?: string }) => void }) => {
+      capturedOnError = opts.onError
+      return { mutate, isPending: false, isError: false, error: null }
+    })
+    renderAt('/adt-link-callback?state=abc&result=success&adt_namespace=adt-studio-1')
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+
+    // Drive the mutation into a failure (e.g. gateway 502 before reaching the backend).
+    capturedOnError?.({ message: 'gateway timeout' })
+
+    const retry = await screen.findByTestId('adt-link-callback-retry')
+    expect(screen.getByText(/gateway timeout/)).toBeInTheDocument()
+    await user.click(retry)
+    expect(mutate).toHaveBeenCalledTimes(2)
+    expect(mutate).toHaveBeenLastCalledWith({ data: { state: 'abc', adtNamespace: 'adt-studio-1' } })
   })
 })

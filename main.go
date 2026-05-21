@@ -34,6 +34,7 @@ import (
 	"github.com/anggorodewanto/playtesthub/pkg/config"
 	"github.com/anggorodewanto/playtesthub/pkg/migrate"
 	"github.com/anggorodewanto/playtesthub/pkg/repo"
+	"github.com/anggorodewanto/playtesthub/pkg/service"
 )
 
 const (
@@ -89,7 +90,7 @@ func newPrometheusRegistry() *prometheus.Registry {
 		prometheusCollectors.NewProcessCollector(prometheusCollectors.ProcessCollectorOpts{}),
 		prometheusGrpc.DefaultServerMetrics,
 	)
-
+	service.RegisterADTMetrics(r)
 	return r
 }
 
