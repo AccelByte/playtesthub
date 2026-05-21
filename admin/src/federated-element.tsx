@@ -772,17 +772,18 @@ function PlaytestEditPage() {
     { enabled: !!playtestId }
   )
 
+  const playtest = data?.playtest as V1Playtest | undefined
+
   const editMutation = usePlaytesthubServiceAdminApi_PatchPlaytest_ByPlaytestIdMutation(sdk, {
     onSuccess: () => {
       message.success('Playtest updated')
       queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtests] })
       queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtest_ByPlaytestId] })
-      navigate('/')
+      const slug = playtest?.slug
+      navigate(slug ? `/playtest/${slug}` : '/')
     },
     onError: toastError('update')
   })
-
-  const playtest = data?.playtest as V1Playtest | undefined
 
   const initialValues = useMemo<Partial<FormValues>>(() => {
     if (!playtest) return {}
@@ -898,7 +899,7 @@ function PlaytestEditPage() {
         )}
         <Form.Item style={{ marginBottom: 0 }}>
           <Space>
-            <Button onClick={() => navigate('/')}>Cancel</Button>
+            <Button onClick={() => navigate(playtest.slug ? `/playtest/${playtest.slug}` : '/')}>Cancel</Button>
             <Button type="primary" htmlType="submit" loading={editMutation.isPending}>
               Save
             </Button>
