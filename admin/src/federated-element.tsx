@@ -112,7 +112,7 @@ function WorkerHealthBanner() {
 
 export function FederatedElement() {
   return (
-    <div style={{ padding: 16 }}>
+    <div style={{ padding: 16, backgroundColor: '#f0f2f5', minHeight: '100%' }}>
       <WorkerHealthBanner />
       <Routes>
         <Route path="/" index element={<PlaytestsListPage />} />
