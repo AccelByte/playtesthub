@@ -75,6 +75,14 @@ var catalogue = []commandSpec{
 		Example:       "pth --namespace mygame --profile admin adt linkage list",
 	},
 	{
+		Name:          "adt linkage recover",
+		Milestone:     "M5.B",
+		Description:   "Admin: adopt an orphan ADT-side linkage (flag present on ADT, no local row) without an OAuth round-trip (PRD §4.8).",
+		RequiredFlags: []flagSpec{{Name: "--adt-namespace", Description: "ADT namespace whose orphan flag to adopt", ValueType: "string"}},
+		OptionalFlags: []flagSpec{dryRunFlag()},
+		Example:       "pth --namespace mygame --profile admin adt linkage recover --adt-namespace adt-ns",
+	},
+	{
 		Name:          "adt linkage start",
 		Milestone:     "M5.B",
 		Description:   "Admin: mint a linkUrl + state nonce for the ADT linking redirect (PRD §4.8.2).",

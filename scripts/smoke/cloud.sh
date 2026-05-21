@@ -153,6 +153,7 @@ declare -a m5_probes=(
     "StartADTLink          POST   ${BASE}/v1/admin/namespaces/${NS}/adt/linkages:start                    {}"
     "CompleteADTLink       POST   ${BASE}/v1/admin/namespaces/${NS}/adt/linkages:complete                 {\"state\":\"x\",\"adtNamespace\":\"y\"}"
     "UnlinkADT             DELETE ${BASE}/v1/admin/namespaces/${NS}/adt/linkages/00000000-0000-0000-0000-000000000000 -"
+    "RecoverADTLinkage     POST   ${BASE}/v1/admin/namespaces/${NS}/adt/linkages:recover                  {\"adtNamespace\":\"y\"}"
     "ListADTBuilds         GET    ${BASE}/v1/admin/namespaces/${NS}/adt/linkages/00000000-0000-0000-0000-000000000000/builds?adtGameId=g -"
     "ListADTGames          GET    ${BASE}/v1/admin/namespaces/${NS}/adt/linkages/00000000-0000-0000-0000-000000000000/games -"
     "GetADTDownloadInfo    GET    ${BASE}/v1/player/playtests/${PT}/adtDownload                           -"

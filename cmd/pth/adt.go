@@ -19,6 +19,7 @@ import (
 //	adt linkage start                         — mint a linkUrl + state
 //	adt linkage complete --state --adt-namespace
 //	adt linkage unlink   --id <adt_linkage_id>
+//	adt linkage recover  --adt-namespace <ns>
 //	adt build   list     --linkage-id <id> --game-id <id>
 //	adt games   list     --linkage-id <id>
 //
@@ -44,7 +45,7 @@ func runADT(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []st
 
 func runADTLinkage(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "adt linkage: usage: pth adt linkage {list|start|complete|unlink} ...")
+		fmt.Fprintln(stderr, "adt linkage: usage: pth adt linkage {list|start|complete|unlink|recover} ...")
 		return exitLocalError
 	}
 	action, rest := args[0], args[1:]
@@ -57,6 +58,8 @@ func runADTLinkage(ctx context.Context, stdout, stderr io.Writer, g *Globals, ar
 		return runADTLinkageComplete(ctx, stdout, stderr, g, rest, factory)
 	case "unlink":
 		return runADTLinkageUnlink(ctx, stdout, stderr, g, rest, factory)
+	case "recover":
+		return runADTLinkageRecover(ctx, stdout, stderr, g, rest, factory)
 	default:
 		fmt.Fprintf(stderr, "adt linkage: unknown action %q\n", action)
 		return exitLocalError
@@ -147,6 +150,28 @@ func runADTLinkageUnlink(ctx context.Context, stdout, stderr io.Writer, g *Globa
 	return invokePlaytest(ctx, stdout, stderr, g, factory, "UnlinkADT", req, *dryRun,
 		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
 			return c.UnlinkADT(cctx, req)
+		})
+}
+
+func runADTLinkageRecover(ctx context.Context, stdout, stderr io.Writer, g *Globals, args []string, factory playtestClientFactory) int {
+	fs := flag.NewFlagSet("adt linkage recover", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	adtNS := fs.String("adt-namespace", "", "ADT namespace whose orphan flag to adopt (required)")
+	dryRun := fs.Bool("dry-run", false, "print the request JSON and exit without dialling")
+	if err := fs.Parse(args); err != nil {
+		return exitLocalError
+	}
+	if *adtNS == "" {
+		fmt.Fprintln(stderr, "adt linkage recover: --adt-namespace is required")
+		return exitLocalError
+	}
+	if !g.requireNamespace(stderr, "adt linkage recover") {
+		return exitLocalError
+	}
+	req := &pb.RecoverADTLinkageRequest{Namespace: g.Namespace, AdtNamespace: *adtNS}
+	return invokePlaytest(ctx, stdout, stderr, g, factory, "RecoverADTLinkage", req, *dryRun,
+		func(c pb.PlaytesthubServiceClient, cctx context.Context) (proto.Message, error) {
+			return c.RecoverADTLinkage(cctx, req)
 		})
 }
 

@@ -86,6 +86,26 @@
       "example": "pth --namespace mygame --profile admin adt linkage list"
     },
     {
+      "name": "adt linkage recover",
+      "milestone": "M5.B",
+      "description": "Admin: adopt an orphan ADT-side linkage (flag present on ADT, no local row) without an OAuth round-trip (PRD §4.8).",
+      "requiredFlags": [
+        {
+          "name": "--adt-namespace",
+          "description": "ADT namespace whose orphan flag to adopt",
+          "valueType": "string"
+        }
+      ],
+      "optionalFlags": [
+        {
+          "name": "--dry-run",
+          "description": "print the request JSON and exit without dialling",
+          "valueType": "bool"
+        }
+      ],
+      "example": "pth --namespace mygame --profile admin adt linkage recover --adt-namespace adt-ns"
+    },
+    {
       "name": "adt linkage start",
       "milestone": "M5.B",
       "description": "Admin: mint a linkUrl + state nonce for the ADT linking redirect (PRD §4.8.2).",

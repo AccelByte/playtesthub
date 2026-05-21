@@ -14,8 +14,8 @@ import (
 )
 
 // TestUnlinkADT_HappyPath_CallsADTThenLocalSoftDelete pins the 2026-05-21
-// bug fix: UnlinkADT now propagates to ADT before soft-deleting locally
-// so the orphan-flag-on-ADT-side state cannot recur.
+// regression repair: UnlinkADT now propagates to ADT before soft-deleting
+// locally so the orphan-flag-on-ADT-side state cannot recur.
 func TestUnlinkADT_HappyPath_CallsADTThenLocalSoftDelete(t *testing.T) {
 	h := newADTTestServer(t)
 	audit := &fakeAuditLogStore{}

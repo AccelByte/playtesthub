@@ -79,3 +79,63 @@ func TestRunADTGames_UnknownAction(t *testing.T) {
 		t.Fatalf("exit=%d, want %d", code, exitLocalError)
 	}
 }
+
+// TestRunADTLinkageRecover_DryRun pins that the new orphan-recovery
+// subcommand emits a request JSON body and does NOT dial. Mirrors
+// TestRunADTGamesList_DryRun.
+func TestRunADTLinkageRecover_DryRun(t *testing.T) {
+	stub := &stubPlaytestClient{
+		recoverADTFunc: func(_ context.Context, _ *pb.RecoverADTLinkageRequest, _ ...grpc.CallOption) (*pb.RecoverADTLinkageResponse, error) {
+			t.Fatal("dry-run must not dial")
+			return nil, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{
+		"linkage", "recover",
+		"--adt-namespace", "adt-ns-orphan",
+		"--dry-run",
+	}, factoryFor(stub))
+	if code != exitOK {
+		t.Fatalf("exit=%d, want %d (stderr=%q)", code, exitOK, stderr.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
+		t.Fatalf("stdout not JSON: %v: %q", err, stdout.String())
+	}
+	if got["namespace"] != testNamespaceDev {
+		t.Errorf("namespace = %v, want %s", got["namespace"], testNamespaceDev)
+	}
+	if got["adt_namespace"] != "adt-ns-orphan" {
+		t.Errorf("adt_namespace = %v", got["adt_namespace"])
+	}
+}
+
+func TestRunADTLinkageRecover_RequiresADTNamespace(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565", Namespace: testNamespaceDev}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{"linkage", "recover", "--dry-run"}, factoryFor(&stubPlaytestClient{}))
+	if code != exitLocalError {
+		t.Fatalf("exit=%d, want %d", code, exitLocalError)
+	}
+	if !strings.Contains(stderr.String(), "--adt-namespace") {
+		t.Errorf("stderr missing --adt-namespace hint: %q", stderr.String())
+	}
+}
+
+func TestRunADTLinkageRecover_RequiresNamespace(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	g := &Globals{Addr: "localhost:6565"}
+	code := runADT(t.Context(), &stdout, &stderr, g, []string{
+		"linkage", "recover",
+		"--adt-namespace", "adt-ns-orphan",
+		"--dry-run",
+	}, factoryFor(&stubPlaytestClient{}))
+	if code != exitLocalError {
+		t.Fatalf("exit=%d, want %d", code, exitLocalError)
+	}
+	if !strings.Contains(stderr.String(), "--namespace") {
+		t.Errorf("stderr missing --namespace hint: %q", stderr.String())
+	}
+}

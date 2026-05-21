@@ -15,6 +15,10 @@ import (
 	"github.com/anggorodewanto/playtesthub/pkg/adt"
 )
 
+// bearerSvcJWT is the literal Authorization header value the tests
+// assert against — pulled out so goconst stays quiet.
+const bearerSvcJWT = "Bearer svc-jwt"
+
 func tokenGetterReturning(tok string) adt.TokenGetter {
 	return func(_ context.Context) (string, error) { return tok, nil }
 }
@@ -67,7 +71,7 @@ func TestHTTPClient_ListBuilds_HappyPath(t *testing.T) {
 	if builds[0].UploadedAt.IsZero() {
 		t.Errorf("UploadedAt zero, want parsed")
 	}
-	if capturedAuth != "Bearer svc-jwt" {
+	if capturedAuth != bearerSvcJWT {
 		t.Errorf("Authorization = %q", capturedAuth)
 	}
 	if !strings.Contains(capturedPath, "/profiling/namespaces/adt-ns/agsplaytesthub/games/game-1/builds") {
@@ -204,7 +208,7 @@ func TestHTTPClient_ListGames_HappyPath(t *testing.T) {
 	if games[0].CreatedAt.IsZero() {
 		t.Errorf("CreatedAt zero, want parsed")
 	}
-	if capturedAuth != "Bearer svc-jwt" {
+	if capturedAuth != bearerSvcJWT {
 		t.Errorf("Authorization = %q", capturedAuth)
 	}
 	if !strings.Contains(capturedPath, "/profiling/namespaces/adt-ns/agsplaytesthub/games") {
@@ -293,7 +297,7 @@ func TestHTTPClient_DeleteLinkage_HappyPath(t *testing.T) {
 	if capturedMethod != http.MethodDelete {
 		t.Errorf("method = %q, want DELETE", capturedMethod)
 	}
-	if capturedAuth != "Bearer svc-jwt" {
+	if capturedAuth != bearerSvcJWT {
 		t.Errorf("Authorization = %q", capturedAuth)
 	}
 	if !strings.Contains(capturedPath, "/profiling/namespaces/adt-ns/agsplaytesthub/linkage") {

@@ -58,6 +58,7 @@ type stubPlaytestClient struct {
 	retryFailedDmsFunc  func(ctx context.Context, in *pb.RetryFailedDmsRequest, opts ...grpc.CallOption) (*pb.RetryFailedDmsResponse, error)
 	publicConfigFunc    func(ctx context.Context, in *pb.GetPublicConfigRequest, opts ...grpc.CallOption) (*pb.GetPublicConfigResponse, error)
 	listADTGamesFunc    func(ctx context.Context, in *pb.ListADTGamesRequest, opts ...grpc.CallOption) (*pb.ListADTGamesResponse, error)
+	recoverADTFunc      func(ctx context.Context, in *pb.RecoverADTLinkageRequest, opts ...grpc.CallOption) (*pb.RecoverADTLinkageResponse, error)
 
 	calls int
 }
@@ -65,6 +66,11 @@ type stubPlaytestClient struct {
 func (s *stubPlaytestClient) ListADTGames(ctx context.Context, in *pb.ListADTGamesRequest, opts ...grpc.CallOption) (*pb.ListADTGamesResponse, error) {
 	s.calls++
 	return s.listADTGamesFunc(ctx, in, opts...)
+}
+
+func (s *stubPlaytestClient) RecoverADTLinkage(ctx context.Context, in *pb.RecoverADTLinkageRequest, opts ...grpc.CallOption) (*pb.RecoverADTLinkageResponse, error) {
+	s.calls++
+	return s.recoverADTFunc(ctx, in, opts...)
 }
 
 func (s *stubPlaytestClient) GetPublicConfig(ctx context.Context, in *pb.GetPublicConfigRequest, opts ...grpc.CallOption) (*pb.GetPublicConfigResponse, error) {
