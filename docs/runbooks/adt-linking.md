@@ -2,6 +2,8 @@
 
 Studio operator walkthrough for the M5.B ADT distribution model (PRD §4.8 / [`docs/STATUS_M5.md`](../STATUS_M5.md)). Read this before linking your first ADT namespace.
 
+> **Quickstart** — to run an ADT playtest you need to (1) set `ADT_BASE_URL` + `ADT_REDIRECT_BASE_URL` env vars on the backend (§2), (2) click **Link new ADT Namespace** on the Playtests list page once per studio (§3), (3) create a playtest with `distributionModel=ADT` and pick an ADT game + build (§4). The deliverable in the approval DM is a download URL, not a code (§5). The same AGS service IAM creds used by AGS Platform auth ADT; there is no separate ADT credential to manage.
+
 ## 1. Background
 
 ADT (AccelByte Development Toolkit) playtests distribute an in-development build via a download URL, not a redemption code. The deliverable is the build itself; there is **no code pool** to upload or sync.
@@ -17,7 +19,7 @@ Before linking, set these on the backend deploy (PRD §5.9):
 | Var | Required when | Default | Notes |
 | --- | --- | --- | --- |
 | `ADT_BASE_URL` | any `adt_linkage` row exists OR any playtest has `distributionModel='ADT'` | (none) | One of `develop.blackbox.accelbyte.io`, `staging.blackbox.accelbyte.io`, `blackbox.accelbyte.io`. Origin only; no path. |
-| `ADT_REDIRECT_BASE_URL` | `ADT_BASE_URL` is set | (none) | The admin UI origin (e.g. `https://<your-extend-host>/admin/playtesthub`). ADT redirects back to `${ADT_REDIRECT_BASE_URL}/adt-link-callback` after linking. |
+| `ADT_REDIRECT_BASE_URL` | `ADT_BASE_URL` is set | (none) | The URL where the AGS Admin Portal serves the playtesthub Extend App UI — the operator's browser must be able to navigate to `${ADT_REDIRECT_BASE_URL}/adt-link-callback`. For ISC namespaces the shape is `https://<parent-ns>.internal.gamingservices.accelbyte.io/admin/namespaces/<game-ns>/extend/app-ui/playtesthub` (e.g. `https://abtestdewa.internal.gamingservices.accelbyte.io/admin/namespaces/abtestdewa-pong/extend/app-ui/playtesthub`). |
 | `ADT_LINKAGE_PENDING_TTL_SECONDS` | optional | `600` | TTL on the `adt_link_pending` nonce row — the `state` returned from `StartADTLink` is rejected by `CompleteADTLink` after this many seconds. |
 
 No `ADT_DEFAULT_API_KEY` or `ADT_CREDENTIAL_KEK` env var exists by design — auth is the AGS service IAM JWT (see §1), not a separately-issued credential.
