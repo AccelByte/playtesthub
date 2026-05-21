@@ -183,9 +183,9 @@ B11. `[x]` **README walkthrough (Track B cadence) + `runbooks/adt-linking.md`** 
 
 #### Addendum (2026-05-21 ADT-eng spec patch — games-list endpoint)
 
-B12. `[ ]` **`ListADTGames` endpoint plumbing** — new `Game` value type in `pkg/adt` (`{ID, Name, CreatedAt}`); `Client.ListGames(ctx, studioNamespace, adtNamespace) → []Game` added to the interface with matching `MemClient` (deterministic fixtures keyed on `(studio_namespace, adt_namespace)`) and `HTTPClient` (live adapter, hits `GET <base>/profiling/namespaces/<ns>/agsplaytesthub/games` per spec §6, reuses the existing `TokenGetter` + `RetryPolicy`). Proto gains `ListADTGames(adtLinkageId) → []Game` admin RPC + matching request/response messages; `pkg/service/adt.go` proxies through. New `pth adt games --linkage-id=…` subcommand mirrors B9's surface. `errors.md` row for the linkage-not-found case (mirrors `ListADTBuilds`). Smoke probe added to `scripts/smoke/pth.sh`; `cloud.sh` gains a 401 probe. Pure abstraction extension — no behavior change to existing playtests.
+B12. `[ ]` **`ListADTGames` endpoint plumbing** — new `Game` value type in `pkg/adt` (`{ID string, Name string, CreatedAt time.Time}` — mirrors `Build`; field mapping documented in the "Addendum 2026-05-21" block under Open questions (resolved) below). `Client.ListGames(ctx, studioNamespace, adtNamespace) → []Game` added to the interface with matching `MemClient` (deterministic fixtures keyed on `(studio_namespace, adt_namespace)` — mirror the `SeedBuilds` shape; `ListGamesErr` slot for retry-policy tests) and `HTTPClient` (live adapter — hits `GET <BaseURL>/profiling/namespaces/<ns>/agsplaytesthub/games`, reuses `doJSON` + existing `TokenGetter` + `RetryPolicy`; 401 → `ErrLinkageMissing`, 429 → `ErrRateLimited`, 5xx-retry → `ErrUnavailable` per `pkg/adt/http.go` conventions). Proto gains `ListADTGames(adtLinkageId) → []Game` admin RPC + matching request/response messages; `pkg/service/adt.go` proxies through (look up linkage by id, scope to caller's studio namespace, call `adtClient.ListGames`, map 401 → `FailedPrecondition` per `pkg/service/adt.go:340` `ListADTBuilds` precedent). New `pth adt games --linkage-id=…` subcommand mirrors `pth adt builds` from B9 (`cmd/pth/adt.go`). New `errors.md` row for the linkage-not-found case (byte-for-byte mirror of the `ListADTBuilds` row). Smoke probe added to `scripts/smoke/pth.sh`; `cloud.sh` gains a 401 probe. Pure abstraction extension — no behavior change to existing playtests; B5 / B6 paths untouched.
 
-B13. `[ ]` **Build picker modal in `PlaytestCreatePage` — namespace → game → version → build** — `admin/src/federated-element.tsx` `ADTCreateFields` replaced with a Modal-driven picker matching the operator-supplied mockup ([`images/screenshot_20260521_122031.png`](images/screenshot_20260521_122031.png)): top-level Game `Select` populated by `ListADTGames(adtLinkageId)`; left rail renders versions by grouping `ListADTBuilds` rows on `game_version_name` with build counts; right rail renders per-platform build cards (`platform_name`, `created_at`, `id`); "Use This Build" sets `adtBuildId` on the form. Falls back gracefully when `ListADTGames` is unavailable (typed game-id Input + flat build list — current B7 behavior). Optional: thread `buildName` query param through if the list grows past the soft cap. Vitest +6 cases (games dropdown loads, version grouping, platform card render, fallback path when games-list 5xx, "Use This Build" wires the form, modal close preserves form state). Smoke unchanged (backend tests cover B12; B13 is pure admin UI).
+B13. `[ ]` **Build picker modal in `PlaytestCreatePage` — namespace → game → version → build** — `admin/src/federated-element.tsx` `ADTCreateFields` (line ~567 today) replaced with a Modal-driven picker matching the operator-supplied mockup ([`images/build-picker-mockup.png`](images/build-picker-mockup.png)): top-level Game `Select` populated by `ListADTGames(adtLinkageId)`; left rail renders versions by grouping `ListADTBuilds` rows on `game_version_name` (= `Build.Name` in `pkg/adt`) with build counts; right rail renders per-platform build cards (`Build.Platform`, `Build.UploadedAt`, `Build.ID`); "Use This Build" button sets `adtBuildId` on the parent Form and closes the modal. Falls back gracefully when `ListADTGames` is unavailable (returns 5xx or empty): degrades to the current B7 inline behaviour — typed `adtGameId` Input + flat build `Select`. Optional polish: thread `buildName` query param through `ListADTBuilds` if the list grows past the per-game soft cap (not blocking — defer if behind). Vitest +6 cases (games dropdown loads, version grouping with counts, per-platform card render, fallback path when games-list 5xx, "Use This Build" wires the form, modal close preserves form state). Smoke unchanged (B12 backend tests already cover the new endpoint; B13 is pure admin UI).
 
 ### Track C — UX revamp + admin telemetry surfaces (priority 3, blocked on Track B)
 
@@ -261,7 +261,19 @@ All Track B open questions are now resolved by the 2026-05-20 ADT-eng API spec (
 
 **Addendum 2026-05-21 — games-list endpoint (promised by ADT-eng; pending implementation, see B12):**
 
-- `GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/games` returns `{ "games": [{ "id", "name", "created_at" }] }` scoped to the linked `(adt_namespace, studio_namespace)` pair (same 401 semantics as the builds endpoint). Drives the create-playtest build-picker top-level dropdown so operators no longer type the `adt_game_id` by hand. Unblocks the picker-modal UX (B13).
+- `GET <ADT_BASE>/profiling/namespaces/<ADT_NAMESPACE>/agsplaytesthub/games` — scoped to the linked `(adt_namespace, studio_namespace)` pair, same 401 semantics as the builds endpoint, same `Authorization: Bearer <AGS service IAM JWT>` auth as every other ADT call. No query-param filters for v1 — operators pick from the full list. Logically called BEFORE the existing `/builds` endpoint (operator picks game → then picks build under that game).
+- Response shape:
+  ```json
+  {
+    "games": [
+      { "id": "uuid",
+        "name": "operator-visible game label",
+        "created_at": "RFC3339 timestamp" }
+    ]
+  }
+  ```
+- Mapping into `pkg/adt.Game` (new value type — mirrors `Build`): `ID ← id`, `Name ← name`, `CreatedAt ← created_at`.
+- Drives the create-playtest build-picker top-level dropdown so operators no longer type the `adt_game_id` by hand. Unblocks the picker-modal UX (B13).
 
 **Implementation impact (carried through 2026-05-20 doc + code patches):**
 
