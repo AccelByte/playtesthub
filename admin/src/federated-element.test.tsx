@@ -907,4 +907,42 @@ describe('ADTLinkCallbackPage', () => {
     expect(await screen.findByTestId('adt-link-callback-recover-error')).toBeInTheDocument()
     expect(screen.getByText(/no ADT-side linkage found/i)).toBeInTheDocument()
   })
+
+  // 2026-05-22 bug repro: ADT does NOT echo adt_namespace back on
+  // result=failed (live URL observed in prod). The recover button used
+  // to require Boolean(adtNamespace) so it never rendered, dead-ending
+  // the operator. The callback must still expose a recover affordance
+  // that asks the operator to type the namespace they intended to link.
+  it('exposes a Recover affordance when ADT failure omits adt_namespace', async () => {
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&result=failed&reason=link_failed')
+    expect(await screen.findByTestId('adt-link-callback-recover-prompt')).toBeInTheDocument()
+  })
+
+  it('calls RecoverADTLinkage with the operator-typed adt_namespace when ADT omitted it', async () => {
+    const user = userEvent.setup()
+    const recoverMutate = vi.fn()
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: recoverMutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&result=failed&reason=link_failed')
+    const prompt = await screen.findByTestId('adt-link-callback-recover-prompt')
+    await user.click(prompt)
+    const input = await screen.findByTestId('adt-link-callback-recover-input')
+    await user.type(input, 'adt-orphan-ns')
+    const submit = await screen.findByTestId('adt-link-callback-recover-submit')
+    await user.click(submit)
+    expect(recoverMutate).toHaveBeenCalledTimes(1)
+    expect(recoverMutate).toHaveBeenCalledWith({ data: { adtNamespace: 'adt-orphan-ns' } })
+  })
+
+  it('refuses to submit recover when the operator left adt_namespace empty', async () => {
+    const user = userEvent.setup()
+    const recoverMutate = vi.fn()
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: recoverMutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&result=failed&reason=link_failed')
+    const prompt = await screen.findByTestId('adt-link-callback-recover-prompt')
+    await user.click(prompt)
+    const submit = await screen.findByTestId('adt-link-callback-recover-submit')
+    expect(submit).toBeDisabled()
+    expect(recoverMutate).not.toHaveBeenCalled()
+  })
 })

@@ -141,6 +141,14 @@ export function FederatedElement() {
 // RecoverADTLinkage(adt_namespace) so the operator no longer dead-ends
 // at the error toast — the recovery agent shipped the RPC + CLI but
 // the UI affordance had to wait for codegen.
+//
+// 2026-05-22 bug fix: ADT does NOT echo adt_namespace on failure
+// callbacks (live URL observed in prod carried only state + reason +
+// result=failed). The previous gate `result==='failed' && adtNamespace`
+// therefore never rendered the button. We now always expose a recovery
+// affordance on failure: when ADT echoed the namespace we one-click
+// recover; otherwise we open an input where the operator types the
+// namespace they intended to link.
 function ADTLinkCallbackPage() {
   const { sdk } = useAppUIContext()
   const navigate = useNavigate()
@@ -155,6 +163,8 @@ function ADTLinkCallbackPage() {
   const [canRetry, setCanRetry] = useState(false)
   const [recoverError, setRecoverError] = useState<string | null>(null)
   const [recovered, setRecovered] = useState(false)
+  const [recoverPromptOpen, setRecoverPromptOpen] = useState(false)
+  const [recoverNsInput, setRecoverNsInput] = useState('')
 
   const state = params.get('state') ?? ''
   const result = params.get('result') ?? ''
@@ -194,6 +204,13 @@ function ADTLinkCallbackPage() {
     recoverMutation.mutate({ data: { adtNamespace } })
   }
 
+  const runRecoverWithTypedNs = () => {
+    const ns = recoverNsInput.trim()
+    if (!ns) return
+    setRecoverError(null)
+    recoverMutation.mutate({ data: { adtNamespace: ns } })
+  }
+
   useEffect(() => {
     if (result === 'failed') {
       setError(reason || 'ADT reported the link as failed')
@@ -212,12 +229,17 @@ function ADTLinkCallbackPage() {
   }, [state, adtNamespace, result, reason])
 
   if (error) {
-    // Recovery is only meaningful when ADT (a) reported a failure
-    // AND (b) echoed an adt_namespace we can pass through. The
-    // affordance is primary when `reason=already_linked`; secondary
-    // otherwise ("If you believe ADT already has this linkage…").
-    const showRecover = result === 'failed' && Boolean(adtNamespace)
+    // Recovery is always meaningful on ADT-reported failure since the
+    // orphan-flag scenario is the dominant cause. Two modes:
+    //   - ADT echoed adt_namespace → one-click button (existing UX).
+    //   - ADT omitted adt_namespace → reveal an inline input asking
+    //     the operator to type the namespace they were linking.
+    const isFailure = result === 'failed'
+    const hasEchoedNs = Boolean(adtNamespace)
+    const showOneClickRecover = isFailure && hasEchoedNs
+    const showTypedRecover = isFailure && !hasEchoedNs
     const isAlreadyLinked = reason === 'already_linked'
+    const submitDisabled = recoverNsInput.trim() === '' || recoverMutation.isPending || recovered
     return (
       <Space direction="vertical" style={{ width: '100%' }} data-testid="adt-link-callback">
         <Alert type="error" message="ADT linking failed" description={error} showIcon />
@@ -241,7 +263,7 @@ function ADTLinkCallbackPage() {
               Retry
             </Button>
           )}
-          {showRecover && (
+          {showOneClickRecover && (
             <Button
               type={isAlreadyLinked ? 'primary' : 'default'}
               onClick={runRecover}
@@ -254,8 +276,47 @@ function ADTLinkCallbackPage() {
                 : 'If you believe ADT already has this linkage, try Recover'}
             </Button>
           )}
+          {showTypedRecover && !recoverPromptOpen && (
+            <Button
+              type="primary"
+              onClick={() => setRecoverPromptOpen(true)}
+              disabled={recovered}
+              data-testid="adt-link-callback-recover-prompt"
+            >
+              Recover existing linkage
+            </Button>
+          )}
           <Button onClick={() => navigate('/')}>Back to playtests</Button>
         </Space>
+        {showTypedRecover && recoverPromptOpen && (
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              ADT did not echo the namespace back. Enter the ADT namespace you were trying to link and we will adopt the
+              orphan linkage on this side.
+            </Typography.Paragraph>
+            <Input
+              placeholder="ADT namespace (e.g. studio-pong-dev)"
+              value={recoverNsInput}
+              onChange={e => setRecoverNsInput(e.target.value)}
+              onPressEnter={() => {
+                if (!submitDisabled) runRecoverWithTypedNs()
+              }}
+              data-testid="adt-link-callback-recover-input"
+            />
+            <Space>
+              <Button
+                type="primary"
+                onClick={runRecoverWithTypedNs}
+                loading={recoverMutation.isPending}
+                disabled={submitDisabled}
+                data-testid="adt-link-callback-recover-submit"
+              >
+                Recover
+              </Button>
+              <Button onClick={() => setRecoverPromptOpen(false)}>Cancel</Button>
+            </Space>
+          </Space>
+        )}
       </Space>
     )
   }
