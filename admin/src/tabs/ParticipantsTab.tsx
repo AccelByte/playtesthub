@@ -4,6 +4,7 @@ import {
   Alert,
   Button,
   Checkbox,
+  Descriptions,
   Form,
   Input,
   Modal,
@@ -82,6 +83,7 @@ export function ParticipantsTab({ playtest }: { playtest: V1Playtest }) {
   const [dmFailedOnly, setDmFailedOnly] = useState(false)
   const [rejectTarget, setRejectTarget] = useState<MergedRow | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [viewTarget, setViewTarget] = useState<MergedRow | null>(null)
 
   const participantsQuery = usePlaytesthubServiceAdminApi_GetParticipants_ByPlaytestId(sdk, {
     playtestId,
@@ -212,7 +214,6 @@ export function ParticipantsTab({ playtest }: { playtest: V1Playtest }) {
       render: (_: unknown, row: MergedRow) => {
         const isPending = row.status === ApplicantStatus.PENDING
         const canRetryDm = row.status === ApplicantStatus.APPROVED && row.lastDmStatus === DmStatus.FAILED
-        if (!isPending && !canRetryDm) return null
         return (
           <Space wrap>
             {isPending && (
@@ -231,6 +232,11 @@ export function ParticipantsTab({ playtest }: { playtest: V1Playtest }) {
             {isPending && (
               <Button size="small" danger onClick={() => setRejectTarget(row)}>
                 Reject
+              </Button>
+            )}
+            {!isPending && (
+              <Button size="small" type="link" onClick={() => setViewTarget(row)} style={{ padding: 0 }}>
+                View
               </Button>
             )}
             {canRetryDm && (
@@ -322,6 +328,58 @@ export function ParticipantsTab({ playtest }: { playtest: V1Playtest }) {
           />
         </Form.Item>
       </Modal>
+      <ParticipantDetailsModal target={viewTarget} onClose={() => setViewTarget(null)} />
     </Space>
+  )
+}
+
+function formatDate(v: string | null | undefined): string {
+  if (!v) return '—'
+  return dayjs(v).format('MMM D, YYYY')
+}
+
+function ParticipantDetailsModal({
+  target,
+  onClose
+}: {
+  target: MergedRow | null
+  onClose: () => void
+}) {
+  return (
+    <Modal
+      title="Participant Details"
+      open={!!target}
+      onCancel={onClose}
+      footer={<Button onClick={onClose}>Close</Button>}
+      width={560}
+      data-testid="participant-details-modal">
+      {target && (
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <Typography.Text type="secondary">{target.discordHandle ?? '—'}</Typography.Text>
+          <Descriptions
+            title="PLAYTEST DATA"
+            column={1}
+            size="small"
+            colon={false}
+            labelStyle={{ width: 160 }}
+            contentStyle={{ fontWeight: 600, textAlign: 'right' }}
+            items={[
+              { key: 'signup', label: 'Sign-up', children: formatDate(target.signupAt) },
+              { key: 'nda', label: 'NDA Accepted', children: formatDate(target.ndaAcceptedAt) },
+              { key: 'code', label: 'Code Sent', children: formatDate(target.codeSentAt) },
+              {
+                key: 'userId',
+                label: 'AGS User ID',
+                children: (
+                  <Typography.Text copyable={{ text: target.userId ?? '' }} style={{ fontWeight: 600 }}>
+                    {target.userId ?? '—'}
+                  </Typography.Text>
+                )
+              }
+            ]}
+          />
+        </Space>
+      )}
+    </Modal>
   )
 }

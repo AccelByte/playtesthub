@@ -294,6 +294,47 @@ describe('PlaytestDetailPage shell', () => {
     expect(screen.getAllByRole('button', { name: /retry dm/i })).toHaveLength(1)
   })
 
+  it('Participants tab View button opens details modal with non-ADT fields', async () => {
+    mockGetParticipants.mockReturnValue({
+      data: {
+        participants: [
+          {
+            applicantId: 'a1',
+            userId: '9683d2c2679e49c69527',
+            discordHandle: 'shadowrealm#4421',
+            signupAt: '2026-05-16T00:00:00Z',
+            ndaAcceptedAt: '2026-05-16T00:00:00Z',
+            codeSentAt: '2026-05-17T00:00:00Z',
+            status: 'APPLICANT_STATUS_APPROVED'
+          }
+        ]
+      },
+      isLoading: false,
+      refetch: vi.fn()
+    })
+    mockGetApplicants.mockReturnValue({
+      data: { applicants: [{ id: 'a1', status: 'APPLICANT_STATUS_APPROVED', lastDmStatus: 'DM_STATUS_SENT' }] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderDetail('autumn-draft')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Participants' }))
+    await user.click(await screen.findByRole('button', { name: /^view$/i }))
+    const dialog = await screen.findByTestId('participant-details-modal')
+    expect(within(dialog).getByText('Participant Details')).toBeInTheDocument()
+    expect(within(dialog).getByText('shadowrealm#4421')).toBeInTheDocument()
+    expect(within(dialog).getByText('Sign-up')).toBeInTheDocument()
+    expect(within(dialog).getByText('NDA Accepted')).toBeInTheDocument()
+    expect(within(dialog).getByText('Code Sent')).toBeInTheDocument()
+    expect(within(dialog).getByText('AGS User ID')).toBeInTheDocument()
+    expect(within(dialog).getByText('9683d2c2679e49c69527')).toBeInTheDocument()
+    expect(within(dialog).queryByText(/total playtime/i)).not.toBeInTheDocument()
+    expect(within(dialog).queryByText(/hardware specs/i)).not.toBeInTheDocument()
+    expect(within(dialog).queryByText(/crash reports/i)).not.toBeInTheDocument()
+  })
+
   it('Participants tab renders the low-pool banner when unused/total ≤ 10%', async () => {
     mockGetCodes.mockReturnValue({
       data: { stats: { total: 100, unused: 5, reserved: 0, granted: 95 }, codes: [] },
