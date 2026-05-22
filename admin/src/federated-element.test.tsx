@@ -346,7 +346,7 @@ describe('PlaytestCreatePage', () => {
   it('shows all the PRD-required fields on the create form', () => {
     renderAt('/new')
     expect(screen.getByLabelText(/slug/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^title$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/playtest title/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/description/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/banner image url/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/platforms/i)).toBeInTheDocument()
@@ -354,17 +354,17 @@ describe('PlaytestCreatePage', () => {
     expect(screen.getByRole('button', { name: /^create$/i })).toBeInTheDocument()
   })
 
-  it('auto-approve toggle starts off and hides the limit input', () => {
+  it('approval radio defaults to Manual Approval and hides the auto-approve limit input', () => {
     renderAt('/new')
-    const toggle = screen.getByRole('switch', { name: /auto-approve/i })
-    expect(toggle).not.toBeChecked()
+    const manualRadio = screen.getByRole('radio', { name: /manual approval/i })
+    expect(manualRadio).toBeChecked()
     expect(screen.queryByLabelText(/auto-approve limit/i)).not.toBeInTheDocument()
   })
 
-  it('reveals the auto-approve limit input when the toggle is on', async () => {
+  it('reveals the auto-approve limit input when the Auto-Approve radio is picked', async () => {
     renderAt('/new')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('switch', { name: /auto-approve/i }))
+    await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
     expect(await screen.findByLabelText(/auto-approve limit/i)).toBeInTheDocument()
   })
 
@@ -373,12 +373,12 @@ describe('PlaytestCreatePage', () => {
     mockCreateMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     renderAt('/new')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('switch', { name: /auto-approve/i }))
+    await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
     const limit = await screen.findByLabelText(/auto-approve limit/i)
     await user.type(limit, '100001')
     // Required fields so the form actually reaches the validator.
     await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-    await user.type(screen.getByLabelText(/^title$/i), 'Demo')
+    await user.type(screen.getByLabelText(/playtest title/i), 'Demo')
     await user.click(screen.getByRole('button', { name: /^create$/i }))
     expect(
       await screen.findByText('auto_approve_limit must be between 1 and 100000 when auto_approve is true')
@@ -555,7 +555,7 @@ describe('PlaytestCreatePage', () => {
       // adtGameId + adtBuildId fields which we then assert end up on the parent
       // form's submit payload.
       await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-      await user.type(screen.getByLabelText(/^title$/i), 'Demo')
+      await user.type(screen.getByLabelText(/playtest title/i), 'Demo')
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -584,7 +584,7 @@ describe('PlaytestCreatePage', () => {
       renderAt('/new')
       const user = userEvent.setup()
       await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-      await user.type(screen.getByLabelText(/^title$/i), 'My Title')
+      await user.type(screen.getByLabelText(/playtest title/i), 'My Title')
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -595,7 +595,7 @@ describe('PlaytestCreatePage', () => {
 
       await waitFor(() => expect(screen.queryByRole('dialog', { name: /select game build/i })).not.toBeInTheDocument())
       expect(screen.getByLabelText(/slug/i)).toHaveValue('demo-slug')
-      expect(screen.getByLabelText(/^title$/i)).toHaveValue('My Title')
+      expect(screen.getByLabelText(/playtest title/i)).toHaveValue('My Title')
     })
   })
 })

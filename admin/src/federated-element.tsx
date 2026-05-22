@@ -992,11 +992,200 @@ function ADTBuildPickerModal({
   )
 }
 
+// SectionRow renders the two-column section layout used by PlaytestCreatePage:
+// title + secondary description on the left rail, form fields on the right.
+function SectionRow({
+  title,
+  description,
+  children
+}: {
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 48, padding: '24px 0' }}>
+      <div style={{ width: 240, flexShrink: 0 }}>
+        <Typography.Title level={5} style={{ margin: 0 }}>
+          {title}
+        </Typography.Title>
+        {description && (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 6, marginBottom: 0, fontSize: 13 }}>
+            {description}
+          </Typography.Paragraph>
+        )}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>{children}</div>
+    </div>
+  )
+}
+
+// PlatformsPills implements the value/onChange contract Form.Item injects so it
+// renders as a toggleable button row inside the form's data flow.
+function PlatformsPills({
+  value,
+  onChange,
+  options
+}: {
+  value?: string[]
+  onChange?: (v: string[]) => void
+  options: ReadonlyArray<{ value: string; label: string }>
+}) {
+  const selected = new Set(value ?? [])
+  const toggle = (v: string) => {
+    const next = new Set(selected)
+    if (next.has(v)) next.delete(v)
+    else next.add(v)
+    onChange?.(Array.from(next))
+  }
+  return (
+    <div data-testid="platforms-select" role="group" aria-label="Platforms" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+      {options.map(o => {
+        const active = selected.has(o.value)
+        return (
+          <Button
+            key={o.value}
+            type={active ? 'primary' : 'default'}
+            ghost={active}
+            onClick={() => toggle(o.value)}
+            aria-pressed={active}>
+            {o.label}
+          </Button>
+        )
+      })}
+    </div>
+  )
+}
+
+const radioCardStyle = (active: boolean): React.CSSProperties => ({
+  display: 'flex',
+  alignItems: 'flex-start',
+  width: '100%',
+  margin: 0,
+  padding: 16,
+  border: '1px solid',
+  borderColor: active ? '#1677ff' : '#e6e8eb',
+  borderRadius: 8,
+  background: active ? '#f0f7ff' : '#fff'
+})
+
+function RadioCardLabel({
+  title,
+  description,
+  badge
+}: {
+  title: React.ReactNode
+  description: React.ReactNode
+  badge?: React.ReactNode
+}) {
+  return (
+    <div style={{ paddingLeft: 4 }}>
+      <Space size={8} align="center" wrap>
+        <Typography.Text strong>{title}</Typography.Text>
+        {badge}
+      </Space>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 4, marginBottom: 0, fontSize: 13 }}>
+        {description}
+      </Typography.Paragraph>
+    </div>
+  )
+}
+
+// DistributionRadioCards renders the three distribution-model options as full-
+// width radio cards. The ADT row carries an inline "linking required" warning
+// when no ADT linkage is configured so operators see the gating reason without
+// drilling into the picker. value/onChange come from the wrapping Form.Item.
+function DistributionRadioCards({
+  value,
+  onChange,
+  linkageCount
+}: {
+  value?: string
+  onChange?: (v: string) => void
+  linkageCount: number
+}) {
+  const adtBadge =
+    linkageCount === 0 ? (
+      <Tag color="warning" style={{ marginInlineStart: 0 }}>
+        ⚠ ADT namespace linking required
+      </Tag>
+    ) : null
+  // aria-label pins each radio's accessible name to the bare title so tests
+  // (and screen readers) can disambiguate without dragging the description
+  // paragraph into the name.
+  return (
+    <Radio.Group
+      value={value}
+      onChange={e => onChange?.(e.target.value)}
+      style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+      <Radio value={DistributionModel.STEAM_KEYS} aria-label="Steam keys" style={radioCardStyle(value === DistributionModel.STEAM_KEYS)}>
+        <RadioCardLabel
+          title="Steam keys"
+          description="Upload a CSV of Steam keys. Approved players receive a key via Discord DM and redeem it manually on Steam."
+        />
+      </Radio>
+      <Radio value={DistributionModel.AGS_CAMPAIGN} aria-label="AGS Campaign" style={radioCardStyle(value === DistributionModel.AGS_CAMPAIGN)}>
+        <RadioCardLabel
+          title="AGS Campaign"
+          description="Auto-generate redeemable codes via AGS Platform Campaign API. Players redeem codes in-game through the AGS entitlement system."
+        />
+      </Radio>
+      <Radio value={DistributionModel.ADT} aria-label="ADT" style={radioCardStyle(value === DistributionModel.ADT)}>
+        <RadioCardLabel
+          title="ADT"
+          description="Distribute game builds directly via AccelByte Development Toolkit (ADT). Approved players receive a direct download link via Discord DM — no additional launcher required. Supports crash reporting and hardware telemetry."
+          badge={adtBadge}
+        />
+      </Radio>
+    </Radio.Group>
+  )
+}
+
+function ApprovalRadioCards({
+  value,
+  onChange
+}: {
+  value?: boolean
+  onChange?: (v: boolean) => void
+}) {
+  return (
+    <Radio.Group
+      value={value}
+      onChange={e => onChange?.(e.target.value)}
+      style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+      <Radio value={false} aria-label="Manual Approval" style={radioCardStyle(value === false)}>
+        <RadioCardLabel
+          title="Manual Approval"
+          description="Review each sign-up and manually approve or reject participants from the admin panel."
+        />
+      </Radio>
+      <Radio value={true} aria-label="Auto-Approve" style={radioCardStyle(value === true)}>
+        <RadioCardLabel
+          title="Auto-Approve"
+          description="Automatically approve participants on sign-up, up to a maximum capacity. No manual review required."
+        />
+      </Radio>
+    </Radio.Group>
+  )
+}
+
 function PlaytestCreatePage() {
   const { sdk } = useAppUIContext()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [form] = Form.useForm<FormValues>()
+  const distributionModel = Form.useWatch('distributionModel', form)
+  const autoApprove = Form.useWatch('autoApprove', form)
+  const ndaRequired = Form.useWatch('ndaRequired', form)
+  const adtLinkageId = Form.useWatch('adtLinkageId', form)
+  const adtGameId = Form.useWatch('adtGameId', form)
+  const adtBuildId = Form.useWatch('adtBuildId', form)
+
+  // Parent-level linkages probe so the ADT radio card can display the "linking
+  // required" warning before the user picks ADT. React-query dedupes the
+  // identical key called from ADTCreateFields.
+  const linkagesQuery = usePlaytesthubServiceAdminApi_GetAdtLinkages(sdk, {})
+  const linkageCount = ((linkagesQuery.data?.linkages ?? []) as V1AdtLinkage[]).length
 
   const createMutation = usePlaytesthubServiceAdminApi_CreatePlaytestMutation(sdk, {
     onSuccess: () => {
@@ -1032,9 +1221,13 @@ function PlaytestCreatePage() {
     })
   }
 
+  const sectionDivider = <div style={{ borderTop: '1px solid #f0f0f0' }} />
+
   return (
     <>
-      <Typography.Title level={2}>New playtest</Typography.Title>
+      <Typography.Title level={2} style={{ marginTop: 0 }}>
+        Create New Playtest
+      </Typography.Title>
       <Form<FormValues>
         form={form}
         layout="vertical"
@@ -1045,122 +1238,145 @@ function PlaytestCreatePage() {
           distributionModel: DistributionModel.STEAM_KEYS,
           autoApprove: false
         }}>
-        <Form.Item label="Slug" name="slug" rules={[{ required: true, message: 'Slug is required' }]}>
-          <Input placeholder="e.g. summer-alpha-2026" />
-        </Form.Item>
-        <Form.Item label="Title" name="title" rules={[{ required: true, message: 'Title is required' }]}>
-          <Input maxLength={200} />
-        </Form.Item>
-        <Form.Item label="Description" name="description">
-          <Input.TextArea rows={4} maxLength={10000} />
-        </Form.Item>
-        <Form.Item
-          label="Banner image URL"
-          name="bannerImageUrl"
-          rules={[bannerImageUrlRule]}
-          extra="https only — backend rejects http.">
-          <Input placeholder="https://..." data-testid="banner-image-url" />
-        </Form.Item>
-        <Form.Item
-          label="Platforms"
-          name="platforms"
-          rules={[{ required: true, message: 'platforms must include at least one platform' }]}>
-          <Select mode="multiple" options={PLATFORMS.map(p => ({ value: p.value, label: p.label }))} data-testid="platforms-select" />
-        </Form.Item>
-        <Form.Item
-          label={DATE_RANGE_LABEL}
-          name="dateRange"
-          extra={DATE_RANGE_HELP}
-          rules={[dateRangeWindowRule]}
-          getValueFromEvent={dateRangeUtcFromEvent}>
-          <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
-        </Form.Item>
-        <Form.Item name="ndaRequired" valuePropName="checked">
-          <Checkbox>Require NDA</Checkbox>
-        </Form.Item>
-        <Form.Item
-          noStyle
-          shouldUpdate={(prev: FormValues, next: FormValues) => prev.ndaRequired !== next.ndaRequired}>
-          {({ getFieldValue }) =>
-            getFieldValue('ndaRequired') && (
-              <Form.Item label="NDA text" name="ndaText" rules={[{ required: true, message: 'NDA text required when NDA enabled' }]}>
-                <Input.TextArea rows={4} />
-              </Form.Item>
-            )
-          }
-        </Form.Item>
-        <Form.Item label="Distribution model" name="distributionModel" rules={[{ required: true }]}>
-          <Radio.Group>
-            <Radio value={DistributionModel.STEAM_KEYS}>Steam keys</Radio>
-            <Radio value={DistributionModel.AGS_CAMPAIGN}>AGS Campaign</Radio>
-            <Radio value={DistributionModel.ADT}>ADT</Radio>
-          </Radio.Group>
-        </Form.Item>
-        <Form.Item
-          noStyle
-          shouldUpdate={(prev: FormValues, next: FormValues) => prev.distributionModel !== next.distributionModel}>
-          {({ getFieldValue }) =>
-            getFieldValue('distributionModel') === DistributionModel.AGS_CAMPAIGN && (
-              <Form.Item label="Initial code quantity" name="initialCodeQuantity" rules={[{ type: 'number', min: 1, max: 50000 }]}>
+        <Card
+          styles={{ body: { padding: '0 32px' } }}
+          style={{ borderRadius: 8 }}>
+          <SectionRow title="Basic Information" description="General details about your playtest event.">
+            <Form.Item label="Playtest Title" name="title" rules={[{ required: true, message: 'Title is required' }]}>
+              <Input maxLength={200} placeholder="e.g. Starfield Alpha — Wave 2" />
+            </Form.Item>
+            <Form.Item
+              label="Slug"
+              name="slug"
+              rules={[{ required: true, message: 'Slug is required' }]}
+              extra="URL-safe identifier. Lowercase, numbers, hyphens. 3–64 characters.">
+              <Input placeholder="e.g. starfield-alpha-w2" />
+            </Form.Item>
+            <Form.Item label="Description (optional)" name="description">
+              <Input.TextArea rows={3} maxLength={10000} placeholder="Describe your playtest goals, what players should expect, etc." />
+            </Form.Item>
+            <Form.Item
+              label="Banner Image URL (optional)"
+              name="bannerImageUrl"
+              rules={[bannerImageUrlRule]}
+              extra="https only — backend rejects http."
+              style={{ marginBottom: 0 }}>
+              <Input placeholder="https://cdn.example.com/banner.jpg" data-testid="banner-image-url" />
+            </Form.Item>
+          </SectionRow>
+
+          {sectionDivider}
+
+          <SectionRow title="Schedule & Platforms" description="Set the playtest window and target platforms.">
+            <Form.Item
+              label={DATE_RANGE_LABEL}
+              name="dateRange"
+              extra={DATE_RANGE_HELP}
+              rules={[dateRangeWindowRule]}
+              getValueFromEvent={dateRangeUtcFromEvent}>
+              <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              label="Platforms"
+              name="platforms"
+              rules={[{ required: true, message: 'platforms must include at least one platform' }]}
+              style={{ marginBottom: 0 }}>
+              <PlatformsPills options={PLATFORMS} />
+            </Form.Item>
+          </SectionRow>
+
+          {sectionDivider}
+
+          <SectionRow
+            title="Distribution Model"
+            description="Choose how the game build or keys will be delivered to approved participants.">
+            <Form.Item name="distributionModel" rules={[{ required: true }]} style={{ marginBottom: 0 }}>
+              <DistributionRadioCards linkageCount={linkageCount} />
+            </Form.Item>
+            {distributionModel === DistributionModel.AGS_CAMPAIGN && (
+              <Form.Item
+                label="Initial code quantity"
+                name="initialCodeQuantity"
+                rules={[{ type: 'number', min: 1, max: 50000 }]}
+                style={{ marginTop: 16, marginBottom: 0 }}>
                 <InputNumber min={1} max={50000} style={{ width: '100%' }} />
               </Form.Item>
-            )
-          }
-        </Form.Item>
-        <Form.Item
-          noStyle
-          shouldUpdate={(prev: FormValues, next: FormValues) =>
-            prev.distributionModel !== next.distributionModel ||
-            prev.adtLinkageId !== next.adtLinkageId ||
-            prev.adtGameId !== next.adtGameId ||
-            prev.adtBuildId !== next.adtBuildId
-          }>
-          {({ getFieldValue }) =>
-            getFieldValue('distributionModel') === DistributionModel.ADT && (
-              <ADTCreateFields
-                form={form}
-                linkageId={getFieldValue('adtLinkageId') ?? ''}
-                adtGameId={getFieldValue('adtGameId') ?? ''}
-                adtBuildId={getFieldValue('adtBuildId') ?? ''}
-              />
-            )
-          }
-        </Form.Item>
-        <Form.Item
-          label="Auto-approve"
-          name="autoApprove"
-          valuePropName="checked"
-          extra="Signups bypass the manual queue up to the cap below. Manual approve stays uncapped.">
-          <Switch />
-        </Form.Item>
-        <Form.Item
-          noStyle
-          shouldUpdate={(prev: FormValues, next: FormValues) => prev.autoApprove !== next.autoApprove}>
-          {({ getFieldValue }) =>
-            getFieldValue('autoApprove') && (
+            )}
+            {distributionModel === DistributionModel.ADT && (
+              <div style={{ marginTop: 16 }}>
+                <ADTCreateFields
+                  form={form}
+                  linkageId={adtLinkageId ?? ''}
+                  adtGameId={adtGameId ?? ''}
+                  adtBuildId={adtBuildId ?? ''}
+                />
+              </div>
+            )}
+          </SectionRow>
+
+          {sectionDivider}
+
+          <SectionRow title="Participant Approval" description="Configure how players are approved to join the playtest.">
+            <Form.Item name="autoApprove" style={{ marginBottom: 0 }}>
+              <ApprovalRadioCards />
+            </Form.Item>
+            {autoApprove && (
               <Form.Item
                 label="Auto-approve limit"
                 name="autoApproveLimit"
                 dependencies={['autoApprove']}
-                rules={[autoApproveLimitRule]}>
+                rules={[autoApproveLimitRule]}
+                style={{ marginTop: 16, marginBottom: 0 }}>
                 <InputNumber style={{ width: '100%' }} />
               </Form.Item>
-            )
-          }
-        </Form.Item>
+            )}
+          </SectionRow>
+
+          {sectionDivider}
+
+          <SectionRow
+            title="NDA / Confidentiality"
+            description="Optionally require players to accept a non-disclosure agreement before participating.">
+            <Form.Item name="ndaRequired" valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Checkbox>Require NDA acceptance</Checkbox>
+            </Form.Item>
+            {ndaRequired && (
+              <Form.Item
+                label="NDA text"
+                name="ndaText"
+                rules={[{ required: true, message: 'NDA text required when NDA enabled' }]}
+                style={{ marginTop: 16, marginBottom: 0 }}>
+                <Input.TextArea rows={4} />
+              </Form.Item>
+            )}
+          </SectionRow>
+        </Card>
+
         {createMutation.isError && (
-          <Form.Item>
-            <Alert type="error" message={createMutation.error?.response?.data?.errorMessage ?? 'Create failed'} />
-          </Form.Item>
+          <Alert
+            type="error"
+            style={{ marginTop: 16 }}
+            message={createMutation.error?.response?.data?.errorMessage ?? 'Create failed'}
+          />
         )}
-        <Form.Item style={{ marginBottom: 0 }}>
-          <Space>
-            <Button onClick={() => navigate('/')}>Cancel</Button>
-            <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
-              Create
-            </Button>
-          </Space>
-        </Form.Item>
+
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '16px 32px',
+            marginTop: 16,
+            background: '#fff',
+            borderRadius: 8
+          }}>
+          <Button type="link" htmlType="button" onClick={() => navigate('/')} style={{ paddingInline: 0 }}>
+            Cancel
+          </Button>
+          <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
+            Create
+          </Button>
+        </div>
       </Form>
     </>
   )
