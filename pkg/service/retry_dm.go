@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -78,7 +80,11 @@ func (s *PlaytesthubServiceServer) RetryDM(ctx context.Context, req *pb.RetryDMR
 		return nil, e
 	}
 
-	enqueueErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true, s.playerBaseURL))
+	adtURLs, err := s.maybeResolveADTURL(ctx, pt, a)
+	if err != nil {
+		return nil, err
+	}
+	enqueueErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true, s.playerBaseURL, adtURLs))
 	// The queue handles overflow internally (writes failed status +
 	// audit and returns ErrQueueFull). We re-fetch so the response
 	// shows the synchronous state change instead of the stale row.
@@ -132,7 +138,11 @@ func (s *PlaytesthubServiceServer) RetryFailedDms(ctx context.Context, req *pb.R
 
 	var enqueued, overflow int32
 	for _, a := range rows {
-		enqErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true, s.playerBaseURL))
+		adtURLs, urlErr := s.maybeResolveADTURL(ctx, pt, a)
+		if urlErr != nil {
+			return nil, urlErr
+		}
+		enqErr := s.dmQueue.Enqueue(ctx, buildDMJob(a, pt, true, s.playerBaseURL, adtURLs))
 		if errors.Is(enqErr, dmqueue.ErrQueueFull) {
 			overflow++
 			continue
@@ -143,6 +153,18 @@ func (s *PlaytesthubServiceServer) RetryFailedDms(ctx context.Context, req *pb.R
 		enqueued++
 	}
 	return &pb.RetryFailedDmsResponse{Enqueued: enqueued, Overflow: overflow}, nil
+}
+
+// maybeResolveADTURL re-mints a fresh ADT download URL list when the
+// playtest is ADT-distribution; returns nil for the other models.
+// RetryDM + RetryFailedDms call it so the queued DM carries non-stale
+// URLs — the previous ones may have expired.
+func (s *PlaytesthubServiceServer) maybeResolveADTURL(ctx context.Context, pt *repo.Playtest, a *repo.Applicant) ([]string, error) {
+	if pt.DistributionModel != distModelADT {
+		return nil, nil
+	}
+	urls, _, err := s.resolveADTDownloadURL(ctx, pt, a)
+	return urls, err
 }
 
 // buildDMJob assembles the queue Job from an applicant + playtest.
@@ -158,7 +180,7 @@ func (s *PlaytesthubServiceServer) RetryFailedDms(ctx context.Context, req *pb.R
 // taps once and lands on the granted-code view (one further Discord
 // re-auth on the player domain may be required, but no manual
 // navigation). When empty the message falls back to non-clickable copy.
-func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool, playerBaseURL string) dmqueue.Job {
+func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool, playerBaseURL string, adtDownloadURLs []string) dmqueue.Job {
 	var recipient string
 	if a.DiscordUserID != nil {
 		recipient = *a.DiscordUserID
@@ -168,7 +190,7 @@ func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool, playerBaseURL
 		PlaytestID:    a.PlaytestID,
 		UserID:        a.UserID,
 		DiscordUserID: recipient,
-		Message:       buildApprovalDMBody(pt, playerBaseURL),
+		Message:       buildApprovalDMBody(pt, playerBaseURL, adtDownloadURLs),
 		Manual:        manual,
 	}
 }
@@ -179,10 +201,111 @@ func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool, playerBaseURL
 // to keep the output well-formed even if a future PRD revision relaxes
 // slug validation; current PRD §5.1 only allows characters that survive
 // PathEscape unchanged.
-func buildApprovalDMBody(pt *repo.Playtest, playerBaseURL string) string {
-	if playerBaseURL == "" {
-		return fmt.Sprintf("You're approved for %q. Open the playtest to view your code.", pt.Title)
+//
+// ADT distribution (M5.B / dm-queue.md "DM body shape — ADT"): when
+// pt.DistributionModel == "ADT" the body lists every resolved download
+// URL. Single-file builds → "Download your playtest build for %q: %s".
+// Multi-asset builds → "Download your playtest build for %q:\n1) %s\n
+// 2) %s" so the recipient sees one tappable link per asset. RetryDM
+// re-mints fresh URLs because the previous ones may have expired.
+//
+// Survey discovery (M5 Track D phase 2 / dm-queue.md "Survey-link
+// append"): when pt.SurveyID is non-nil the body gains a second line
+// pointing at the player-side survey route. With a configured
+// playerBaseURL that line is a tappable URL —
+// "After you've played, share feedback: <base>/#/playtest/<slug>/survey"
+// — using the same hash-router shape and the same url.PathEscape slug
+// segment as the pending link. With no playerBaseURL the line falls
+// back to the non-clickable nudge
+// "Share feedback in the playtest hub after you play." so smoke /
+// offline boots still surface the survey signal without dangling URLs.
+// The append happens on both the STEAM_KEYS / AGS_CAMPAIGN and the ADT
+// branches — every approval channel carries the same feedback ask.
+func buildApprovalDMBody(pt *repo.Playtest, playerBaseURL string, adtDownloadURLs []string) string {
+	var body string
+	if pt.DistributionModel == distModelADT {
+		body = buildADTApprovalDMBody(pt.Title, adtDownloadURLs)
+	} else if playerBaseURL == "" {
+		body = fmt.Sprintf("You're approved for %q. Open the playtest to view your code.", pt.Title)
+	} else {
+		link := fmt.Sprintf("%s/#/playtest/%s/pending", playerBaseURL, url.PathEscape(pt.Slug))
+		body = fmt.Sprintf("You're approved for %q. View your code: %s", pt.Title, link)
 	}
-	link := fmt.Sprintf("%s/#/playtest/%s/pending", playerBaseURL, url.PathEscape(pt.Slug))
-	return fmt.Sprintf("You're approved for %q. View your code: %s", pt.Title, link)
+	return appendSurveyLine(body, pt, playerBaseURL)
+}
+
+// appendSurveyLine adds the survey-link line to the DM body when the
+// playtest has a survey configured. With a configured playerBaseURL the
+// line carries a tappable URL; otherwise it falls back to a
+// non-clickable nudge so the message still mentions the survey channel.
+// No-op when pt.SurveyID is nil — pre-survey playtests keep the
+// historical single-line body.
+func appendSurveyLine(body string, pt *repo.Playtest, playerBaseURL string) string {
+	if pt.SurveyID == nil {
+		return body
+	}
+	if playerBaseURL == "" {
+		return body + "\nShare feedback in the playtest hub after you play."
+	}
+	surveyLink := fmt.Sprintf("%s/#/playtest/%s/survey", playerBaseURL, url.PathEscape(pt.Slug))
+	return fmt.Sprintf("%s\nAfter you've played, share feedback: %s", body, surveyLink)
+}
+
+// buildSurveyPublishDMJob assembles the queue Job for the
+// survey-publish fan-out (M5 Track D phase 3). Recipient resolution
+// mirrors buildDMJob: applicant.discord_user_id is the snowflake; rows
+// without one fall through to the queue's missing_recipient branch.
+// Manual=false so the queue does NOT emit the manual-Retry-only
+// applicant.dm_sent audit row — survey-publish is a system-emitted
+// fan-out, not an admin click.
+func buildSurveyPublishDMJob(a *repo.Applicant, pt *repo.Playtest, playerBaseURL string, _ uuid.UUID) dmqueue.Job {
+	var recipient string
+	if a.DiscordUserID != nil {
+		recipient = *a.DiscordUserID
+	}
+	return dmqueue.Job{
+		ApplicantID:   a.ID,
+		PlaytestID:    a.PlaytestID,
+		UserID:        a.UserID,
+		DiscordUserID: recipient,
+		Message:       buildSurveyPublishDMBody(pt, playerBaseURL),
+		Manual:        false,
+	}
+}
+
+// buildSurveyPublishDMBody renders the standalone survey-publish DM
+// body sent to applicants who were approved before the survey existed
+// (M5 Track D phase 3 / docs/dm-queue.md "Survey-publish DM body"). The
+// approval DM already carries the survey nudge for applicants approved
+// after the survey is created (Track D phase 2); this body covers the
+// pre-survey cohort. With a configured playerBaseURL the link is a
+// tappable URL anchored at the same hash-router shape as the approval
+// DM's survey line; without it, the line falls back to a non-clickable
+// nudge so smoke / offline boots still surface the survey channel.
+func buildSurveyPublishDMBody(pt *repo.Playtest, playerBaseURL string) string {
+	if playerBaseURL == "" {
+		return fmt.Sprintf("Survey is live for %q — open the playtest hub to share your feedback.", pt.Title)
+	}
+	link := fmt.Sprintf("%s/#/playtest/%s/survey", playerBaseURL, url.PathEscape(pt.Slug))
+	return fmt.Sprintf("Survey is live for %q — share your feedback: %s", pt.Title, link)
+}
+
+// buildADTApprovalDMBody renders the ADT-flavoured DM body. Single-URL
+// builds keep the historical one-line copy; multi-URL builds render a
+// numbered list (`1) <url>` per line) so each asset shows as a
+// separate tappable link on Discord.
+func buildADTApprovalDMBody(title string, urls []string) string {
+	if len(urls) <= 1 {
+		var u string
+		if len(urls) == 1 {
+			u = urls[0]
+		}
+		return fmt.Sprintf("Download your playtest build for %q: %s", title, u)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Download your playtest build for %q:", title)
+	for i, u := range urls {
+		fmt.Fprintf(&b, "\n%d) %s", i+1, u)
+	}
+	return b.String()
 }

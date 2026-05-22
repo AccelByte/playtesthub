@@ -588,3 +588,245 @@ func TestApplicantUpdateStatus_RoundTrip(t *testing.T) {
 		t.Errorf("rejection_reason round-trip broke: got %v", updated.RejectionReason)
 	}
 }
+
+// TestApplicantInsert_LastSurveyDMColumnsDefaultNull pins the migration
+// 0008 contract: the two new columns default NULL on every fresh insert
+// so the M5 Track D phase 3 fan-out can treat "never DMed" as nil.
+func TestApplicantInsert_LastSurveyDMColumnsDefaultNull(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "apl-survey-dm-defaults")
+	store := repo.NewPgApplicantStore(testPool)
+
+	got, err := store.Insert(context.Background(), newApplicant(pt.ID, uuid.New()))
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if got.LastSurveyDMID != nil {
+		t.Errorf("last_survey_dm_id default = %v, want nil", got.LastSurveyDMID)
+	}
+	if got.LastSurveyDMAt != nil {
+		t.Errorf("last_survey_dm_at default = %v, want nil", got.LastSurveyDMAt)
+	}
+
+	// Round-trip via GetByID to prove the scan path handles the NULL
+	// case for the new columns.
+	roundTrip, err := store.GetByID(context.Background(), got.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if roundTrip.LastSurveyDMID != nil || roundTrip.LastSurveyDMAt != nil {
+		t.Errorf("GetByID round-trip leaked non-nil: id=%v at=%v", roundTrip.LastSurveyDMID, roundTrip.LastSurveyDMAt)
+	}
+}
+
+// TestApplicantMarkSurveyDMSent_RoundTrip writes both new columns and
+// verifies the values survive a fresh fetch — the basic write path for
+// the M5 Track D phase 3 fan-out idempotency stamp.
+func TestApplicantMarkSurveyDMSent_RoundTrip(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "apl-survey-dm-roundtrip")
+	store := repo.NewPgApplicantStore(testPool)
+	ctx := context.Background()
+
+	a, err := store.Insert(ctx, newApplicant(pt.ID, uuid.New()))
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	surveyID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	got, err := store.MarkSurveyDMSent(ctx, a.ID, surveyID, now)
+	if err != nil {
+		t.Fatalf("MarkSurveyDMSent: %v", err)
+	}
+	if got.LastSurveyDMID == nil || *got.LastSurveyDMID != surveyID {
+		t.Errorf("last_survey_dm_id = %v, want %v", got.LastSurveyDMID, surveyID)
+	}
+	if got.LastSurveyDMAt == nil || !got.LastSurveyDMAt.Equal(now) {
+		t.Errorf("last_survey_dm_at = %v, want %v", got.LastSurveyDMAt, now)
+	}
+
+	// Re-fetch to prove the values are durable, not just echoed back
+	// from the RETURNING clause.
+	fresh, err := store.GetByID(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if fresh.LastSurveyDMID == nil || *fresh.LastSurveyDMID != surveyID {
+		t.Errorf("GetByID last_survey_dm_id = %v, want %v", fresh.LastSurveyDMID, surveyID)
+	}
+}
+
+// TestApplicantMarkSurveyDMSent_MissingApplicantReturnsNotFound pins
+// the absent-row contract — the boot-time restart sweep treats this as
+// a transient race (applicant deleted mid-sweep) rather than fatal.
+func TestApplicantMarkSurveyDMSent_MissingApplicantReturnsNotFound(t *testing.T) {
+	truncateAll(t)
+	store := repo.NewPgApplicantStore(testPool)
+	_, err := store.MarkSurveyDMSent(context.Background(), uuid.New(), uuid.New(), time.Now().UTC())
+	if !errors.Is(err, repo.ErrNotFound) {
+		t.Errorf("MarkSurveyDMSent missing applicant: got %v, want ErrNotFound", err)
+	}
+}
+
+// TestApplicantListApprovedNeedingSurveyDM_FiltersExhaustively walks
+// every exclusion branch the migration 0008 fan-out predicate is
+// supposed to honour:
+//   - PENDING rows excluded (status filter)
+//   - APPROVED rows in a different playtest excluded
+//   - APPROVED rows with last_survey_dm_id == surveyID excluded (idempotent re-run)
+//   - APPROVED rows with last_survey_dm_id != surveyID INCLUDED (stale survey id)
+//   - APPROVED rows with last_survey_dm_id NULL INCLUDED (never DMed)
+//
+// NDA-currency is exercised in the dedicated test below — this one
+// keeps NDA off so the table-driven exclusions stay legible.
+func TestApplicantListApprovedNeedingSurveyDM_FiltersExhaustively(t *testing.T) {
+	truncateAll(t)
+	pt := seedPlaytest(t, "apl-survey-fanout")
+	other := seedPlaytest(t, "apl-survey-fanout-other")
+	store := repo.NewPgApplicantStore(testPool)
+	ctx := context.Background()
+
+	surveyID := uuid.New()
+	otherSurveyID := uuid.New()
+
+	approveAndStamp := func(playtestID uuid.UUID, stamp *uuid.UUID) *repo.Applicant {
+		t.Helper()
+		a, err := store.Insert(ctx, newApplicant(playtestID, uuid.New()))
+		if err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		a.Status = repo.ApplicantStatusApproved
+		now := time.Now().UTC()
+		a.ApprovedAt = &now
+		if _, err := store.UpdateStatus(ctx, a); err != nil {
+			t.Fatalf("UpdateStatus: %v", err)
+		}
+		if stamp != nil {
+			if _, err := store.MarkSurveyDMSent(ctx, a.ID, *stamp, now); err != nil {
+				t.Fatalf("MarkSurveyDMSent: %v", err)
+			}
+		}
+		got, err := store.GetByID(ctx, a.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
+		}
+		return got
+	}
+
+	// APPROVED + never DMed → eligible.
+	neverDMed := approveAndStamp(pt.ID, nil)
+	// APPROVED + DMed for stale survey id → eligible.
+	staleStamp := approveAndStamp(pt.ID, &otherSurveyID)
+	// APPROVED + DMed for the current survey id → ineligible (idempotent).
+	currentStamp := approveAndStamp(pt.ID, &surveyID)
+	// APPROVED in OTHER playtest → ineligible (scope filter).
+	otherPlaytest := approveAndStamp(other.ID, nil)
+	// PENDING in the playtest → ineligible (status filter).
+	pending, err := store.Insert(ctx, newApplicant(pt.ID, uuid.New()))
+	if err != nil {
+		t.Fatalf("Insert pending: %v", err)
+	}
+
+	got, err := store.ListApprovedNeedingSurveyDM(ctx, pt.ID, surveyID)
+	if err != nil {
+		t.Fatalf("ListApprovedNeedingSurveyDM: %v", err)
+	}
+
+	gotIDs := map[uuid.UUID]bool{}
+	for _, a := range got {
+		gotIDs[a.ID] = true
+	}
+	if !gotIDs[neverDMed.ID] {
+		t.Errorf("never-DMed applicant missing: %v", neverDMed.ID)
+	}
+	if !gotIDs[staleStamp.ID] {
+		t.Errorf("stale-survey-id applicant missing: %v", staleStamp.ID)
+	}
+	if gotIDs[currentStamp.ID] {
+		t.Errorf("current-survey-id applicant leaked: %v", currentStamp.ID)
+	}
+	if gotIDs[otherPlaytest.ID] {
+		t.Errorf("other-playtest applicant leaked: %v", otherPlaytest.ID)
+	}
+	if gotIDs[pending.ID] {
+		t.Errorf("PENDING applicant leaked: %v", pending.ID)
+	}
+	if len(got) != 2 {
+		t.Errorf("len = %d, want 2 (neverDMed + staleStamp)", len(got))
+	}
+}
+
+// TestApplicantListApprovedNeedingSurveyDM_NDARequiredGate covers the
+// migration-0008 query's NDA-currency JOIN: when the playtest requires
+// an NDA, applicants whose nda_version_hash does not match
+// playtest.current_nda_version_hash are excluded. This is the same
+// gating GetApplicantStatus's CTA renders on the player side — the DM
+// fan-out is kept consistent so we never DM a player who would land on
+// a re-accept prompt.
+func TestApplicantListApprovedNeedingSurveyDM_NDARequiredGate(t *testing.T) {
+	truncateAll(t)
+	store := repo.NewPgApplicantStore(testPool)
+	playtestStore := repo.NewPgPlaytestStore(testPool)
+	ctx := context.Background()
+
+	// Seed an NDA-required playtest. The default newSteamKeysPlaytest
+	// helper builds an NDA-not-required row; flip the bit + stamp the
+	// hash via Update so the playtest matches the gating shape.
+	pt, err := playtestStore.Create(ctx, newSteamKeysPlaytest("apl-survey-nda-gate"))
+	if err != nil {
+		t.Fatalf("Create playtest: %v", err)
+	}
+	pt.NDARequired = true
+	pt.NDAText = "legal text"
+	pt.CurrentNDAVersionHash = "sha256:current"
+	if _, err := playtestStore.Update(ctx, pt); err != nil {
+		t.Fatalf("Update playtest: %v", err)
+	}
+
+	approve := func() *repo.Applicant {
+		t.Helper()
+		a, err := store.Insert(ctx, newApplicant(pt.ID, uuid.New()))
+		if err != nil {
+			t.Fatalf("Insert: %v", err)
+		}
+		a.Status = repo.ApplicantStatusApproved
+		now := time.Now().UTC()
+		a.ApprovedAt = &now
+		if _, err := store.UpdateStatus(ctx, a); err != nil {
+			t.Fatalf("UpdateStatus: %v", err)
+		}
+		return a
+	}
+
+	current := approve()
+	if _, err := store.SetNDAVersionHash(ctx, current.ID, "sha256:current"); err != nil {
+		t.Fatalf("SetNDAVersionHash current: %v", err)
+	}
+	stale := approve()
+	if _, err := store.SetNDAVersionHash(ctx, stale.ID, "sha256:OLD"); err != nil {
+		t.Fatalf("SetNDAVersionHash stale: %v", err)
+	}
+	// NDA-unset applicant (never accepted) — still excluded.
+	neverAccepted := approve()
+
+	got, err := store.ListApprovedNeedingSurveyDM(ctx, pt.ID, uuid.New())
+	if err != nil {
+		t.Fatalf("ListApprovedNeedingSurveyDM: %v", err)
+	}
+	gotIDs := map[uuid.UUID]bool{}
+	for _, a := range got {
+		gotIDs[a.ID] = true
+	}
+	if !gotIDs[current.ID] {
+		t.Errorf("NDA-current applicant missing: %v", current.ID)
+	}
+	if gotIDs[stale.ID] {
+		t.Errorf("NDA-stale applicant leaked: %v", stale.ID)
+	}
+	if gotIDs[neverAccepted.ID] {
+		t.Errorf("NDA-unset applicant leaked: %v", neverAccepted.ID)
+	}
+	if len(got) != 1 {
+		t.Errorf("len = %d, want 1 (only NDA-current)", len(got))
+	}
+}

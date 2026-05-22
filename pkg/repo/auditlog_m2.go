@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/anggorodewanto/playtesthub/pkg/agsid"
 )
 
 // Audit-action constants for the M2 set. Doc-of-truth: schema.md
@@ -56,6 +58,24 @@ func AppendApplicantApprove(ctx context.Context, store AuditLogStore, namespace 
 	})
 }
 
+// AppendApplicantApproveADT records a successful PENDING → APPROVED
+// transition for an ADT-distribution playtest. There is no code pool /
+// grantedCodeId; the row carries the resolved download URL list + its
+// source ("issued" via adt.Client.IssueDownloadURL or "fallback" to
+// the playtest's static adtFallbackDownloadUrl — single-element list
+// in the fallback case). URLs are NOT redacted — they are
+// operationally distinct from redemption codes and per STATUS_M5.md
+// B6 their presence in audit is forensically required.
+func AppendApplicantApproveADT(ctx context.Context, store AuditLogStore, namespace string, playtestID, actor, applicantID uuid.UUID, adtURLs []string, adtURLSource string) error {
+	urls := make([]string, len(adtURLs))
+	copy(urls, adtURLs)
+	return appendAction(ctx, store, namespace, &playtestID, &actor, ActionApplicantApprove, map[string]any{
+		"applicantId":  applicantID.String(),
+		"adtUrls":      urls,
+		"adtUrlSource": adtURLSource,
+	})
+}
+
 // AppendApplicantReject records the terminal PENDING → REJECTED
 // transition. rejectionReason may be empty.
 func AppendApplicantReject(ctx context.Context, store AuditLogStore, namespace string, playtestID, actor, applicantID uuid.UUID, rejectionReason string) error {
@@ -94,7 +114,7 @@ func AppendCodeGrantOrphaned(ctx context.Context, store AuditLogStore, namespace
 	return appendAction(ctx, store, namespace, &playtestID, nil, ActionCodeGrantOrphaned, map[string]any{
 		"applicantId":        applicantID.String(),
 		"codeId":             codeID.String(),
-		"userId":             userID.String(),
+		"userId":             agsid.Format(userID),
 		"originalReservedAt": originalReservedAt.UTC().Format(time.RFC3339Nano),
 	})
 }

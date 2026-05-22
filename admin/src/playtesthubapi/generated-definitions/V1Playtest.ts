@@ -31,7 +31,11 @@ export const V1Playtest = z.object({
   updatedAt: z.string().nullish(),
   deletedAt: z.string().nullish(),
   autoApprove: z.boolean().nullish(),
-  autoApproveLimit: z.number().int().nullish()
+  autoApproveLimit: z.number().int().nullish(),
+  adtNamespace: z.string().nullish(),
+  adtGameId: z.string().nullish(),
+  adtBuildId: z.string().nullish(),
+  adtFallbackDownloadUrl: z.string().nullish()
 })
 
 export interface V1Playtest extends z.TypeOf<typeof V1Playtest> {}

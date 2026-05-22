@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 
+	"github.com/anggorodewanto/playtesthub/pkg/agsid"
 	"github.com/anggorodewanto/playtesthub/pkg/discord"
 	iampkg "github.com/anggorodewanto/playtesthub/pkg/iam"
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
@@ -96,8 +98,8 @@ func TestSignup_HappyPath_CreatesPendingApplicant(t *testing.T) {
 	if resp.GetApplicant().GetStatus() != pb.ApplicantStatus_APPLICANT_STATUS_PENDING {
 		t.Errorf("status = %s, want PENDING", resp.GetApplicant().GetStatus())
 	}
-	if resp.GetApplicant().GetUserId() != userID.String() {
-		t.Errorf("user_id = %q, want %q", resp.GetApplicant().GetUserId(), userID.String())
+	if got, want := resp.GetApplicant().GetUserId(), agsid.Format(userID); got != want {
+		t.Errorf("user_id = %q, want %q", got, want)
 	}
 	if !lookup.called {
 		t.Error("expected discord lookup to run")
@@ -227,8 +229,8 @@ func TestSignup_DiscordFederated_LookupFails_FallsBackToUserID(t *testing.T) {
 	if got := applicants.rows[0].DiscordUserID; got != nil {
 		t.Errorf("discord_user_id = %v, want nil on lookup failure", got)
 	}
-	if got := applicants.rows[0].DiscordHandle; got != userID.String() {
-		t.Errorf("discord_handle = %q, want %s (uuid fallback)", got, userID)
+	if got, want := applicants.rows[0].DiscordHandle, agsid.Format(userID); got != want {
+		t.Errorf("discord_handle = %q, want %s (uuid fallback)", got, want)
 	}
 }
 
@@ -248,8 +250,8 @@ func TestSignup_NoDiscordIDInCtx_FallsBackToUserID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if got := applicants.rows[0].DiscordHandle; got != userID.String() {
-		t.Errorf("fallback handle = %q, want %s (AGS user id)", got, userID)
+	if got, want := applicants.rows[0].DiscordHandle, agsid.Format(userID); got != want {
+		t.Errorf("fallback handle = %q, want %s (AGS user id)", got, want)
 	}
 	// Non-Discord-federated → no snowflake to persist; queue will skip
 	// with `lastDmError='missing_recipient'` (errors.md).
@@ -474,4 +476,70 @@ func TestGetApplicantStatus_MissingActor_Unauthenticated(t *testing.T) {
 	svr, _, _ := newTestServer()
 	_, err := svr.GetApplicantStatus(context.Background(), &pb.GetApplicantStatusRequest{Slug: "any"})
 	requireStatus(t, err, codes.Unauthenticated)
+}
+
+// PRD §5.6 + survey-discovery phase 1: when the surveyResponse store is
+// wired but the caller has not submitted a response, the player-visible
+// Applicant payload leaves SurveyResponseSubmittedAt unset so the
+// Pending CTA can render the "Submit feedback" affordance.
+func TestGetApplicantStatus_SurveyNotSubmitted_TimestampUnset(t *testing.T) {
+	svr, store, applicants := newTestServer()
+	responses := &fakeSurveyResponseStore{}
+	svr = svr.WithSurveyResponseStore(responses)
+
+	pt := openPlaytest("game")
+	store.rows = append(store.rows, pt)
+
+	userID := uuid.New()
+	applicants.rows = append(applicants.rows, &repo.Applicant{
+		ID: uuid.New(), PlaytestID: pt.ID, UserID: userID,
+		Status: "APPROVED",
+	})
+
+	resp, err := svr.GetApplicantStatus(signupCtx(userID, "1"), &pb.GetApplicantStatusRequest{Slug: "game"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if resp.GetApplicant().GetSurveyResponseSubmittedAt() != nil {
+		t.Fatalf("expected SurveyResponseSubmittedAt unset, got %v", resp.GetApplicant().GetSurveyResponseSubmittedAt())
+	}
+}
+
+// PRD §5.6 + survey-discovery phase 1: when a response row exists, the
+// player-visible Applicant payload carries SurveyResponseSubmittedAt =
+// row.SubmittedAt so the Pending CTA can flip to "Feedback submitted ✓"
+// without an extra round-trip.
+func TestGetApplicantStatus_SurveySubmitted_TimestampPopulated(t *testing.T) {
+	svr, store, applicants := newTestServer()
+	responses := &fakeSurveyResponseStore{}
+	svr = svr.WithSurveyResponseStore(responses)
+
+	pt := openPlaytest("game")
+	store.rows = append(store.rows, pt)
+
+	userID := uuid.New()
+	applicants.rows = append(applicants.rows, &repo.Applicant{
+		ID: uuid.New(), PlaytestID: pt.ID, UserID: userID,
+		Status: "APPROVED",
+	})
+	submittedAt := time.Date(2026, 5, 22, 9, 0, 0, 0, time.UTC)
+	responses.rows = append(responses.rows, &repo.SurveyResponse{
+		ID:          uuid.New(),
+		PlaytestID:  pt.ID,
+		UserID:      userID,
+		SurveyID:    uuid.New(),
+		SubmittedAt: submittedAt,
+	})
+
+	resp, err := svr.GetApplicantStatus(signupCtx(userID, "1"), &pb.GetApplicantStatusRequest{Slug: "game"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	got := resp.GetApplicant().GetSurveyResponseSubmittedAt()
+	if got == nil {
+		t.Fatal("expected SurveyResponseSubmittedAt populated, got nil")
+	}
+	if !got.AsTime().Equal(submittedAt) {
+		t.Fatalf("SurveyResponseSubmittedAt = %s, want %s", got.AsTime(), submittedAt)
+	}
 }

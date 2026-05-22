@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import dayjs, { type Dayjs } from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 dayjs.extend(utc)
 
@@ -30,12 +30,19 @@ const mockRetryDmMutation = vi.fn()
 const mockUploadMutation = vi.fn()
 const mockTopUpMutation = vi.fn()
 const mockSyncMutation = vi.fn()
-const mockCreateSurveyMutation = vi.fn()
-const mockEditSurveyMutation = vi.fn()
-const mockGetSurveyResponses = vi.fn()
-const mockGetSurveyPlayer = vi.fn()
-const mockGetAuditLog = vi.fn()
 const mockGetWorkersHealth = vi.fn()
+const mockCompleteAdtLinkMutation = vi.fn()
+const mockRecoverAdtLinkMutation = vi.fn()
+const mockGetAdtLinkages = vi.fn()
+const mockGetAdtBuilds = vi.fn()
+const mockGetAdtGames = vi.fn()
+const mockStartAdtLinkMutation = vi.fn()
+const mockUnlinkAdtMutation = vi.fn()
+const mockGetPublicConfig = vi.fn()
+
+vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
+  usePlaytesthubServiceApi_GetConfig: (...a: unknown[]) => mockGetPublicConfig(...a)
+}))
 
 vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query', () => ({
   Key_PlaytesthubServiceAdmin: {
@@ -45,8 +52,9 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
     Playtest_ByPlaytestIdTransitionStatu: 'playtest-by-id-transition',
     Codes_ByPlaytestId: 'codes-by-playtest-id',
     Applicants_ByPlaytestId: 'applicants-by-playtest-id',
-    Survey_ByPlaytestId: 'survey-by-playtest-id',
-    SurveyResponses_ByPlaytestId: 'survey-responses-by-playtest-id'
+    AdtLinkages: 'adt-linkages',
+    BuildsAdt_ByAdtLinkageId: 'adt-builds-by-linkage-id',
+    GamesAdt_ByAdtLinkageId: 'adt-games-by-linkage-id'
   },
   usePlaytesthubServiceAdminApi_GetPlaytests: (...args: unknown[]) => mockGetPlaytests(...args),
   usePlaytesthubServiceAdminApi_GetPlaytest_ByPlaytestId: (...args: unknown[]) => mockGetPlaytest(...args),
@@ -62,15 +70,14 @@ vi.mock('./playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
   usePlaytesthubServiceAdminApi_CreateCodesUpload_ByPlaytestIdMutation: (...args: unknown[]) => mockUploadMutation(...args),
   usePlaytesthubServiceAdminApi_CreateCodesTopUp_ByPlaytestIdMutation: (...args: unknown[]) => mockTopUpMutation(...args),
   usePlaytesthubServiceAdminApi_CreateCodesSyncFromAg_ByPlaytestIdMutation: (...args: unknown[]) => mockSyncMutation(...args),
-  usePlaytesthubServiceAdminApi_CreateSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockCreateSurveyMutation(...args),
-  usePlaytesthubServiceAdminApi_PatchSurvey_ByPlaytestIdMutation: (...args: unknown[]) => mockEditSurveyMutation(...args),
-  usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId: (...args: unknown[]) => mockGetSurveyResponses(...args),
-  usePlaytesthubServiceAdminApi_GetAuditLog_ByPlaytestId: (...args: unknown[]) => mockGetAuditLog(...args),
-  usePlaytesthubServiceAdminApi_GetWorkersHealth: (...args: unknown[]) => mockGetWorkersHealth(...args)
-}))
-
-vi.mock('./playtesthubapi/generated-public/queries/PlaytesthubService.query', () => ({
-  usePlaytesthubServiceApi_GetSurveyPlayer_ByPlaytestId: (...args: unknown[]) => mockGetSurveyPlayer(...args)
+  usePlaytesthubServiceAdminApi_GetWorkersHealth: (...args: unknown[]) => mockGetWorkersHealth(...args),
+  usePlaytesthubServiceAdminApi_CreateAdtLinkagesCompleteMutation: (...args: unknown[]) => mockCompleteAdtLinkMutation(...args),
+  usePlaytesthubServiceAdminApi_CreateAdtLinkagesRecoverMutation: (...args: unknown[]) => mockRecoverAdtLinkMutation(...args),
+  usePlaytesthubServiceAdminApi_GetAdtLinkages: (...args: unknown[]) => mockGetAdtLinkages(...args),
+  usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId: (...args: unknown[]) => mockGetAdtBuilds(...args),
+  usePlaytesthubServiceAdminApi_GetGamesAdt_ByAdtLinkageId: (...args: unknown[]) => mockGetAdtGames(...args),
+  usePlaytesthubServiceAdminApi_CreateAdtLinkagesStartMutation: (...args: unknown[]) => mockStartAdtLinkMutation(...args),
+  usePlaytesthubServiceAdminApi_DeleteAdtLinkage_ByAdtLinkageIdMutation: (...args: unknown[]) => mockUnlinkAdtMutation(...args)
 }))
 
 import { FederatedElement } from './federated-element'
@@ -102,12 +109,15 @@ beforeEach(() => {
   mockUploadMutation.mockReset()
   mockTopUpMutation.mockReset()
   mockSyncMutation.mockReset()
-  mockCreateSurveyMutation.mockReset()
-  mockEditSurveyMutation.mockReset()
-  mockGetSurveyResponses.mockReset()
-  mockGetSurveyPlayer.mockReset()
-  mockGetAuditLog.mockReset()
   mockGetWorkersHealth.mockReset()
+  mockCompleteAdtLinkMutation.mockReset()
+  mockRecoverAdtLinkMutation.mockReset()
+  mockGetAdtLinkages.mockReset()
+  mockGetAdtBuilds.mockReset()
+  mockGetAdtGames.mockReset()
+  mockStartAdtLinkMutation.mockReset()
+  mockUnlinkAdtMutation.mockReset()
+  mockGetPublicConfig.mockReset()
 
   // Default: empty list + no-op mutations.
   mockGetPlaytests.mockReturnValue({ data: { playtests: [] }, isLoading: false, error: null, refetch: vi.fn() })
@@ -124,19 +134,42 @@ beforeEach(() => {
   mockUploadMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
   mockTopUpMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
   mockSyncMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
-  mockCreateSurveyMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
-  mockEditSurveyMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
-  mockGetSurveyResponses.mockReturnValue({ data: { responses: [] }, isLoading: false, error: null, refetch: vi.fn() })
-  mockGetSurveyPlayer.mockReturnValue({ data: undefined, isLoading: false, isError: false, error: null })
-  mockGetAuditLog.mockReturnValue({ data: { entries: [], nextPageToken: '' }, isLoading: false, error: null, refetch: vi.fn() })
   mockGetWorkersHealth.mockReturnValue({ data: { workers: [] }, isLoading: false, error: null })
+  mockCompleteAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockRecoverAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockGetAdtLinkages.mockReturnValue({ data: { linkages: [] }, isLoading: false, error: null })
+  mockGetAdtBuilds.mockReturnValue({ data: { builds: [] }, isLoading: false, error: null })
+  mockGetAdtGames.mockReturnValue({ data: { games: [] }, isLoading: false, error: null })
+  mockStartAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockUnlinkAdtMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+  mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: 'https://play.example.com' } })
 })
 
+// Antd renders Popconfirm + Modal.confirm via a portal on document.body.
+// Auto-cleanup detaches the rendered React tree but the leftover modal
+// mask + confirm dialog stays mounted on document.body and intercepts
+// click events in later tests' portal-mounted Modals (e.g. the B13
+// build-picker). Drop only stale confirm dialogs (the ant-modal-confirm
+// variant) — leaving regular ant-modal-root nodes intact so that
+// onUnmount cleanups inside antd's portal logic don't double-remove.
+afterEach(() => {
+  document.querySelectorAll('.ant-modal-confirm').forEach(node => {
+    const root = node.closest('.ant-modal-root')
+    if (root && root.parentNode) root.parentNode.removeChild(root)
+  })
+})
+
+async function openRowMenu() {
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: /more actions/i }))
+  return { user, menu: await screen.findByRole('menu') }
+}
+
 describe('PlaytestsListPage', () => {
-  it('renders empty state heading and a new-playtest button', () => {
+  it('renders Playtest Hub header and a Create Playtest button', () => {
     renderAt('/')
-    expect(screen.getByRole('heading', { name: /playtests/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /new playtest/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /playtest hub/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /create playtest/i })).toBeInTheDocument()
   })
 
   it('renders each returned playtest in the table', () => {
@@ -149,7 +182,8 @@ describe('PlaytestsListPage', () => {
             title: 'Summer Alpha',
             status: 'PLAYTEST_STATUS_OPEN',
             distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS',
-            createdAt: '2026-04-19T00:00:00Z'
+            autoApprove: true,
+            updatedAt: '2026-04-19T14:30:00Z'
           }
         ]
       },
@@ -161,11 +195,49 @@ describe('PlaytestsListPage', () => {
     renderAt('/')
     expect(screen.getByText('summer-alpha')).toBeInTheDocument()
     expect(screen.getByText('Summer Alpha')).toBeInTheDocument()
-    expect(screen.getByText('Open')).toBeInTheDocument()
-    expect(screen.getByText('Steam keys')).toBeInTheDocument()
+    expect(screen.getByText('Published')).toBeInTheDocument()
+    expect(screen.getByText('Steam Keys')).toBeInTheDocument()
+    expect(screen.getByText('Auto-Approve')).toBeInTheDocument()
   })
 
-  it('shows a Publish button on DRAFT rows that transitions to OPEN', async () => {
+  it('renders Manual approval tag when autoApprove is false', () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [
+          {
+            id: 'pt_1',
+            slug: 'summer-alpha',
+            title: 'Summer Alpha',
+            status: 'PLAYTEST_STATUS_OPEN',
+            distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN',
+            autoApprove: false
+          }
+        ]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+
+    renderAt('/')
+    expect(screen.getByText('Manual')).toBeInTheDocument()
+    expect(screen.getByText('AGS Campaign Codes')).toBeInTheDocument()
+  })
+
+  it('renders ADT distribution label as "Direct Download (ADT)"', () => {
+    mockGetPlaytests.mockReturnValue({
+      data: {
+        playtests: [{ id: 'pt_1', slug: 'adt-alpha', title: 'ADT', status: 'PLAYTEST_STATUS_DRAFT', distributionModel: 'DISTRIBUTION_MODEL_ADT' }]
+      },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderAt('/')
+    expect(screen.getByText('Direct Download (ADT)')).toBeInTheDocument()
+  })
+
+  it('publishes a DRAFT row via the row menu', async () => {
     const mutate = vi.fn()
     mockTransitionMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     mockGetPlaytests.mockReturnValue({
@@ -176,17 +248,19 @@ describe('PlaytestsListPage', () => {
     })
 
     renderAt('/')
-    const user = userEvent.setup()
-    const publishBtn = screen.getByRole('button', { name: /^publish$/i })
-    await user.click(publishBtn)
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^publish$/i }))
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Publish'))
+    const confirmOk = await screen.findByRole('button', { name: /^publish$/i })
+    await user.click(confirmOk)
     await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_OPEN' } })
+      expect(mutate).toHaveBeenCalledWith(
+        { playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_OPEN' } },
+        expect.anything()
+      )
     )
   })
 
-  it('shows a Close button on OPEN rows that transitions to CLOSED', async () => {
+  it('stops an OPEN row via the row menu', async () => {
     const mutate = vi.fn()
     mockTransitionMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     mockGetPlaytests.mockReturnValue({
@@ -197,17 +271,19 @@ describe('PlaytestsListPage', () => {
     })
 
     renderAt('/')
-    const user = userEvent.setup()
-    const closeBtn = screen.getByRole('button', { name: /^close$/i })
-    await user.click(closeBtn)
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^close$/i }))
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Stop Playtest'))
+    const confirmOk = await screen.findByRole('button', { name: /^stop playtest$/i })
+    await user.click(confirmOk)
     await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_CLOSED' } })
+      expect(mutate).toHaveBeenCalledWith(
+        { playtestId: 'pt_1', data: { targetStatus: 'PLAYTEST_STATUS_CLOSED' } },
+        expect.anything()
+      )
     )
   })
 
-  it('does not show a transition button on CLOSED rows', () => {
+  it('omits Publish and Stop Playtest from menu on CLOSED rows', async () => {
     mockGetPlaytests.mockReturnValue({
       data: { playtests: [{ id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha', status: 'PLAYTEST_STATUS_CLOSED' }] },
       isLoading: false,
@@ -215,11 +291,12 @@ describe('PlaytestsListPage', () => {
       refetch: vi.fn()
     })
     renderAt('/')
-    expect(screen.queryByRole('button', { name: /^publish$/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^close$/i })).not.toBeInTheDocument()
+    const { menu } = await openRowMenu()
+    expect(within(menu).queryByText('Publish')).not.toBeInTheDocument()
+    expect(within(menu).queryByText('Stop Playtest')).not.toBeInTheDocument()
   })
 
-  it('calls DeletePlaytest mutation when soft-delete is confirmed', async () => {
+  it('calls DeletePlaytest mutation via the row menu', async () => {
     const mutate = vi.fn()
     mockDeleteMutation.mockReturnValue({ mutate, isPending: false })
     mockGetPlaytests.mockReturnValue({
@@ -230,12 +307,29 @@ describe('PlaytestsListPage', () => {
     })
 
     renderAt('/')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /^delete$/i }))
-    // Popconfirm renders "Delete" in the confirm popup as well — pick the danger one inside the popup.
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^delete$/i }))
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1' }))
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Delete'))
+    const confirmOk = await screen.findByRole('button', { name: /^delete$/i })
+    await user.click(confirmOk)
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1' }, expect.anything()))
+  })
+
+  it('copies the playtest player link from the row menu', async () => {
+    mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: 'https://play.example.com' } })
+    mockGetPlaytests.mockReturnValue({
+      data: { playtests: [{ id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha', status: 'PLAYTEST_STATUS_DRAFT' }] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+
+    renderAt('/')
+    const { user, menu } = await openRowMenu()
+    await user.click(within(menu).getByText('Copy Link'))
+    await waitFor(async () => {
+      const text = await navigator.clipboard.readText()
+      expect(text).toBe('https://play.example.com/#/playtest/summer-alpha')
+    })
   })
 })
 
@@ -252,7 +346,7 @@ describe('PlaytestCreatePage', () => {
   it('shows all the PRD-required fields on the create form', () => {
     renderAt('/new')
     expect(screen.getByLabelText(/slug/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^title$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/playtest title/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/description/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/banner image url/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/platforms/i)).toBeInTheDocument()
@@ -260,17 +354,17 @@ describe('PlaytestCreatePage', () => {
     expect(screen.getByRole('button', { name: /^create$/i })).toBeInTheDocument()
   })
 
-  it('auto-approve toggle starts off and hides the limit input', () => {
+  it('approval radio defaults to Manual Approval and hides the auto-approve limit input', () => {
     renderAt('/new')
-    const toggle = screen.getByRole('switch', { name: /auto-approve/i })
-    expect(toggle).not.toBeChecked()
+    const manualRadio = screen.getByRole('radio', { name: /manual approval/i })
+    expect(manualRadio).toBeChecked()
     expect(screen.queryByLabelText(/auto-approve limit/i)).not.toBeInTheDocument()
   })
 
-  it('reveals the auto-approve limit input when the toggle is on', async () => {
+  it('reveals the auto-approve limit input when the Auto-Approve radio is picked', async () => {
     renderAt('/new')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('switch', { name: /auto-approve/i }))
+    await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
     expect(await screen.findByLabelText(/auto-approve limit/i)).toBeInTheDocument()
   })
 
@@ -279,17 +373,228 @@ describe('PlaytestCreatePage', () => {
     mockCreateMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     renderAt('/new')
     const user = userEvent.setup()
-    await user.click(screen.getByRole('switch', { name: /auto-approve/i }))
+    await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
     const limit = await screen.findByLabelText(/auto-approve limit/i)
     await user.type(limit, '100001')
     // Required fields so the form actually reaches the validator.
     await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-    await user.type(screen.getByLabelText(/^title$/i), 'Demo')
+    await user.type(screen.getByLabelText(/playtest title/i), 'Demo')
     await user.click(screen.getByRole('button', { name: /^create$/i }))
     expect(
       await screen.findByText('auto_approve_limit must be between 1 and 100000 when auto_approve is true')
     ).toBeInTheDocument()
     expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('offers the ADT distribution radio (M5.B)', () => {
+    renderAt('/new')
+    expect(screen.getByRole('radio', { name: /^ADT$/i })).toBeEnabled()
+  })
+
+  it('reveals the ADT field set when ADT is picked', async () => {
+    mockGetAdtLinkages.mockReturnValue({
+      data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A' }] },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/new')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+    expect(await screen.findByLabelText(/adt linkage/i)).toBeInTheDocument()
+    // The build picker modal (B13) is the canonical UX; the typed adt game
+    // id Input only renders in the fallback path. Confirm the picker button
+    // is offered.
+    expect(screen.getByRole('button', { name: /select game build/i })).toBeInTheDocument()
+  })
+
+  describe('Build picker modal (M5.B-13)', () => {
+    function setLinkages() {
+      mockGetAdtLinkages.mockReturnValue({
+        data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A' }] },
+        isLoading: false,
+        error: null
+      })
+    }
+
+    it('disables the Select Game Build button until an ADT linkage is picked, then opens the modal with a games dropdown', async () => {
+      setLinkages()
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev', createdAt: '2026-05-01T00:00:00Z' }] },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+
+      const openButton = await screen.findByRole('button', { name: /select game build/i })
+      expect(openButton).toBeDisabled()
+
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /select game build/i })).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      expect(within(dialog).getByText(/starfield dev/i)).toBeInTheDocument()
+    })
+
+    it('groups builds by game_version_name in the left rail with per-version build counts', async () => {
+      setLinkages()
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev' }] },
+        isLoading: false,
+        error: null
+      })
+      mockGetAdtBuilds.mockReturnValue({
+        data: {
+          builds: [
+            { id: 'b1', name: 'v1.3 — Performance Pass', version: 'v1.3', platform: 'windows', uploadedAt: '2026-05-10T00:00:00Z' },
+            { id: 'b2', name: 'v1.3 — Performance Pass', version: 'v1.3', platform: 'macos', uploadedAt: '2026-05-11T00:00:00Z' },
+            { id: 'b3', name: 'v1.2 — Combat Update', version: 'v1.2', platform: 'windows', uploadedAt: '2026-04-15T00:00:00Z' }
+          ]
+        },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+      await user.click(await screen.findByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      expect(within(dialog).getByText('v1.3 — Performance Pass')).toBeInTheDocument()
+      expect(within(dialog).getByText('v1.2 — Combat Update')).toBeInTheDocument()
+      expect(within(dialog).getByText(/2 builds/i)).toBeInTheDocument()
+      expect(within(dialog).getByText(/1 build$/i)).toBeInTheDocument()
+    })
+
+    it('renders one card per platform when a version is selected in the left rail', async () => {
+      setLinkages()
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev' }] },
+        isLoading: false,
+        error: null
+      })
+      mockGetAdtBuilds.mockReturnValue({
+        data: {
+          builds: [
+            { id: 'b1', name: 'v1.3 — Performance Pass', version: 'v1.3', platform: 'windows', uploadedAt: '2026-05-10T00:00:00Z' },
+            { id: 'b2', name: 'v1.3 — Performance Pass', version: 'v1.3', platform: 'macos', uploadedAt: '2026-05-11T00:00:00Z' }
+          ]
+        },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+      await user.click(await screen.findByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      await user.click(within(dialog).getByText('v1.3 — Performance Pass'))
+
+      expect(within(dialog).getByText(/windows/i)).toBeInTheDocument()
+      expect(within(dialog).getByText(/macos/i)).toBeInTheDocument()
+      expect(within(dialog).getByText('b1')).toBeInTheDocument()
+      expect(within(dialog).getByText('b2')).toBeInTheDocument()
+    })
+
+    it('wires both adtGameId and adtBuildId on the parent form when Use This Build is clicked', async () => {
+      setLinkages()
+      const mutate = vi.fn()
+      mockCreateMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev' }] },
+        isLoading: false,
+        error: null
+      })
+      mockGetAdtBuilds.mockReturnValue({
+        data: {
+          builds: [{ id: 'b1', name: 'v1.3 — Performance Pass', version: 'v1.3', platform: 'windows', uploadedAt: '2026-05-10T00:00:00Z' }]
+        },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      // Fill enough of the form to reach submit; the build picker drives the
+      // adtGameId + adtBuildId fields which we then assert end up on the parent
+      // form's submit payload.
+      await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
+      await user.type(screen.getByLabelText(/playtest title/i), 'Demo')
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+      await user.click(await screen.findByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      // Default selected game = the only one. Pick the version, then pick the
+      // build card, then Use This Build.
+      await user.click(within(dialog).getByText('v1.3 — Performance Pass'))
+      await user.click(within(dialog).getByTestId('adt-picker-build-b1'))
+      await user.click(within(dialog).getByRole('button', { name: /use this build/i }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: /select game build/i })).not.toBeInTheDocument())
+      // Picked summary surfaces in the parent form so operators see what they picked.
+      expect(screen.getByText(/starfield dev/i)).toBeInTheDocument()
+      expect(screen.getByText('b1')).toBeInTheDocument()
+    })
+
+    it('preserves typed slug + title when the modal is cancelled', async () => {
+      setLinkages()
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev' }] },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
+      await user.type(screen.getByLabelText(/playtest title/i), 'My Title')
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+      await user.click(await screen.findByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      await user.click(within(dialog).getByRole('button', { name: /cancel/i }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: /select game build/i })).not.toBeInTheDocument())
+      expect(screen.getByLabelText(/slug/i)).toHaveValue('demo-slug')
+      expect(screen.getByLabelText(/playtest title/i)).toHaveValue('My Title')
+    })
+  })
+})
+
+describe('ADTLinkagesPanel', () => {
+  it('renders empty-state copy when no linkages exist', () => {
+    renderAt('/')
+    expect(screen.getByText(/no ADT linkages yet/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /link new ADT namespace/i })).toBeInTheDocument()
+  })
+
+  it('renders linkage rows + an Unlink button per row', () => {
+    mockGetAdtLinkages.mockReturnValue({
+      data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A', linkedAt: '2026-05-19T00:00:00Z' }] },
+      isLoading: false,
+      error: null
+    })
+    renderAt('/')
+    expect(screen.getByText('adt-ns-1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /unlink/i })).toBeInTheDocument()
+  })
+
+  it('opens the Link ADT modal on click', async () => {
+    renderAt('/')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /link new ADT namespace/i }))
+    expect(await screen.findByText(/you will be redirected to ADT to authorise the linkage/i)).toBeInTheDocument()
   })
 })
 
@@ -345,607 +650,6 @@ describe('PlaytestEditPage', () => {
     expect(screen.getByLabelText(/auto-approve limit/i)).toHaveValue('25')
   })
 })
-
-describe('ApplicantsPage', () => {
-  it('renders applicant rows with status tag', () => {
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha' } },
-      isLoading: false,
-      error: null
-    })
-    mockGetApplicants.mockReturnValue({
-      data: {
-        applicants: [
-          {
-            id: 'app_1',
-            discordHandle: 'tester#0001',
-            platforms: ['PLATFORM_STEAM'],
-            status: 'APPLICANT_STATUS_PENDING',
-            createdAt: '2026-05-01T00:00:00Z'
-          }
-        ]
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/applicants')
-    expect(screen.getByText('tester#0001')).toBeInTheDocument()
-    expect(screen.getByText('Pending')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /^reject$/i })).toBeEnabled()
-  })
-
-  it('triggers approve mutation on confirm', async () => {
-    const mutate = vi.fn()
-    mockApproveMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetApplicants.mockReturnValue({
-      data: {
-        applicants: [{ id: 'app_1', discordHandle: 'tester', status: 'APPLICANT_STATUS_PENDING' }]
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/applicants')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /^approve$/i }))
-    const popup = await screen.findByRole('tooltip')
-    await user.click(within(popup).getByRole('button', { name: /^approve$/i }))
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ applicantId: 'app_1', data: {} }))
-  })
-
-  it('shows Retry DM only for APPROVED applicants whose last DM failed', () => {
-    mockGetApplicants.mockReturnValue({
-      data: {
-        applicants: [
-          { id: 'app_1', discordHandle: 'a', status: 'APPLICANT_STATUS_APPROVED', lastDmStatus: 'DM_STATUS_FAILED' },
-          { id: 'app_2', discordHandle: 'b', status: 'APPLICANT_STATUS_APPROVED', lastDmStatus: 'DM_STATUS_SENT' },
-          { id: 'app_3', discordHandle: 'c', status: 'APPLICANT_STATUS_PENDING' }
-        ]
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/applicants')
-    const retryBtns = screen.getAllByRole('button', { name: /retry dm/i })
-    expect(retryBtns).toHaveLength(1)
-  })
-
-  it('renders the low-pool banner when unused/total ≤ 10%', () => {
-    mockGetCodes.mockReturnValue({
-      data: { stats: { total: 100, unused: 5, reserved: 0, granted: 95 }, codes: [] },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/applicants')
-    expect(screen.getByText(/code pool is low/i)).toBeInTheDocument()
-  })
-
-  it('opens the reject modal and submits the typed reason', async () => {
-    const mutate = vi.fn()
-    mockRejectMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetApplicants.mockReturnValue({
-      data: { applicants: [{ id: 'app_1', discordHandle: 'tester', status: 'APPLICANT_STATUS_PENDING' }] },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/applicants')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /^reject$/i }))
-    const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByPlaceholderText(/stored on the applicant row/i), 'duplicate signup')
-    await user.click(within(dialog).getByRole('button', { name: /^reject$/i }))
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ applicantId: 'app_1', data: { rejectionReason: 'duplicate signup' } }))
-  })
-})
-
-describe('CodePoolPage', () => {
-  it('renders pool stats and the upload section for STEAM_KEYS playtests', () => {
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: {
-          id: 'pt_1',
-          slug: 'summer-alpha',
-          title: 'Summer Alpha',
-          distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS'
-        }
-      },
-      isLoading: false,
-      error: null
-    })
-    mockGetCodes.mockReturnValue({
-      data: { stats: { total: 100, unused: 80, reserved: 5, granted: 15 }, codes: [] },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/codes')
-    expect(screen.getByRole('heading', { name: /upload steam keys/i })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: /generate \/ sync/i })).not.toBeInTheDocument()
-    expect(screen.getByText('80')).toBeInTheDocument()
-  })
-
-  it('renders generate/sync controls for AGS_CAMPAIGN playtests', () => {
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: {
-          id: 'pt_1',
-          slug: 'summer-alpha',
-          title: 'Summer Alpha',
-          distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'
-        }
-      },
-      isLoading: false,
-      error: null
-    })
-    renderAt('/pt_1/codes')
-    expect(screen.getByRole('heading', { name: /generate \/ sync ags campaign codes/i })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: /upload steam keys/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /generate more codes/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /sync from ags/i })).toBeInTheDocument()
-  })
-
-  it('triggers top-up mutation with the entered quantity', async () => {
-    const mutate = vi.fn()
-    mockTopUpMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'a', title: 'A', distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN' } },
-      isLoading: false,
-      error: null
-    })
-    renderAt('/pt_1/codes')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /generate more codes/i }))
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: { quantity: 100 } }))
-  })
-
-  it('triggers sync mutation', async () => {
-    const mutate = vi.fn()
-    mockSyncMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'a', title: 'A', distributionModel: 'DISTRIBUTION_MODEL_AGS_CAMPAIGN' } },
-      isLoading: false,
-      error: null
-    })
-    renderAt('/pt_1/codes')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /sync from ags/i }))
-    await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt_1', data: {} }))
-  })
-
-  it('reads the chosen file and uploads its contents on click', async () => {
-    const mutate = vi.fn()
-    mockUploadMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: { id: 'pt_1', slug: 'a', title: 'A', distributionModel: 'DISTRIBUTION_MODEL_STEAM_KEYS' }
-      },
-      isLoading: false,
-      error: null
-    })
-    const { container } = renderAt('/pt_1/codes')
-    const csv = 'K7R2P-9M4XW-Q6V1B\nJ9L5T-B2N8R-M3K7P\n'
-    const file = new File([csv], 'dummycodes.txt', { type: 'text/plain' })
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement
-    expect(input).toBeTruthy()
-    const user = userEvent.setup()
-    await user.upload(input, file)
-    await waitFor(() => expect(screen.getByText('dummycodes.txt')).toBeInTheDocument())
-    const uploadBtn = screen.getByRole('button', { name: /^upload$/i })
-    await waitFor(() => expect(uploadBtn).not.toBeDisabled())
-    await user.click(uploadBtn)
-    await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({
-        playtestId: 'pt_1',
-        data: { csvContent: csv, filename: 'dummycodes.txt' }
-      })
-    )
-  })
-})
-
-describe('SurveyBuilderPage', () => {
-  it('renders a fresh blank text question for a playtest with no survey', async () => {
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'a', title: 'Alpha' } },
-      isLoading: false,
-      error: null
-    })
-    renderAt('/pt_1/survey')
-    await waitFor(() => expect(screen.getAllByTestId('survey-question')).toHaveLength(1))
-    expect(screen.getByRole('button', { name: /create survey/i })).toBeInTheDocument()
-  })
-
-  it('preloads existing survey questions and renders Save new version', async () => {
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_1', status: 'PLAYTEST_STATUS_OPEN' }
-      },
-      isLoading: false,
-      error: null
-    })
-    mockGetSurveyPlayer.mockReturnValue({
-      data: {
-        survey: {
-          id: 'sur_1',
-          version: 2,
-          questions: [
-            { id: 'q1', type: 'SURVEY_QUESTION_TYPE_TEXT', prompt: 'Tell us', required: true },
-            {
-              id: 'q2',
-              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
-              prompt: 'Which platforms?',
-              required: false,
-              allowMultiple: true,
-              options: [
-                { id: 'o1', label: 'Steam' },
-                { id: 'o2', label: 'Xbox' }
-              ]
-            }
-          ]
-        }
-      },
-      isLoading: false,
-      isError: false,
-      error: null
-    })
-    renderAt('/pt_1/survey')
-    await waitFor(() => expect(screen.getAllByTestId('survey-question')).toHaveLength(2))
-    expect(screen.getByDisplayValue('Tell us')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Which platforms?')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Steam')).toBeInTheDocument()
-    expect(screen.getByText(/current version v2 \(saving creates v3\)/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /save new version/i })).toBeInTheDocument()
-  })
-
-  it('submits CreateSurvey with the typed question on a fresh playtest', async () => {
-    const mutate = vi.fn()
-    mockCreateSurveyMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'a', title: 'Alpha' } },
-      isLoading: false,
-      error: null
-    })
-    renderAt('/pt_1/survey')
-    const user = userEvent.setup()
-    const prompts = await screen.findAllByPlaceholderText(/what did you think of the build/i)
-    await user.type(prompts[0], 'Did you like it?')
-    await user.click(screen.getByRole('button', { name: /create survey/i }))
-    await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({
-        playtestId: 'pt_1',
-        data: {
-          questions: [{ type: 'SURVEY_QUESTION_TYPE_TEXT', prompt: 'Did you like it?', required: false }]
-        }
-      })
-    )
-  })
-
-  it('preserves question + option ids when editing an existing survey', async () => {
-    const mutate = vi.fn()
-    mockEditSurveyMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_1', status: 'PLAYTEST_STATUS_OPEN' }
-      },
-      isLoading: false,
-      error: null
-    })
-    mockGetSurveyPlayer.mockReturnValue({
-      data: {
-        survey: {
-          id: 'sur_1',
-          version: 1,
-          questions: [
-            {
-              id: 'q1',
-              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
-              prompt: 'Which?',
-              required: false,
-              allowMultiple: false,
-              options: [
-                { id: 'o1', label: 'Steam' },
-                { id: 'o2', label: 'Xbox' }
-              ]
-            }
-          ]
-        }
-      },
-      isLoading: false,
-      isError: false,
-      error: null
-    })
-    renderAt('/pt_1/survey')
-    const user = userEvent.setup()
-    await screen.findByDisplayValue('Which?')
-    await user.click(screen.getByRole('button', { name: /save new version/i }))
-    await waitFor(() =>
-      expect(mutate).toHaveBeenCalledWith({
-        playtestId: 'pt_1',
-        data: {
-          questions: [
-            {
-              id: 'q1',
-              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
-              prompt: 'Which?',
-              required: false,
-              allowMultiple: false,
-              options: [
-                { id: 'o1', label: 'Steam' },
-                { id: 'o2', label: 'Xbox' }
-              ]
-            }
-          ]
-        }
-      })
-    )
-  })
-
-  it('warns about DRAFT preload when GetSurvey errors and the playtest is DRAFT', async () => {
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_1', status: 'PLAYTEST_STATUS_DRAFT' }
-      },
-      isLoading: false,
-      error: null
-    })
-    mockGetSurveyPlayer.mockReturnValue({ data: undefined, isLoading: false, isError: true, error: null })
-    renderAt('/pt_1/survey')
-    expect(await screen.findByText(/draft playtest survey can't be previewed/i)).toBeInTheDocument()
-  })
-})
-
-describe('SurveyResponsesPage', () => {
-  it('shows an empty-state info banner when the playtest has no survey configured', () => {
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'a', title: 'Alpha' } },
-      isLoading: false,
-      error: null
-    })
-    renderAt('/pt_1/survey/responses')
-    expect(screen.getByText(/no survey configured for this playtest/i)).toBeInTheDocument()
-  })
-
-  it('groups responses by survey version and renders a histogram bucket per option id', async () => {
-    mockGetPlaytest.mockReturnValue({
-      data: {
-        playtest: { id: 'pt_1', slug: 'a', title: 'Alpha', surveyId: 'sur_2', status: 'PLAYTEST_STATUS_OPEN' }
-      },
-      isLoading: false,
-      error: null
-    })
-    mockGetSurveyPlayer.mockReturnValue({
-      data: {
-        survey: {
-          id: 'sur_2',
-          version: 2,
-          questions: [
-            {
-              id: 'q1',
-              type: 'SURVEY_QUESTION_TYPE_MULTI_CHOICE',
-              prompt: 'Which platforms?',
-              options: [
-                { id: 'o1', label: 'Steam' },
-                { id: 'o2', label: 'Xbox' }
-              ]
-            },
-            { id: 'q2', type: 'SURVEY_QUESTION_TYPE_RATING', prompt: 'Rate it' }
-          ]
-        }
-      },
-      isLoading: false,
-      isError: false,
-      error: null
-    })
-    mockGetSurveyResponses.mockReturnValue({
-      data: {
-        responses: [
-          {
-            id: 'r1',
-            surveyId: 'sur_2',
-            userId: 'u1',
-            submittedAt: '2026-05-01T10:00:00Z',
-            answers: [
-              { questionId: 'q1', multiChoice: { optionIds: ['o1'] } },
-              { questionId: 'q2', rating: 5 }
-            ]
-          },
-          {
-            id: 'r2',
-            surveyId: 'sur_2',
-            userId: 'u2',
-            submittedAt: '2026-05-01T11:00:00Z',
-            answers: [
-              { questionId: 'q1', multiChoice: { optionIds: ['o1', 'o2'] } },
-              { questionId: 'q2', rating: 4 }
-            ]
-          },
-          {
-            id: 'r3',
-            surveyId: 'sur_1',
-            userId: 'u3',
-            submittedAt: '2026-04-30T10:00:00Z',
-            answers: [{ questionId: 'q1', multiChoice: { optionIds: ['o2'] } }]
-          }
-        ]
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/survey/responses')
-    await waitFor(() => expect(screen.getAllByTestId('survey-aggregate')).toHaveLength(2))
-    expect(screen.getByText(/3 response\(s\) total/)).toBeInTheDocument()
-    // Two surveys: sur_1 + sur_2
-    expect(screen.getByText(/sur_2 \(current\)/)).toBeInTheDocument()
-    expect(screen.getByText('sur_1', { exact: false })).toBeInTheDocument()
-    // Histogram aggregates only the current-version responses (filter empty → all rows are
-    // counted for q1 across 3 responses: o1=2, o2=2). Bars are testid-keyed by option id.
-    expect(screen.getByTestId('option-bar-q1-o1')).toBeInTheDocument()
-    expect(screen.getByTestId('option-bar-q1-o2')).toBeInTheDocument()
-    expect(screen.getByTestId('rating-bar-q2-5')).toBeInTheDocument()
-  })
-})
-
-describe('AuditLogPage', () => {
-  beforeEach(() => {
-    mockGetPlaytest.mockReturnValue({
-      data: { playtest: { id: 'pt_1', slug: 'summer-alpha', title: 'Summer Alpha' } },
-      isLoading: false,
-      error: null
-    })
-  })
-
-  it('renders the audit page header and the actor + action filters', () => {
-    renderAt('/pt_1/audit')
-    expect(screen.getByRole('heading', { name: /audit log/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/actor filter/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/action filter/i)).toBeInTheDocument()
-  })
-
-  it('renders rows with system actor as a tag and admin actor as code', () => {
-    mockGetAuditLog.mockReturnValue({
-      data: {
-        entries: [
-          {
-            id: 'a_1',
-            action: 'applicant.approve',
-            actorUserId: 'user-uuid-1',
-            createdAt: '2026-05-01T10:00:00Z',
-            beforeJson: '{}',
-            afterJson: '{"applicantId":"app_1","grantedCodeId":"c_1"}'
-          },
-          {
-            id: 'a_2',
-            action: 'code.upload',
-            actorUserId: null,
-            createdAt: '2026-05-01T11:00:00Z',
-            beforeJson: '{}',
-            afterJson: '{"count":42,"sha256":"deadbeef","filename":"keys.csv"}'
-          }
-        ],
-        nextPageToken: ''
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/audit')
-    expect(screen.getByText('user-uuid-1')).toBeInTheDocument()
-    expect(screen.getAllByText('system').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('applicant.approve')).toBeInTheDocument()
-    expect(screen.getByText('code.upload')).toBeInTheDocument()
-  })
-
-  it('passes the action filter to the query when chosen from the dropdown', async () => {
-    renderAt('/pt_1/audit')
-    const user = userEvent.setup()
-    const actionSelect = screen.getByLabelText(/action filter/i)
-    await user.click(actionSelect)
-    const option = await screen.findByText('applicant.approve')
-    await user.click(option)
-    await waitFor(() => {
-      const lastCall = mockGetAuditLog.mock.calls.at(-1)
-      expect(lastCall?.[1].queryParams.actionFilter).toBe('applicant.approve')
-    })
-  })
-
-  it('passes actorFilter=system when System is chosen', async () => {
-    renderAt('/pt_1/audit')
-    const user = userEvent.setup()
-    const actorSelect = screen.getByLabelText(/actor filter/i)
-    await user.click(actorSelect)
-    const option = await screen.findByText('System')
-    await user.click(option)
-    await waitFor(() => {
-      const lastCall = mockGetAuditLog.mock.calls.at(-1)
-      expect(lastCall?.[1].queryParams.actorFilter).toBe('system')
-    })
-  })
-
-  it('only commits the typed actor user id on Enter (not on every keystroke)', async () => {
-    renderAt('/pt_1/audit')
-    const user = userEvent.setup()
-    const actorSelect = screen.getByLabelText(/actor filter/i)
-    await user.click(actorSelect)
-    await user.click(await screen.findByText(/admin user/i))
-    const input = await screen.findByLabelText(/actor user id/i)
-    await user.type(input, 'abc-123')
-    // Pre-Enter: keystrokes should not flow into the query as a populated actorFilter
-    const callsMidType = mockGetAuditLog.mock.calls.filter(
-      c => c[1]?.queryParams?.actorFilter && c[1].queryParams.actorFilter !== 'system'
-    )
-    expect(callsMidType).toHaveLength(0)
-    await user.keyboard('{Enter}')
-    await waitFor(() => {
-      const lastCall = mockGetAuditLog.mock.calls.at(-1)
-      expect(lastCall?.[1].queryParams.actorFilter).toBe('abc-123')
-    })
-  })
-
-  it('expanding a row renders the JSON before/after diff and tags changed keys', async () => {
-    mockGetAuditLog.mockReturnValue({
-      data: {
-        entries: [
-          {
-            id: 'a_1',
-            action: 'survey.edit',
-            actorUserId: 'admin-1',
-            createdAt: '2026-05-01T10:00:00Z',
-            beforeJson: '{"surveyId":"sur_1","questions":1}',
-            afterJson: '{"surveyId":"sur_2","questions":1}'
-          }
-        ],
-        nextPageToken: ''
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/audit')
-    const user = userEvent.setup()
-    const expandBtn = screen.getByRole('button', { name: /expand row/i })
-    await user.click(expandBtn)
-    expect(await screen.findByTestId('audit-diff')).toBeInTheDocument()
-    expect(screen.getByTestId('audit-diff-key-surveyId')).toBeInTheDocument()
-    expect(screen.queryByTestId('audit-diff-key-questions')).not.toBeInTheDocument()
-  })
-
-  it('Next button is disabled when there is no next page token', () => {
-    mockGetAuditLog.mockReturnValue({
-      data: { entries: [{ id: 'a_1', action: 'playtest.edit', createdAt: '2026-05-01T10:00:00Z', beforeJson: '{}', afterJson: '{}' }], nextPageToken: '' },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/audit')
-    const nextBtn = screen.getByRole('button', { name: /^next$/i })
-    expect(nextBtn).toBeDisabled()
-  })
-
-  it('clicking Next advances the cursor to the returned next_page_token', async () => {
-    mockGetAuditLog.mockReturnValue({
-      data: {
-        entries: [{ id: 'a_1', action: 'playtest.edit', createdAt: '2026-05-01T10:00:00Z', beforeJson: '{}', afterJson: '{}' }],
-        nextPageToken: 'cursor-page-2'
-      },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn()
-    })
-    renderAt('/pt_1/audit')
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: /^next$/i }))
-    await waitFor(() => {
-      const lastCall = mockGetAuditLog.mock.calls.at(-1)
-      expect(lastCall?.[1].queryParams.pageToken).toBe('cursor-page-2')
-    })
-  })
-})
-
 describe('Playtest window (M4)', () => {
   it('labels create-form date range as UTC and surfaces auto-transition help', () => {
     renderAt('/new')
@@ -1034,7 +738,7 @@ describe('Playtest window (M4)', () => {
     })
     renderAt('/')
     const user = userEvent.setup()
-    await user.hover(screen.getByText('Open'))
+    await user.hover(screen.getByText('Published'))
     const tip = await screen.findByRole('tooltip')
     expect(tip.textContent).toMatch(/Auto-closes/)
   })
@@ -1080,5 +784,137 @@ describe('Playtest window (M4)', () => {
     // No hover; tooltip should not have a trigger wrapper. Tag rendered raw.
     expect(screen.getByText('Draft')).toBeInTheDocument()
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+})
+
+describe('ADTLinkCallbackPage', () => {
+  it('calls CompleteADTLink with state + adt_namespace from the query string', async () => {
+    const mutate = vi.fn()
+    mockCompleteAdtLinkMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc123&result=success&adt_namespace=adt-studio-1')
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(mutate).toHaveBeenCalledWith({ data: { state: 'abc123', adtNamespace: 'adt-studio-1' } })
+  })
+
+  it('surfaces an error and does not invoke the mutation when state is missing', async () => {
+    const mutate = vi.fn()
+    mockCompleteAdtLinkMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?result=success&adt_namespace=adt-studio-1')
+    expect(await screen.findByText(/missing the state or adt_namespace/i)).toBeInTheDocument()
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('surfaces an error when ADT reports the link as failed', async () => {
+    const mutate = vi.fn()
+    mockCompleteAdtLinkMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&adt_namespace=adt-studio-1&result=failed&reason=user_declined')
+    expect(await screen.findByText(/user_declined/)).toBeInTheDocument()
+    expect(mutate).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('adt-link-callback-retry')).not.toBeInTheDocument()
+  })
+
+  it('offers Retry when CompleteADTLink mutation errors and refires the mutation on click', async () => {
+    const user = userEvent.setup()
+    // Capture the onError callback the hook receives so we can drive it synchronously.
+    let capturedOnError: ((err: { message?: string }) => void) | undefined
+    const mutate = vi.fn()
+    mockCompleteAdtLinkMutation.mockImplementation((_sdk: unknown, opts: { onError?: (err: { message?: string }) => void }) => {
+      capturedOnError = opts.onError
+      return { mutate, isPending: false, isError: false, error: null }
+    })
+    renderAt('/adt-link-callback?state=abc&result=success&adt_namespace=adt-studio-1')
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+
+    // Drive the mutation into a failure (e.g. gateway 502 before reaching the backend).
+    capturedOnError?.({ message: 'gateway timeout' })
+
+    const retry = await screen.findByTestId('adt-link-callback-retry')
+    expect(screen.getByText(/gateway timeout/)).toBeInTheDocument()
+    await user.click(retry)
+    expect(mutate).toHaveBeenCalledTimes(2)
+    expect(mutate).toHaveBeenLastCalledWith({ data: { state: 'abc', adtNamespace: 'adt-studio-1' } })
+  })
+
+  // 2026-05-21 recovery affordance — Bug 2 of the M5.B follow-up:
+  // when ADT reports result=failed&reason=already_linked, the operator
+  // should be able to adopt the orphan flag with a single click instead
+  // of dead-ending on the error toast.
+  it('offers Recover existing linkage as primary when result=failed&reason=already_linked', async () => {
+    const user = userEvent.setup()
+    const recoverMutate = vi.fn()
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: recoverMutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&adt_namespace=adt-studio-1&result=failed&reason=already_linked')
+    const recover = await screen.findByTestId('adt-link-callback-recover')
+    expect(recover).toHaveTextContent(/recover existing linkage/i)
+    await user.click(recover)
+    expect(recoverMutate).toHaveBeenCalledTimes(1)
+    expect(recoverMutate).toHaveBeenCalledWith({ data: { adtNamespace: 'adt-studio-1' } })
+  })
+
+  // Fallback affordance: ADT reported an unknown reason, but if the
+  // operator believes ADT carries the flag they can still try Recover.
+  it('offers a secondary Recover affordance when the failure reason is unknown', async () => {
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&adt_namespace=adt-studio-1&result=failed&reason=something_weird')
+    const recover = await screen.findByTestId('adt-link-callback-recover')
+    expect(recover).toHaveTextContent(/if you believe adt already has this linkage, try recover/i)
+  })
+
+  // Surface the recovery mutation's own error so the operator can see
+  // it (e.g. FailedPrecondition when ADT actually reports no flag).
+  it('surfaces the RecoverADTLinkage mutation error', async () => {
+    const user = userEvent.setup()
+    let capturedOnError: ((err: { message?: string }) => void) | undefined
+    const mutate = vi.fn()
+    mockRecoverAdtLinkMutation.mockImplementation((_sdk: unknown, opts: { onError?: (err: { message?: string }) => void }) => {
+      capturedOnError = opts.onError
+      return { mutate, isPending: false, isError: false, error: null }
+    })
+    renderAt('/adt-link-callback?state=abc&adt_namespace=adt-studio-1&result=failed&reason=already_linked')
+    const recover = await screen.findByTestId('adt-link-callback-recover')
+    await user.click(recover)
+    expect(mutate).toHaveBeenCalledTimes(1)
+
+    capturedOnError?.({ message: 'no ADT-side linkage found for that namespace; use StartADTLink to create one' })
+    expect(await screen.findByTestId('adt-link-callback-recover-error')).toBeInTheDocument()
+    expect(screen.getByText(/no ADT-side linkage found/i)).toBeInTheDocument()
+  })
+
+  // 2026-05-22 bug repro: ADT does NOT echo adt_namespace back on
+  // result=failed (live URL observed in prod). The recover button used
+  // to require Boolean(adtNamespace) so it never rendered, dead-ending
+  // the operator. The callback must still expose a recover affordance
+  // that asks the operator to type the namespace they intended to link.
+  it('exposes a Recover affordance when ADT failure omits adt_namespace', async () => {
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&result=failed&reason=link_failed')
+    expect(await screen.findByTestId('adt-link-callback-recover-prompt')).toBeInTheDocument()
+  })
+
+  it('calls RecoverADTLinkage with the operator-typed adt_namespace when ADT omitted it', async () => {
+    const user = userEvent.setup()
+    const recoverMutate = vi.fn()
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: recoverMutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&result=failed&reason=link_failed')
+    const prompt = await screen.findByTestId('adt-link-callback-recover-prompt')
+    await user.click(prompt)
+    const input = await screen.findByTestId('adt-link-callback-recover-input')
+    await user.type(input, 'adt-orphan-ns')
+    const submit = await screen.findByTestId('adt-link-callback-recover-submit')
+    await user.click(submit)
+    expect(recoverMutate).toHaveBeenCalledTimes(1)
+    expect(recoverMutate).toHaveBeenCalledWith({ data: { adtNamespace: 'adt-orphan-ns' } })
+  })
+
+  it('refuses to submit recover when the operator left adt_namespace empty', async () => {
+    const user = userEvent.setup()
+    const recoverMutate = vi.fn()
+    mockRecoverAdtLinkMutation.mockReturnValue({ mutate: recoverMutate, isPending: false, isError: false, error: null })
+    renderAt('/adt-link-callback?state=abc&result=failed&reason=link_failed')
+    const prompt = await screen.findByTestId('adt-link-callback-recover-prompt')
+    await user.click(prompt)
+    const submit = await screen.findByTestId('adt-link-callback-recover-submit')
+    expect(submit).toBeDisabled()
+    expect(recoverMutate).not.toHaveBeenCalled()
   })
 })

@@ -107,6 +107,7 @@ AGS_IAM_CLIENT_ID="smoke-client-id" \
 AGS_IAM_CLIENT_SECRET="smoke-client-secret" \
 AGS_BASE_URL="https://ags.smoke.invalid" \
 AGS_NAMESPACE="smoke" \
+PLAYER_BASE_URL="https://player.smoke.invalid" \
 PLUGIN_GRPC_SERVER_AUTH_ENABLED=false \
     setsid go run . >/tmp/playtesthub-pth-smoke.log 2>&1 &
 APP_PID=$!
@@ -149,6 +150,20 @@ log "pth playtest get-public --dry-run prints the request without dialling"
 dry_out=$("$PTH_BIN" --addr "doesnotresolve.invalid:9" playtest get-public --slug demo --dry-run)
 [[ "$(jq -r '.slug' <<<"$dry_out")" == "demo" ]] \
     || fail "dry-run output missing slug: $dry_out"
+
+# --- pth public-config ------------------------------------------------
+# Asserts the env→service wiring for PLAYER_BASE_URL: boot sets
+# https://player.smoke.invalid, the unauth RPC must surface that value
+# verbatim so the admin AppUI can build cross-app share links.
+log "pth public-config returns the booted PLAYER_BASE_URL"
+set +e
+cfg_out=$("$PTH_BIN" --addr "$TARGET_ADDR" --insecure public-config 2>/tmp/pth-stderr)
+cfg_exit=$?
+set -e
+[[ $cfg_exit -eq 0 ]] \
+    || { cat /tmp/pth-stderr >&2; fail "public-config exit=$cfg_exit, want 0 (out: $cfg_out)"; }
+[[ "$(jq -r '.player_base_url' <<<"$cfg_out")" == "https://player.smoke.invalid" ]] \
+    || fail "public-config player_base_url mismatch: $cfg_out"
 
 # --- pth auth login --discord --no-browser --dry-run -----------------
 # Phase 10.3 (docs/STATUS.md): asserts CLI URL construction + env-var
@@ -583,6 +598,93 @@ while IFS= read -r line; do
         || fail "flow golden-m4 dry-run line $((i+1)) status=$status, want DRY_RUN"
     i=$((i+1))
 done <<<"$flow_dry_m4"
+
+# --- pth flow golden-m5 --dry-run (unconditional) ---------------------
+# STATUS_M5.md B9: eleven NDJSON steps with status=DRY_RUN. ADT flow
+# drives link-adt-start → link-adt-complete → adt-build-list →
+# create-playtest (ADT + auto-approve) → transition OPEN → signup →
+# assert-applicant-auto-approved → get-adt-download-info ×2 → audit
+# list ×2.
+log "pth flow golden-m5 --dry-run emits 11 NDJSON steps without dialling"
+flow_dry_m5=$("$PTH_BIN" --namespace smoke flow golden-m5 --slug demo-flow-m5 --dry-run)
+flow_dry_m5_lines=$(printf '%s\n' "$flow_dry_m5" | wc -l | tr -d ' ')
+[[ "$flow_dry_m5_lines" -eq 11 ]] \
+    || { printf '%s\n' "$flow_dry_m5" >&2; fail "flow golden-m5 dry-run lines=$flow_dry_m5_lines, want 11"; }
+expected_steps_m5=(
+    "adt-link-start"
+    "adt-link-complete"
+    "adt-build-list"
+    "create-playtest"
+    "transition-open"
+    "signup"
+    "assert-applicant-auto-approved"
+    "get-adt-download-info"
+    "assert-adt-download-non-empty"
+    "audit-list-auto-approved"
+    "audit-list-adt-linkage"
+)
+i=0
+while IFS= read -r line; do
+    step=$(jq -r '.step' <<<"$line")
+    status=$(jq -r '.status' <<<"$line")
+    [[ "$step" == "${expected_steps_m5[$i]}" ]] \
+        || fail "flow golden-m5 dry-run line $((i+1)) step=$step, want ${expected_steps_m5[$i]}"
+    [[ "$status" == "DRY_RUN" ]] \
+        || fail "flow golden-m5 dry-run line $((i+1)) status=$status, want DRY_RUN"
+    i=$((i+1))
+done <<<"$flow_dry_m5"
+
+# --- pth adt linkage / build dry-run probes ---------------------------
+log "pth adt linkage list --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt linkage list --dry-run >/dev/null \
+    || fail "adt linkage list --dry-run exited non-zero"
+log "pth adt linkage start --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt linkage start --dry-run >/dev/null \
+    || fail "adt linkage start --dry-run exited non-zero"
+log "pth adt linkage complete --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt linkage complete --state s --adt-namespace adt-ns-1 --dry-run >/dev/null \
+    || fail "adt linkage complete --dry-run exited non-zero"
+log "pth adt linkage unlink --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt linkage unlink --id 01234567-89ab-cdef-0123-456789abcdef --dry-run >/dev/null \
+    || fail "adt linkage unlink --dry-run exited non-zero"
+log "pth adt linkage recover --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt linkage recover --adt-namespace adt-ns-orphan --dry-run >/dev/null \
+    || fail "adt linkage recover --dry-run exited non-zero"
+log "pth adt build list --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt build list --linkage-id 01234567-89ab-cdef-0123-456789abcdef --game-id game-x --dry-run >/dev/null \
+    || fail "adt build list --dry-run exited non-zero"
+log "pth adt games list --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt games list --linkage-id 01234567-89ab-cdef-0123-456789abcdef --dry-run >/dev/null \
+    || fail "adt games list --dry-run exited non-zero"
+log "pth adt diagnostics --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke adt diagnostics --dry-run >/dev/null \
+    || fail "adt diagnostics --dry-run exited non-zero"
+
+# --- pth announcement dry-run probes (M5.C) --------------------------
+log "pth announcement create --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke announcement create \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef \
+    --send-to APPROVED_ONLY \
+    --subject "smoke subject" --message "smoke message" \
+    --dry-run >/dev/null \
+    || fail "announcement create --dry-run exited non-zero"
+log "pth announcement list --dry-run prints the request body"
+"$PTH_BIN" --namespace smoke announcement list \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef --dry-run >/dev/null \
+    || fail "announcement list --dry-run exited non-zero"
+log "pth announcement create rejects empty subject"
+if "$PTH_BIN" --namespace smoke announcement create \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef \
+    --subject "" --message "msg" --dry-run >/dev/null 2>&1; then
+    fail "announcement create --subject '' should have exited non-zero"
+fi
+log "pth announcement create rejects bogus --send-to"
+if "$PTH_BIN" --namespace smoke announcement create \
+    --playtest-id 01234567-89ab-cdef-0123-456789abcdef \
+    --send-to EVERYBODY \
+    --subject "s" --message "m" --dry-run >/dev/null 2>&1; then
+    fail "announcement create --send-to=EVERYBODY should have exited non-zero"
+fi
 
 # --- pth M2 subcommand catalogue presence -----------------------------
 # Phase 12 commits the §6.2 surface to the catalogue. The byte-exact

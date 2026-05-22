@@ -17,7 +17,9 @@ func TestServiceDescriptorMethods(t *testing.T) {
 	want := map[string]bool{
 		// M1
 		"GetPublicPlaytest":        true,
+		"GetPublicConfig":          true,
 		"GetPlaytestForPlayer":     true,
+		"WhoAmI":                   true,
 		"AdminGetPlaytest":         true,
 		"ListPlaytests":            true,
 		"CreatePlaytest":           true,
@@ -48,6 +50,20 @@ func TestServiceDescriptorMethods(t *testing.T) {
 		"RetryFailedDms":       true,
 		// M4
 		"GetWorkerHealth": true,
+		// M5.B (ADT linkage + player download)
+		"ListADTLinkages":         true,
+		"StartADTLink":            true,
+		"CompleteADTLink":         true,
+		"UnlinkADT":               true,
+		"RecoverADTLinkage":       true,
+		"ListADTBuilds":           true,
+		"ListADTGames":            true,
+		"GetADTClientDiagnostics": true,
+		"GetADTDownloadInfo":      true,
+		// M5.C (participants + announcements)
+		"GetPlaytestParticipants": true,
+		"CreateAnnouncement":      true,
+		"ListAnnouncements":       true,
 	}
 
 	methods := pb.PlaytesthubService_ServiceDesc.Methods

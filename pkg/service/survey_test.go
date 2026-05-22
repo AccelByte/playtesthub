@@ -1390,3 +1390,240 @@ func TestListSurveyResponses_NoStore_Internal(t *testing.T) {
 	})
 	requireStatus(t, err, codes.Internal)
 }
+
+// ---------------- CreateSurvey fan-out (M5 Track D phase 3) -----------------
+
+// seedApprovedApplicantForSurveyDM seeds an APPROVED applicant for the
+// playtest with a Discord snowflake set — the minimum shape the
+// fan-out's buildSurveyPublishDMJob path needs.
+func seedApprovedApplicantForSurveyDM(rig surveyTestRig, pt *repo.Playtest, snowflake string) *repo.Applicant {
+	now := time.Now()
+	a := &repo.Applicant{
+		ID:            uuid.New(),
+		PlaytestID:    pt.ID,
+		UserID:        uuid.New(),
+		DiscordHandle: "Player",
+		DiscordUserID: &snowflake,
+		Platforms:     []string{"STEAM"},
+		Status:        applicantStatusApproved,
+		ApprovedAt:    &now,
+		CreatedAt:     now,
+	}
+	rig.applicants.rows = append(rig.applicants.rows, a)
+	return a
+}
+
+// TestCreateSurvey_FansOutDMToApprovedApplicants pins the M5 Track D
+// phase 3 happy path: CreateSurvey enqueues one survey-publish DM per
+// APPROVED applicant whose last_survey_dm_id IS DISTINCT FROM the
+// freshly-minted survey id, and stamps the column on each one. PENDING
+// applicants are silent. The DM body carries the tappable survey link
+// when PLAYER_BASE_URL is configured.
+func TestCreateSurvey_FansOutDMToApprovedApplicants(t *testing.T) {
+	rig := withSurveyStores(t)
+	pt := openPlaytest("survey-fanout")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+	approved := seedApprovedApplicantForSurveyDM(rig, pt, "1111")
+	// Pending applicant — must NOT receive a DM.
+	pending := &repo.Applicant{
+		ID:            uuid.New(),
+		PlaytestID:    pt.ID,
+		UserID:        uuid.New(),
+		DiscordHandle: "PendingPlayer",
+		Status:        applicantStatusPending,
+		CreatedAt:     time.Now(),
+	}
+	rig.applicants.rows = append(rig.applicants.rows, pending)
+
+	dm := &fakeDMEnqueuer{}
+	rig.svr = rig.svr.WithDMQueue(dm).WithPlayerBaseURL("https://x.example")
+
+	resp, err := rig.svr.CreateSurvey(authCtx(uuid.New()), &pb.CreateSurveyRequest{
+		Namespace:  testNamespace,
+		PlaytestId: pt.ID.String(),
+		Questions:  []*pb.SurveyQuestion{textQ("How was it?", true)},
+	})
+	if err != nil {
+		t.Fatalf("CreateSurvey: %v", err)
+	}
+	surveyID := resp.GetSurvey().GetId()
+
+	jobs := dm.snapshot()
+	if len(jobs) != 1 {
+		t.Fatalf("want 1 enqueued survey-publish DM, got %d", len(jobs))
+	}
+	j := jobs[0]
+	if j.ApplicantID != approved.ID || j.PlaytestID != pt.ID || j.UserID != approved.UserID {
+		t.Fatalf("job mismatch: %+v", j)
+	}
+	if j.Manual {
+		t.Fatalf("manual=true; survey-publish is a system-emitted fan-out, want Manual=false")
+	}
+	if j.DiscordUserID != "1111" {
+		t.Fatalf("recipient = %q, want applicant.discord_user_id 1111", j.DiscordUserID)
+	}
+	wantLink := "https://x.example/#/playtest/" + pt.Slug + "/survey"
+	if !strings.Contains(j.Message, wantLink) {
+		t.Errorf("DM body missing survey link %q: %q", wantLink, j.Message)
+	}
+	if !strings.Contains(j.Message, pt.Title) {
+		t.Errorf("DM body missing playtest title %q: %q", pt.Title, j.Message)
+	}
+
+	// Idempotency stamp landed on the approved applicant.
+	fresh, _ := rig.applicants.GetByID(context.Background(), approved.ID)
+	if fresh.LastSurveyDMID == nil || fresh.LastSurveyDMID.String() != surveyID {
+		t.Errorf("approved.last_survey_dm_id = %v, want survey id %s", fresh.LastSurveyDMID, surveyID)
+	}
+	if fresh.LastSurveyDMAt == nil {
+		t.Errorf("approved.last_survey_dm_at is nil; should be stamped after enqueue")
+	}
+
+	// Pending applicant left untouched.
+	pendingFresh, _ := rig.applicants.GetByID(context.Background(), pending.ID)
+	if pendingFresh.LastSurveyDMID != nil {
+		t.Errorf("PENDING applicant got stamped: %v", pendingFresh.LastSurveyDMID)
+	}
+}
+
+// TestCreateSurvey_NoPlayerBaseURL_FallbackBody — when PLAYER_BASE_URL
+// is empty the fan-out DM body falls back to the non-clickable nudge so
+// smoke / offline boots still surface the survey channel without
+// dangling URLs.
+func TestCreateSurvey_NoPlayerBaseURL_FallbackBody(t *testing.T) {
+	rig := withSurveyStores(t)
+	pt := openPlaytest("survey-fanout-no-base")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+	seedApprovedApplicantForSurveyDM(rig, pt, "2222")
+	dm := &fakeDMEnqueuer{}
+	rig.svr = rig.svr.WithDMQueue(dm) // no WithPlayerBaseURL
+
+	if _, err := rig.svr.CreateSurvey(authCtx(uuid.New()), &pb.CreateSurveyRequest{
+		Namespace:  testNamespace,
+		PlaytestId: pt.ID.String(),
+		Questions:  []*pb.SurveyQuestion{textQ("How was it?", true)},
+	}); err != nil {
+		t.Fatalf("CreateSurvey: %v", err)
+	}
+
+	jobs := dm.snapshot()
+	if len(jobs) != 1 {
+		t.Fatalf("want 1 enqueued survey-publish DM, got %d", len(jobs))
+	}
+	want := `Survey is live for "` + pt.Title + `" — open the playtest hub to share your feedback.`
+	if jobs[0].Message != want {
+		t.Errorf("fallback DM body = %q, want %q", jobs[0].Message, want)
+	}
+}
+
+// TestCreateSurvey_FanOutIsBestEffort_StoreErrDoesNotFail pins the
+// rule that a DM-side error never fails CreateSurvey itself. With the
+// queue intentionally erroring, the survey row should still be
+// returned and no stamp should land — the restart sweep is the
+// backstop.
+func TestCreateSurvey_FanOutIsBestEffort_StoreErrDoesNotFail(t *testing.T) {
+	rig := withSurveyStores(t)
+	pt := openPlaytest("survey-fanout-besteffort")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+	approved := seedApprovedApplicantForSurveyDM(rig, pt, "3333")
+
+	dm := &fakeDMEnqueuer{err: status.Error(codes.Internal, "discord transient")}
+	rig.svr = rig.svr.WithDMQueue(dm).WithPlayerBaseURL("https://x")
+
+	resp, err := rig.svr.CreateSurvey(authCtx(uuid.New()), &pb.CreateSurveyRequest{
+		Namespace:  testNamespace,
+		PlaytestId: pt.ID.String(),
+		Questions:  []*pb.SurveyQuestion{textQ("Q", true)},
+	})
+	if err != nil {
+		t.Fatalf("CreateSurvey: %v", err)
+	}
+	if resp.GetSurvey().GetId() == "" {
+		t.Fatalf("survey id missing")
+	}
+
+	fresh, _ := rig.applicants.GetByID(context.Background(), approved.ID)
+	if fresh.LastSurveyDMID != nil {
+		t.Errorf("last_survey_dm_id stamped despite enqueue error: %v", fresh.LastSurveyDMID)
+	}
+}
+
+// TestCreateSurvey_Idempotent_SkipsApplicantsAlreadyDMed proves the
+// last_survey_dm_id == surveyID predicate: a pre-stamped applicant is
+// skipped on a fresh CreateSurvey call that happens to mint the same
+// survey id. This is the exact contract the boot-time restart sweep
+// relies on to be safe to re-run.
+func TestCreateSurvey_Idempotent_SkipsApplicantsAlreadyDMed(t *testing.T) {
+	rig := withSurveyStores(t)
+	pt := openPlaytest("survey-fanout-idem")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+
+	// Two approved applicants — pre-stamp one so it's already "DMed"
+	// for the survey id the SweepSurveyDM helper will be invoked with.
+	alreadyDMed := seedApprovedApplicantForSurveyDM(rig, pt, "4444")
+	fresh := seedApprovedApplicantForSurveyDM(rig, pt, "5555")
+
+	knownSurveyID := uuid.New()
+	stamped := knownSurveyID
+	alreadyDMed.LastSurveyDMID = &stamped
+	now := time.Now().UTC()
+	alreadyDMed.LastSurveyDMAt = &now
+
+	dm := &fakeDMEnqueuer{}
+	rig.svr = rig.svr.WithDMQueue(dm).WithPlayerBaseURL("https://x")
+
+	// Call SweepSurveyDM directly with the matching survey id so we
+	// can pin the predicate without depending on the freshly-minted
+	// survey UUID inside CreateSurvey.
+	n, err := rig.svr.SweepSurveyDM(context.Background(), pt, knownSurveyID)
+	if err != nil {
+		t.Fatalf("SweepSurveyDM: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("SweepSurveyDM enqueued = %d, want 1 (only the unstamped applicant)", n)
+	}
+	jobs := dm.snapshot()
+	if len(jobs) != 1 || jobs[0].ApplicantID != fresh.ID {
+		t.Fatalf("wrong applicant DMed: jobs=%+v want only %v", jobs, fresh.ID)
+	}
+}
+
+// TestEditSurvey_DoesNotFanOut pins the explicit Phase 3 decision:
+// EditSurvey is silent. Even when the playtest has an approved cohort
+// ready, an edit must not trigger a re-broadcast (admins iterate on
+// copy without spamming recipients).
+func TestEditSurvey_DoesNotFanOut(t *testing.T) {
+	rig := withSurveyStores(t)
+	pt := openPlaytest("survey-edit-silent")
+	rig.playtests.rows = append(rig.playtests.rows, pt)
+	seedApprovedApplicantForSurveyDM(rig, pt, "6666")
+
+	dm := &fakeDMEnqueuer{}
+	rig.svr = rig.svr.WithDMQueue(dm).WithPlayerBaseURL("https://x")
+
+	// Create first (this will fan out — drain it before testing Edit).
+	if _, err := rig.svr.CreateSurvey(authCtx(uuid.New()), &pb.CreateSurveyRequest{
+		Namespace:  testNamespace,
+		PlaytestId: pt.ID.String(),
+		Questions:  []*pb.SurveyQuestion{textQ("v1", true)},
+	}); err != nil {
+		t.Fatalf("CreateSurvey: %v", err)
+	}
+	createJobs := dm.snapshot()
+	if len(createJobs) != 1 {
+		t.Fatalf("CreateSurvey enqueued = %d, want 1 (sanity)", len(createJobs))
+	}
+
+	// Now Edit. Must produce ZERO new jobs.
+	if _, err := rig.svr.EditSurvey(authCtx(uuid.New()), &pb.EditSurveyRequest{
+		Namespace:  testNamespace,
+		PlaytestId: pt.ID.String(),
+		Questions:  []*pb.SurveyQuestion{textQ("v2 with new prompt", true)},
+	}); err != nil {
+		t.Fatalf("EditSurvey: %v", err)
+	}
+	editJobs := dm.snapshot()
+	if len(editJobs) != len(createJobs) {
+		t.Errorf("EditSurvey enqueued additional DMs: before=%d after=%d", len(createJobs), len(editJobs))
+	}
+}

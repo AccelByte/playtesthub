@@ -42,6 +42,8 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string, getenv en
 		return runVersion(stdout, stderr, cmdArgs)
 	case "doctor":
 		return runDoctor(ctx, stdout, stderr, g, cmdArgs, factory)
+	case "public-config":
+		return runPublicConfig(ctx, stdout, stderr, g, cmdArgs, factory)
 	case "describe":
 		return runDescribe(stdout, stderr, cmdArgs)
 	case "playtest":
@@ -58,6 +60,10 @@ func run(ctx context.Context, stdout, stderr io.Writer, args []string, getenv en
 		return runSurvey(ctx, stdout, stderr, g, cmdArgs, factory)
 	case "audit":
 		return runAudit(ctx, stdout, stderr, g, cmdArgs, factory)
+	case "adt":
+		return runADT(ctx, stdout, stderr, g, cmdArgs, factory)
+	case "announcement":
+		return runAnnouncement(ctx, stdout, stderr, g, cmdArgs, factory)
 	case "flow":
 		return runFlow(ctx, stdout, stderr, g, cmdArgs, defaultFlowProfileFactory(getenv))
 	case "help", "-h", "--help":
@@ -92,6 +98,7 @@ Usage:
 Commands (M1 phase 10 + M2 phase 12):
   version                          Print build SHA, proto schema, Go version.
   doctor                           Probe the backend. Reports gRPC code + latency.
+  public-config                    Fetch the public client config (unauth). Returns player_base_url.
   describe                         Emit the JSON catalogue (cli-schema.v1) of every subcommand.
   flow golden-m1 --slug <s>        Composite: create → transition OPEN → signup → assert PENDING.
     --admin-profile <p> --player-profile <p> [--title <t>] [--platforms <csv>] [--dry-run]

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/anggorodewanto/playtesthub/pkg/agsid"
 	"github.com/anggorodewanto/playtesthub/pkg/discord"
 	iampkg "github.com/anggorodewanto/playtesthub/pkg/iam"
 	pb "github.com/anggorodewanto/playtesthub/pkg/pb/playtesthub/v1"
@@ -119,9 +120,44 @@ func (s *PlaytesthubServiceServer) Signup(ctx context.Context, req *pb.SignupReq
 // surfaces as PENDING-fallback per PRD §5.4: signup itself is never
 // failed by the auto-approve attempt.
 func (s *PlaytesthubServiceServer) tryAutoApprove(ctx context.Context, pt *repo.Playtest, a *repo.Applicant) *repo.Applicant {
-	if s.txRunner == nil || s.code == nil || pt.AutoApproveLimit == nil {
+	if s.txRunner == nil || pt.AutoApproveLimit == nil {
 		return nil
 	}
+	// STEAM_KEYS / AGS_CAMPAIGN auto-approve still needs the code store
+	// wired; ADT skips it entirely (no code pool — PRD §5.5).
+	if pt.DistributionModel != distModelADT && s.code == nil {
+		return nil
+	}
+	updated, grantedCodeID, txErr := s.runAutoApproveTx(ctx, pt, a)
+	if txErr != nil {
+		// PRD §5.4: silent PENDING fallback — log at info so operators
+		// can see auto-approve attempts that hit the cap or the pool
+		// without polluting the audit timeline.
+		slog.InfoContext(ctx, "auto-approve skipped, applicant stays PENDING",
+			"playtestId", pt.ID.String(),
+			"applicantId", a.ID.String(),
+			"reason", txErr.Error())
+		return nil
+	}
+	if updated == nil {
+		return nil
+	}
+	if s.audit != nil {
+		if auditErr := repo.AppendApplicantAutoApproved(ctx, s.audit, s.namespace, pt.ID, updated.ID, grantedCodeID, *updated.ApprovedAt); auditErr != nil {
+			slog.WarnContext(ctx, "appending applicant.auto_approved audit failed",
+				"playtestId", pt.ID.String(),
+				"applicantId", updated.ID.String(),
+				"error", auditErr.Error())
+		}
+	}
+	s.enqueueAutoApproveDM(ctx, pt, updated)
+	return updated
+}
+
+// runAutoApproveTx executes the lock + count + (ADT no-code OR pool
+// reserve/finalize) + CAS pipeline inside one tx. Returns the updated
+// applicant, the granted code id (zero for ADT), and the tx error.
+func (s *PlaytesthubServiceServer) runAutoApproveTx(ctx context.Context, pt *repo.Playtest, a *repo.Applicant) (*repo.Applicant, uuid.UUID, error) {
 	limit := int(*pt.AutoApproveLimit)
 	var (
 		updated       *repo.Applicant
@@ -148,6 +184,14 @@ func (s *PlaytesthubServiceServer) tryAutoApprove(ctx context.Context, pt *repo.
 		if count >= limit {
 			return errAutoApproveCapHit
 		}
+		if pt.DistributionModel == distModelADT {
+			upd, casErr := s.applicant.ApproveCASNoCode(ctx, q, a.ID, time.Now().UTC(), true)
+			if casErr != nil {
+				return casErr
+			}
+			updated = upd
+			return nil
+		}
 		code, reserveErr := s.code.Reserve(ctx, q, pt.ID, a.UserID)
 		if reserveErr != nil {
 			return reserveErr
@@ -167,32 +211,30 @@ func (s *PlaytesthubServiceServer) tryAutoApprove(ctx context.Context, pt *repo.
 		grantedCodeID = code.ID
 		return nil
 	})
-	if txErr != nil {
-		// PRD §5.4: silent PENDING fallback — log at info so operators
-		// can see auto-approve attempts that hit the cap or the pool
-		// without polluting the audit timeline.
-		slog.InfoContext(ctx, "auto-approve skipped, applicant stays PENDING",
-			"playtestId", pt.ID.String(),
-			"applicantId", a.ID.String(),
-			"reason", txErr.Error())
-		return nil
-	}
+	return updated, grantedCodeID, txErr
+}
 
-	if s.audit != nil && updated != nil {
-		if auditErr := repo.AppendApplicantAutoApproved(ctx, s.audit, s.namespace, pt.ID, updated.ID, grantedCodeID, *updated.ApprovedAt); auditErr != nil {
-			slog.WarnContext(ctx, "appending applicant.auto_approved audit failed",
+// enqueueAutoApproveDM resolves the ADT download URL when needed and
+// enqueues the welcome DM. Failure to resolve the URL skips the DM (the
+// applicant is still APPROVED + auto_approved=true; operator can retry
+// via RetryDM once the ADT side recovers).
+func (s *PlaytesthubServiceServer) enqueueAutoApproveDM(ctx context.Context, pt *repo.Playtest, updated *repo.Applicant) {
+	if s.dmQueue == nil {
+		return
+	}
+	var adtURLs []string
+	if pt.DistributionModel == distModelADT {
+		urls, _, urlErr := s.resolveADTDownloadURL(ctx, pt, updated)
+		if urlErr != nil {
+			slog.WarnContext(ctx, "auto-approve DM skipped: ADT URL resolution failed",
 				"playtestId", pt.ID.String(),
 				"applicantId", updated.ID.String(),
-				"error", auditErr.Error())
+				"error", urlErr.Error())
+			return
 		}
+		adtURLs = urls
 	}
-
-	// Welcome DM — same shape as ApproveApplicant (auto-send / manual=false).
-	if s.dmQueue != nil && updated != nil {
-		_ = s.dmQueue.Enqueue(ctx, buildDMJob(updated, pt, false, s.playerBaseURL))
-	}
-
-	return updated
+	_ = s.dmQueue.Enqueue(ctx, buildDMJob(updated, pt, false, s.playerBaseURL, adtURLs))
 }
 
 // errAutoApproveCapHit is the in-tx sentinel raised when the
@@ -228,7 +270,25 @@ func (s *PlaytesthubServiceServer) GetApplicantStatus(ctx context.Context, req *
 	if pt.Status == statusClosed && existing.Status != applicantStatusApproved {
 		return nil, status.Error(codes.NotFound, "playtest not found")
 	}
-	return &pb.GetApplicantStatusResponse{Applicant: playerApplicantToProto(existing)}, nil
+	out := playerApplicantToProto(existing)
+	// PRD §5.6 one-shot survey: surface the submission timestamp so the
+	// Pending-page CTA can render either "Submit feedback" or "Feedback
+	// submitted ✓" without an extra round-trip. Best-effort — the store
+	// may be unwired in earlier-milestone boots (M1/M2 lack the survey
+	// pipeline); on lookup error, fall through with the timestamp unset
+	// rather than failing the whole status read.
+	if s.surveyResponse != nil {
+		resp, err := s.surveyResponse.GetByPlaytestUser(ctx, pt.ID, userID)
+		if err == nil && resp != nil {
+			out.SurveyResponseSubmittedAt = timestamppb.New(resp.SubmittedAt)
+		} else if err != nil && !errors.Is(err, repo.ErrNotFound) {
+			slog.WarnContext(ctx, "fetching survey response for applicant status failed; leaving timestamp unset",
+				"playtestId", pt.ID.String(),
+				"userId", agsid.Format(userID),
+				"error", err.Error())
+		}
+	}
+	return &pb.GetApplicantStatusResponse{Applicant: out}, nil
 }
 
 // AcceptNDA records a click-accept of the current NDA text on a
@@ -313,7 +373,7 @@ func (s *PlaytesthubServiceServer) AcceptNDA(ctx context.Context, req *pb.Accept
 
 func ndaAcceptanceToProto(a *repo.NDAAcceptance) *pb.NDAAcceptance {
 	return &pb.NDAAcceptance{
-		UserId:         a.UserID.String(),
+		UserId:         agsid.Format(a.UserID),
 		PlaytestId:     a.PlaytestID.String(),
 		NdaVersionHash: a.NDAVersionHash,
 		AcceptedAt:     timestamppb.New(a.AcceptedAt),
@@ -370,7 +430,7 @@ func (s *PlaytesthubServiceServer) resolveDiscordSnowflake(ctx context.Context, 
 	id, err := s.platformLookup.GetDiscordID(ctx, userID.String())
 	if err != nil {
 		slog.WarnContext(ctx, "ags platform lookup failed; signup proceeds without discord snowflake",
-			"userId", userID.String(), "error", err.Error())
+			"userId", agsid.Format(userID), "error", err.Error())
 		return ctx
 	}
 	if id == "" {
@@ -390,7 +450,7 @@ func (s *PlaytesthubServiceServer) resolveDiscordHandle(ctx context.Context, use
 	discordID, _ := iampkg.DiscordIDFromContext(ctx)
 	fallback := discordID
 	if fallback == "" {
-		fallback = userID.String()
+		fallback = agsid.Format(userID)
 	}
 	if s.discord == nil || discordID == "" {
 		return fallback
@@ -413,7 +473,7 @@ func playerApplicantToProto(a *repo.Applicant) *pb.Applicant {
 	out := &pb.Applicant{
 		Id:         a.ID.String(),
 		PlaytestId: a.PlaytestID.String(),
-		UserId:     a.UserID.String(),
+		UserId:     agsid.Format(a.UserID),
 		Status:     applicantStatusStringToEnum(a.Status),
 		CreatedAt:  timestamppb.New(a.CreatedAt),
 	}

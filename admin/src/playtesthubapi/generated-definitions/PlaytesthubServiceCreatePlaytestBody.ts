@@ -20,7 +20,11 @@ export const PlaytesthubServiceCreatePlaytestBody = z.object({
   distributionModel: V1DistributionModel.nullish(),
   initialCodeQuantity: z.number().int().nullish(),
   autoApprove: z.boolean().nullish(),
-  autoApproveLimit: z.number().int().nullish()
+  autoApproveLimit: z.number().int().nullish(),
+  adtNamespace: z.string().nullish(),
+  adtGameId: z.string().nullish(),
+  adtBuildId: z.string().nullish(),
+  adtFallbackDownloadUrl: z.string().nullish()
 })
 
 export interface PlaytesthubServiceCreatePlaytestBody extends z.TypeOf<typeof PlaytesthubServiceCreatePlaytestBody> {}

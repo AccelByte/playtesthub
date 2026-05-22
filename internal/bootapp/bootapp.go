@@ -36,6 +36,7 @@ import (
 
 	"github.com/anggorodewanto/playtesthub/internal/reclaim"
 	"github.com/anggorodewanto/playtesthub/internal/window"
+	"github.com/anggorodewanto/playtesthub/pkg/adt"
 	"github.com/anggorodewanto/playtesthub/pkg/ags"
 	"github.com/anggorodewanto/playtesthub/pkg/common"
 	"github.com/anggorodewanto/playtesthub/pkg/config"
@@ -90,6 +91,15 @@ type Server struct {
 	// disabled). main.go calls it during boot; the e2e suite ignores
 	// it because tests run AuthEnabled=false.
 	PlatformLogin func() error
+
+	// SurveyDMSweep walks every live playtest with surveyId set and
+	// fans out a survey-publish DM to APPROVED + NDA-current applicants
+	// who haven't been DMed for the current survey id yet (M5 Track D
+	// phase 3 / docs/dm-queue.md "Survey-publish restart sweep").
+	// Idempotent — re-running is a no-op for applicants whose
+	// last_survey_dm_id already matches. main.go calls it once on boot
+	// before serving traffic; the e2e suite ignores it.
+	SurveyDMSweep func(ctx context.Context) (int, error)
 }
 
 // New constructs a Server from opts. It does not Serve; the caller
@@ -150,13 +160,55 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())
 	prometheusGrpc.Register(grpcSrv)
 
+	surveyDMSweep := buildSurveyDMSweep(opts.Config, opts.DBPool, svcServer, logger)
+
 	return &Server{
 		GRPC:          grpcSrv,
 		listener:      opts.Listener,
 		logger:        logger,
 		DMQueue:       dmQueue,
 		PlatformLogin: platformLogin,
+		SurveyDMSweep: surveyDMSweep,
 	}, nil
+}
+
+// buildSurveyDMSweep returns the boot-time survey-publish DM restart
+// sweep (M5 Track D phase 3). For every live playtest with surveyId
+// set, the sweep walks applicants needing a survey-publish DM and
+// enqueues + marks each one through the same primitives CreateSurvey's
+// fan-out uses. Returns nil when the playtest store is unwired (the
+// e2e suite ignores it).
+func buildSurveyDMSweep(cfg *config.Config, dbPool *pgxpool.Pool, svcServer *service.PlaytesthubServiceServer, logger *slog.Logger) func(ctx context.Context) (int, error) {
+	if dbPool == nil || svcServer == nil {
+		return nil
+	}
+	playtestStore := repo.NewPgPlaytestStore(dbPool)
+	return func(ctx context.Context) (int, error) {
+		logger.Info("survey-dm restart sweep starting", "event", "survey_dm_restart_sweep_start")
+		playtests, err := playtestStore.List(ctx, cfg.AGSNamespace, false)
+		if err != nil {
+			return 0, fmt.Errorf("listing playtests for survey-dm restart sweep: %w", err)
+		}
+		var enqueued int
+		for _, pt := range playtests {
+			if pt.SurveyID == nil {
+				continue
+			}
+			n, sweepErr := svcServer.SweepSurveyDM(ctx, pt, *pt.SurveyID)
+			if sweepErr != nil {
+				logger.Warn("survey-dm restart sweep: playtest scan failed",
+					"event", "survey_dm_restart_sweep_playtest_failed",
+					"playtestId", pt.ID.String(),
+					"error", sweepErr.Error())
+				continue
+			}
+			enqueued += n
+		}
+		logger.Info("survey-dm restart sweep finished",
+			"event", "survey_dm_restart_sweep_finished",
+			"enqueued", enqueued)
+		return enqueued, nil
+	}
 }
 
 // Addr returns the listener's address as "host:port" so callers
@@ -347,6 +399,15 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 		logger.Info("ags client: in-memory (enable auth to use the live SDK adapter)")
 	}
 
+	adtClient, adtDiagnostics := buildADTClient(cfg, httpClient, logger)
+
+	adtLinkageStore := repo.NewPgADTLinkageStore(dbPool)
+	announcementStore := repo.NewPgAnnouncementStore(dbPool)
+	var announcementSender service.AnnouncementSender
+	if botClient != nil {
+		announcementSender = botClient
+	}
+
 	leaderStore := repo.NewPgLeaderStore(dbPool)
 	workers := []service.WorkerInfo{{
 		Name:         reclaim.LeaseName,
@@ -372,6 +433,17 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 		WithPlayerBaseURL(cfg.PlayerBaseURL).
 		WithAGSClient(agsClient).
 		WithAGSCodeBatchSize(cfg.AGSCodeBatchSize).
+		WithADTLinkageStore(adtLinkageStore).
+		WithADTClient(adtClient).
+		WithADTDiagnostics(adtDiagnostics).
+		WithADTLinkConfig(service.ADTLinkConfig{
+			ADTBaseURL:        cfg.ADTBaseURL,
+			RedirectBaseURL:   cfg.ADTRedirectBaseURL,
+			PendingTTLSeconds: cfg.ADTLinkagePendingTTLSeconds,
+		}).
+		WithStudioNamespaceResolver(buildStudioNamespaceResolver(cfg, httpClient)).
+		WithAnnouncementStore(announcementStore, announcementSender).
+		WithAnnouncementBounds(cfg.AnnouncementSubjectMaxLen, cfg.AnnouncementMessageMaxLen).
 		WithWorkerHealth(leaderStore, workers).
 		WithLogger(logger)
 	if botClient != nil {
@@ -394,9 +466,85 @@ func buildPlaytesthubServer(cfg *config.Config, dbPool *pgxpool.Pool, httpClient
 	}), dmQueue, platformLogin
 }
 
+// buildStudioNamespaceResolver returns the ADT-linkage studio resolver.
+// In production it mints a client-credentials AGS service IAM token
+// (via AGSAdminPlatformLookup) and reads `union_namespace ?? namespace`
+// off the resulting JWT — this is what ADT will see on every
+// downstream API call from playtesthub, so the linkage row MUST be
+// keyed on the same value (PRD §4.8.2).
+//
+// In dev / smoke / e2e (auth disabled or AGS creds absent), no service
+// token is mintable; the resolver falls back to cfg.AGSNamespace as a
+// stand-in for the studio identity. This is deliberately permissive
+// for tests + smoke probes — the live boot path always has the AGS
+// creds + a real token.
+func buildStudioNamespaceResolver(cfg *config.Config, httpClient *http.Client) service.StudioNamespaceResolver {
+	if cfg.AGSBaseURL == "" || cfg.AGSIAMClientID == "" || cfg.AGSIAMClientSecret == "" {
+		// Dev / smoke / e2e fallback: linkage rows are scoped to the
+		// configured AGS_NAMESPACE so single-namespace tests work
+		// end-to-end without minting a real JWT.
+		ns := cfg.AGSNamespace
+		return func(_ context.Context) (string, error) { return ns, nil }
+	}
+	lookup := &iampkg.AGSAdminPlatformLookup{
+		HTTPClient:   httpClient,
+		BaseURL:      cfg.AGSBaseURL,
+		Namespace:    cfg.AGSNamespace,
+		ClientID:     cfg.AGSIAMClientID,
+		ClientSecret: cfg.AGSIAMClientSecret,
+	}
+	return func(ctx context.Context) (string, error) {
+		return lookup.GetStudioNamespace(ctx)
+	}
+}
+
 // noopDMSender is the fallback Sender used when DISCORD_BOT_TOKEN is
 // empty (dev / e2e / smoke). It returns nil (success) so the queue +
 // worker + audit/marking pipeline is exercised end-to-end without
 // making outbound Discord calls. Production with a configured bot
 // token uses *discord.BotClient (M3 phase 7).
 func noopDMSender(_ context.Context, _, _ string) error { return nil }
+
+// buildADTClient evaluates the ADT-client gate (M5.B / STATUS_M5.md
+// Track B). The live HTTP-backed adapter is enabled when AuthEnabled
+// && ADTBaseURL is set and AGS IAM creds are available — those creds
+// mint the service JWT the adapter attaches to every ADT call.
+// Otherwise (dev / smoke / e2e / boots without ADT config) it falls
+// back to MemClient. The 2026-05-21 silent-fallback bug taught us to
+// log loudly when the production gate falls back unexpectedly; the
+// returned ADTDiagnostics is also handed to the service so
+// GetADTClientDiagnostics can surface the verdict via RPC.
+func buildADTClient(cfg *config.Config, httpClient *http.Client, logger *slog.Logger) (adt.Client, service.ADTDiagnostics) {
+	diag := service.ADTDiagnostics{
+		AuthEnabled:           cfg.AuthEnabled,
+		ADTBaseURLSet:         cfg.ADTBaseURL != "",
+		AGSBaseURLSet:         cfg.AGSBaseURL != "",
+		AGSIAMClientIDSet:     cfg.AGSIAMClientID != "",
+		AGSIAMClientSecretSet: cfg.AGSIAMClientSecret != "",
+	}
+	if cfg.AuthEnabled && cfg.ADTBaseURL != "" && cfg.AGSBaseURL != "" && cfg.AGSIAMClientID != "" && cfg.AGSIAMClientSecret != "" {
+		adtLookup := &iampkg.AGSAdminPlatformLookup{
+			HTTPClient:   httpClient,
+			BaseURL:      cfg.AGSBaseURL,
+			Namespace:    cfg.AGSNamespace,
+			ClientID:     cfg.AGSIAMClientID,
+			ClientSecret: cfg.AGSIAMClientSecret,
+		}
+		diag.ClientKind = "http"
+		logger.Info("adt client: HTTP-backed", "baseUrl", cfg.ADTBaseURL)
+		return adt.NewHTTPClient(cfg.ADTBaseURL, httpClient, adtLookup.AdminToken), diag
+	}
+	diag.ClientKind = "mem"
+	if cfg.AuthEnabled && cfg.ADTBaseURL != "" {
+		logger.Warn("adt client: falling back to in-memory MemClient despite AuthEnabled+ADT_BASE_URL set; ADT-side propagation is a NO-OP",
+			"event", "adt_client_fallback",
+			"auth_enabled", cfg.AuthEnabled,
+			"adt_base_url_set", cfg.ADTBaseURL != "",
+			"ags_base_url_set", cfg.AGSBaseURL != "",
+			"ags_iam_client_id_set", cfg.AGSIAMClientID != "",
+			"ags_iam_client_secret_set", cfg.AGSIAMClientSecret != "")
+	} else {
+		logger.Info("adt client: in-memory (set ADT_BASE_URL + enable auth to use the live HTTP adapter)")
+	}
+	return adt.NewMemClient().WithLogger(logger), diag
+}

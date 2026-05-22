@@ -59,6 +59,60 @@ On process restart the backend scans all `APPROVED` applicants and re-marks lost
 - Surface: `lastDmStatus='failed'` with `lastDmError='missing_recipient'` plus the standard `applicant.dm_failed` audit row.
 - Why nullable: `discord_user_id` lands in migration 0004; rows persisted before that (or signups from non-Discord-federated IAM tokens) carry NULL. The queue treats this as a permanent per-applicant failure rather than an outage. An operator backfilling `discord_user_id` can then run RetryDM to re-enqueue.
 
+## DM body shape — ADT distribution
+
+ADT-distribution playtests substitute the standard "your code is here" copy with a build-download body. ADT returns a list of URLs (one per build asset — single-file builds → one element, multi-asset builds → many) and the DM surfaces every URL in ADT's original order.
+
+- **Single-URL build** (the common case):
+
+  ```text
+  Download your playtest build for "Acme Closed Beta": https://cdn.example/build.zip
+  ```
+
+- **Multi-URL build** (multi-asset releases — game binary + patcher + manifest, etc.) renders a numbered list, one tappable URL per line so Discord renders each as a separate link:
+
+  ```text
+  Download your playtest build for "Acme Closed Beta":
+  1) https://cdn.example/build.zip
+  2) https://cdn.example/manifest.bin
+  3) https://cdn.example/patcher.exe
+  ```
+
+`RetryDM` re-mints fresh URLs via `adt.Client.IssueDownloadURL` on every call because the previous URLs may have expired (ADT bounds them with a 24h CDN TTL — PRD §4.8.3). The same numbered-list rendering applies to the re-sent body. The audit row's `adtUrls` array (schema.md `applicant.approve`) records the URL list as minted at approve time; RetryDM does NOT rewrite that audit row even when a fresh resolution returns different URLs.
+
+## DM body shape — survey-link append (Track D phase 2)
+
+When the playtest has a survey configured (`pt.SurveyID` non-nil) the approval DM gains a trailing survey-link line so approved players see the feedback channel in the same message that delivers their code (or ADT build). The append applies to both branches (STEAM_KEYS / AGS_CAMPAIGN and ADT) — every approval DM carries the same nudge. With `PLAYER_BASE_URL` configured the line is a tappable URL anchored at the same hash-router shape as the pending link, with the slug passed through `url.PathEscape` so future grammar relaxations stay safe; without it, the line falls back to a non-clickable nudge.
+
+- **Configured `PLAYER_BASE_URL` + survey set** (the production shape):
+
+  ```text
+  You're approved for "Acme Closed Beta". View your code: https://x/#/playtest/acme-beta/pending
+  After you've played, share feedback: https://x/#/playtest/acme-beta/survey
+  ```
+
+- **Empty `PLAYER_BASE_URL` + survey set** (smoke / offline boots): the second line reads `Share feedback in the playtest hub after you play.` — non-clickable but still surfaces the survey channel. ADT bodies follow the same pattern: download line first, then either the tappable survey URL or the fallback nudge.
+
+Playtests with no survey see the historical single-line body unchanged — the append is a no-op when `pt.SurveyID` is nil.
+
+## DM body shape — survey-publish (Track D phase 3)
+
+`CreateSurvey` fans out a standalone survey-publish DM to every APPROVED + NDA-current applicant whose `applicant.last_survey_dm_id IS DISTINCT FROM` the new `survey.id`. Distinct from the approval DM (which already carries the survey nudge for applicants approved *after* the survey is created — see "survey-link append" above), this body is the discovery channel for the cohort approved *before* the survey was authored. `EditSurvey` is silent — only `CreateSurvey` triggers the fan-out, so iterating on prompt copy never re-DMs the cohort.
+
+- **Configured `PLAYER_BASE_URL`** (the production shape):
+
+  ```text
+  Survey is live for "Acme Closed Beta" — share your feedback: https://x/#/playtest/acme-beta/survey
+  ```
+
+- **Empty `PLAYER_BASE_URL`** (smoke / offline boots):
+
+  ```text
+  Survey is live for "Acme Closed Beta" — open the playtest hub to share your feedback.
+  ```
+
+The slug uses `url.PathEscape` matching the approval DM's survey-link append. Idempotency rides on `applicant.last_survey_dm_id`: every successful `Enqueue` is followed by `MarkSurveyDMSent(applicantId, surveyId, now)`. The column tracks "we attempted delivery for this surveyId", not "delivery confirmed" — the queue's retry / circuit breaker handles the latter. Enqueue overflow or sender errors leave `last_survey_dm_id` nil so the **survey-publish restart sweep** (run once at boot before the DM worker starts, alongside the existing `Sweep` for `lost_on_restart`) catches them on the next process boot. The sweep walks every live playtest with `surveyId IS NOT NULL` and re-runs the same `ListApprovedNeedingSurveyDM` predicate — re-running it is a no-op for applicants already stamped for the current survey id. Jobs are enqueued with `Manual=false` so the queue does **not** emit the `applicant.dm_sent` audit row (that's reserved for admin-triggered Retry DM successes per PRD §5.4).
+
 ## `lastDmError` truncation
 
 - `lastDmError` is byte-truncated to **500 chars** (PRD §5.2 — Applicant entity).

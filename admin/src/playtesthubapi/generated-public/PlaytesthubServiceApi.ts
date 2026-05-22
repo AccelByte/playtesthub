@@ -15,13 +15,16 @@ import { PlaytesthubServiceSubmitSurveyResponseBody } from '../generated-definit
 import { V1AcceptNdaResponse } from '../generated-definitions/V1AcceptNdaResponse.js'
 import { V1ExchangeDiscordCodeRequest } from '../generated-definitions/V1ExchangeDiscordCodeRequest.js'
 import { V1ExchangeDiscordCodeResponse } from '../generated-definitions/V1ExchangeDiscordCodeResponse.js'
+import { V1GetAdtDownloadInfoResponse } from '../generated-definitions/V1GetAdtDownloadInfoResponse.js'
 import { V1GetApplicantStatusResponse } from '../generated-definitions/V1GetApplicantStatusResponse.js'
 import { V1GetGrantedCodeResponse } from '../generated-definitions/V1GetGrantedCodeResponse.js'
 import { V1GetPlaytestForPlayerResponse } from '../generated-definitions/V1GetPlaytestForPlayerResponse.js'
+import { V1GetPublicConfigResponse } from '../generated-definitions/V1GetPublicConfigResponse.js'
 import { V1GetPublicPlaytestResponse } from '../generated-definitions/V1GetPublicPlaytestResponse.js'
 import { V1GetSurveyResponse } from '../generated-definitions/V1GetSurveyResponse.js'
 import { V1SignupResponse } from '../generated-definitions/V1SignupResponse.js'
 import { V1SubmitSurveyResponseResponse } from '../generated-definitions/V1SubmitSurveyResponseResponse.js'
+import { V1WhoAmIResponse } from '../generated-definitions/V1WhoAmIResponse.js'
 import { PlaytesthubService$ } from './endpoints/PlaytesthubService$.js'
 
 export function PlaytesthubServiceApi(sdk: AccelByteSDK, args?: SdkSetConfigParam) {
@@ -55,6 +58,20 @@ export function PlaytesthubServiceApi(sdk: AccelByteSDK, args?: SdkSetConfigPara
     } else {
       axiosInstance.interceptors = sdkAssembly.axiosInstance.interceptors
     }
+  }
+
+  async function getPlayerMe(): Promise<AxiosResponse<V1WhoAmIResponse>> {
+    const $ = new PlaytesthubService$(axiosInstance, namespace, useSchemaValidation)
+    const resp = await $.getPlayerMe()
+    if (resp.error) throw resp.error
+    return resp.response
+  }
+
+  async function getConfig(): Promise<AxiosResponse<V1GetPublicConfigResponse>> {
+    const $ = new PlaytesthubService$(axiosInstance, namespace, useSchemaValidation)
+    const resp = await $.getConfig()
+    if (resp.error) throw resp.error
+    return resp.response
   }
 
   async function createPlayerDiscordExchange(data: V1ExchangeDiscordCodeRequest): Promise<AxiosResponse<V1ExchangeDiscordCodeResponse>> {
@@ -109,6 +126,13 @@ export function PlaytesthubServiceApi(sdk: AccelByteSDK, args?: SdkSetConfigPara
     return resp.response
   }
 
+  async function getAdtDownloadPlayer_ByPlaytestId(playtestId: string): Promise<AxiosResponse<V1GetAdtDownloadInfoResponse>> {
+    const $ = new PlaytesthubService$(axiosInstance, namespace, useSchemaValidation)
+    const resp = await $.getAdtDownloadPlayer_ByPlaytestId(playtestId)
+    if (resp.error) throw resp.error
+    return resp.response
+  }
+
   async function getGrantedCodePlayer_ByPlaytestId(playtestId: string): Promise<AxiosResponse<V1GetGrantedCodeResponse>> {
     const $ = new PlaytesthubService$(axiosInstance, namespace, useSchemaValidation)
     const resp = await $.getGrantedCodePlayer_ByPlaytestId(playtestId)
@@ -127,6 +151,14 @@ export function PlaytesthubServiceApi(sdk: AccelByteSDK, args?: SdkSetConfigPara
   }
 
   return {
+    /**
+     * Returns the caller's AGS user id plus the best-effort Discord handle resolved via the same bot-token lookup the signup flow uses. discord_handle is empty when the caller is not Discord-federated or the lookup fails — the field is informational; callers must not treat it as authoritative identity.
+     */
+    getPlayerMe,
+    /**
+     * Returns environment-derived client config that both the admin and player frontends need to construct cross-app URLs. player_base_url is the public origin of the player Svelte bundle (from backend env PLAYER_BASE_URL); empty string when unset.
+     */
+    getConfig,
     /**
      * Player runs Discord OAuth directly (Discord developer portal owns the redirect-URI allowlist). The resulting Discord authorization code is POSTed here; the backend authenticates with confidential AGS IAM credentials and calls /iam/v3/oauth/platforms/discord/token (platform-token grant). AGS auto-creates the Justice platform account on first call and returns AGS access + refresh tokens, which we forward verbatim. Replaces the auth-code federation flow attempted in STATUS.md M1 phase 9.2 — that flow's /iam/v3/oauth/token step always failed with invalid_grant in game namespaces because the auth-code path skips Justice-platform-account creation.
      */
@@ -152,7 +184,11 @@ export function PlaytesthubServiceApi(sdk: AccelByteSDK, args?: SdkSetConfigPara
      */
     createPlayerPlaytest_ByPlaytestIdAcceptNda,
     /**
-     * NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md).
+     * FailedPrecondition for non-ADT playtests. URL re-minted on every call so the player always sees a fresh (possibly per-applicant) URL.
+     */
+    getAdtDownloadPlayer_ByPlaytestId,
+    /**
+     * NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md). FailedPrecondition for ADT playtests — use GetADTDownloadInfo.
      */
     getGrantedCodePlayer_ByPlaytestId,
     /**

@@ -31,11 +31,33 @@ service PlaytesthubService {
     };
   }
 
+  rpc GetPublicConfig(GetPublicConfigRequest) returns (GetPublicConfigResponse) {
+    option (google.api.http) = {get: "/v1/public/config"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get the public client config (unauthenticated)"
+      description: "Returns environment-derived client config that both the admin and player frontends need to construct cross-app URLs. player_base_url is the public origin of the player Svelte bundle (from backend env PLAYER_BASE_URL); empty string when unset."
+    };
+  }
+
   rpc GetPlaytestForPlayer(GetPlaytestForPlayerRequest) returns (GetPlaytestForPlayerResponse) {
     option (google.api.http) = {get: "/v1/player/playtests/{slug}"};
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
       summary: "Get a playtest by slug (authenticated player)"
       description: "Returns the player-visible field set including NDA text and currentNdaVersionHash."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse) {
+    option (google.api.http) = {get: "/v1/player/me"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get the authenticated caller's identity (player)"
+      description: "Returns the caller's AGS user id plus the best-effort Discord handle resolved via the same bot-token lookup the signup flow uses. discord_handle is empty when the caller is not Discord-federated or the lookup fails — the field is informational; callers must not treat it as authoritative identity."
       security: {
         security_requirement: {
           key: "Bearer"
@@ -215,7 +237,23 @@ service PlaytesthubService {
     option (google.api.http) = {get: "/v1/player/playtests/{playtest_id}/grantedCode"};
     option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
       summary: "Get the granted code for the caller (authenticated player; APPROVED applicants only)"
-      description: "NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md)."
+      description: "NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md). FailedPrecondition for ADT playtests — use GetADTDownloadInfo."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  // GetADTDownloadInfo — ADT-distribution equivalent of GetGrantedCode
+  // (PRD §4.8 / M5.B). Player-only; gated on APPROVED applicant row.
+  rpc GetADTDownloadInfo(GetADTDownloadInfoRequest) returns (GetADTDownloadInfoResponse) {
+    option (google.api.http) = {get: "/v1/player/playtests/{playtest_id}/adtDownload"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Get the ADT build download URL for the caller (authenticated player; APPROVED applicants only)"
+      description: "FailedPrecondition for non-ADT playtests. URL re-minted on every call so the player always sees a fresh (possibly per-applicant) URL."
       security: {
         security_requirement: {
           key: "Bearer"
@@ -516,6 +554,207 @@ service PlaytesthubService {
       }
     };
   }
+
+  // ---------------- M5.B (ADT) ----------------
+  //
+  // ADT distribution model linkage CRUD + build picker. PRD §4.8 +
+  // STATUS_M5.md Track B. Linkage is studio-scoped — derived
+  // server-side from the calling admin's AGS token claim
+  // `union_namespace ?? namespace`; no namespace path param.
+
+  rpc ListADTLinkages(ListADTLinkagesRequest) returns (ListADTLinkagesResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/adt/linkages"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List ADT linkages for the caller's studio (admin)"
+      description: "Scoped to the caller's studio namespace (union_namespace ?? namespace). Returns identity columns only — no credential bytes exist (PRD §4.8.2)."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc StartADTLink(StartADTLinkRequest) returns (StartADTLinkResponse) {
+    option (playtesthub.v1.action) = ACTION_CREATE;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {
+      post: "/v1/admin/namespaces/{namespace}/adt/linkages:start"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Begin an ADT linking round-trip (admin)"
+      description: "Mints a 32-byte CSRF state, persists adt_link_pending, returns linkUrl that the admin UI redirects to. studio_namespace is derived server-side from the caller's token. No credential is exchanged (PRD §4.8.2)."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc CompleteADTLink(CompleteADTLinkRequest) returns (CompleteADTLinkResponse) {
+    option (playtesthub.v1.action) = ACTION_CREATE;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {
+      post: "/v1/admin/namespaces/{namespace}/adt/linkages:complete"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Finalize an ADT linking round-trip (admin)"
+      description: "Consumes the adt_link_pending row matching `state` (not expired); inserts the adt_linkage identity row with `adt_namespace` echoed by ADT on the callback URL. No outbound ADT call — tampering is self-defeating because the first downstream service-JWT call would 401 (PRD §4.8.2)."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc UnlinkADT(UnlinkADTRequest) returns (UnlinkADTResponse) {
+    option (playtesthub.v1.action) = ACTION_DELETE;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {delete: "/v1/admin/namespaces/{namespace}/adt/linkages/{adt_linkage_id}"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Soft-delete an ADT linkage (admin; idempotent)"
+      description: "Idempotent re-unlink against an already soft-deleted row is a no-op success. Linkage absent for the caller's studio → NotFound (PRD §4.8). Best-effort calls ADT's DELETE /linkage in the same flow so the ADT-side flag and the local row drop together."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc RecoverADTLinkage(RecoverADTLinkageRequest) returns (RecoverADTLinkageResponse) {
+    option (playtesthub.v1.action) = ACTION_CREATE;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {
+      post: "/v1/admin/namespaces/{namespace}/adt/linkages:recover"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Adopt an ADT-side linkage that has no local row (admin)"
+      description: "Operator-recovery surface for the 2026-05-21 orphan-flag bug: when ADT still carries a linkage flag but no local adt_linkage row exists, StartADTLink + the redirect dance fail with 409 / already_linked. RecoverADTLinkage probes ADT (ListGames) to confirm the orphan flag, then inserts the local row directly. No OAuth round-trip. AlreadyExists when a live row for (studio, adtNamespace) is already present; FailedPrecondition when ADT reports no flag for the pair; Unavailable on ADT transient errors."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc ListADTBuilds(ListADTBuildsRequest) returns (ListADTBuildsResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/adt/linkages/{adt_linkage_id}/builds"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List builds in an ADT linkage's namespace + game (admin)"
+      description: "Proxies adt.Client.ListBuilds keyed on the studio derived from the caller's token. Returns FailedPrecondition when ADT reports the linkage flag missing."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc ListADTGames(ListADTGamesRequest) returns (ListADTGamesResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/adt/linkages/{adt_linkage_id}/games"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List games registered under an ADT linkage's namespace (admin)"
+      description: "Proxies adt.Client.ListGames keyed on the studio derived from the caller's token. Drives the create-playtest build-picker's top-level dropdown (STATUS_M5.md B12 + Addendum 2026-05-21). Returns FailedPrecondition when ADT reports the linkage flag missing."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc GetADTClientDiagnostics(GetADTClientDiagnosticsRequest) returns (GetADTClientDiagnosticsResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/diagnostics/adt-client-kind"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Report which ADT client kind was wired at boot + presence of every gate env var (admin)"
+      description: "Diagnostic surface for the 2026-05-21 silent-fallback bug: the bootapp gate that selects HTTP-backed vs in-memory ADT client requires ALL of AuthEnabled + ADT_BASE_URL + AGS_BASE_URL + AGS_IAM_CLIENT_ID + AGS_IAM_CLIENT_SECRET. When any one is empty the gate silently falls to the in-memory MemClient and UnlinkADT's ADT-side propagation becomes a no-op. This RPC returns the gate decision (\"http\" | \"mem\") plus a boolean presence flag for each env var so the operator can pinpoint the missing one without needing the boot log. Secret values are NEVER returned — only booleans."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  // M5.C — participants surface backing the detail page Participants tab.
+  // Cache-only read; the four ADT telemetry cache columns ship dormant in
+  // M5.C (NULL/zero across the milestone — M6 lights them up).
+  rpc GetPlaytestParticipants(GetPlaytestParticipantsRequest) returns (GetPlaytestParticipantsResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/playtests/{playtest_id}/participants"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List participants with derived code-sent timestamps (admin; M5.C detail page)"
+      description: "Read joins applicant + the latest dm.sent audit row to derive code_sent_at for STEAM_KEYS / AGS_CAMPAIGN rows; ADT rows return NULL code_sent_at. Four ADT telemetry cache fields ship in the response shape but stay NULL/zero across M5.C."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  // M5.C — bulk announcement broadcast (PRD §5.4 "Bulk announcements").
+  // Resolves the recipient set at call time; fans out via the existing
+  // M2 RetryDM machinery.
+  rpc CreateAnnouncement(CreateAnnouncementRequest) returns (CreateAnnouncementResponse) {
+    option (playtesthub.v1.action) = ACTION_CREATE;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {
+      post: "/v1/admin/namespaces/{namespace}/playtests/{playtest_id}/announcements"
+      body: "*"
+    };
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "Create a bulk DM broadcast for a playtest (admin)"
+      description: "Resolves recipients at call time (NOT a stored snapshot). Subject + message are PII-sensitive and are never written to audit JSONB or structured logs."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
+
+  rpc ListAnnouncements(ListAnnouncementsRequest) returns (ListAnnouncementsResponse) {
+    option (playtesthub.v1.action) = ACTION_READ;
+    option (playtesthub.v1.resource) = "ADMIN:NAMESPACE:{namespace}:EXTEND:APPUI";
+    option (google.api.http) = {get: "/v1/admin/namespaces/{namespace}/playtests/{playtest_id}/announcements"};
+    option (grpc.gateway.protoc_gen_openapiv2.options.openapiv2_operation) = {
+      summary: "List announcement history for a playtest (admin)"
+      description: "Per-row status aggregated from announcement_recipient.dm_status: SENT (all sent), SENDING (any queued), PARTIAL (mix sent + failed), FAILED (all failed)."
+      security: {
+        security_requirement: {
+          key: "Bearer"
+          value: {}
+        }
+      }
+    };
+  }
 }
 
 // ---------------- enums ----------------
@@ -540,6 +779,10 @@ enum DistributionModel {
   DISTRIBUTION_MODEL_UNSPECIFIED = 0;
   DISTRIBUTION_MODEL_STEAM_KEYS = 1;
   DISTRIBUTION_MODEL_AGS_CAMPAIGN = 2;
+  // ADT — AccelByte Development Toolkit build download. No code pool;
+  // approve resolves a per-applicant download URL (or static fallback)
+  // via pkg/adt. PRD §4.8, schema.md §"Playtest entity (ADT fields)".
+  DISTRIBUTION_MODEL_ADT = 3;
 }
 
 enum ApplicantStatus {
@@ -563,6 +806,25 @@ enum CodeState {
   CODE_STATE_UNUSED = 1;
   CODE_STATE_RESERVED = 2;
   CODE_STATE_GRANTED = 3;
+}
+
+// M5.C — announcement send-to filter (PRD §5.4 "Bulk announcements").
+// Resolved at call time, NOT a stored snapshot.
+enum AnnouncementSendToFilter {
+  ANNOUNCEMENT_SEND_TO_FILTER_UNSPECIFIED = 0;
+  ANNOUNCEMENT_SEND_TO_FILTER_ALL = 1;
+  ANNOUNCEMENT_SEND_TO_FILTER_APPROVED_ONLY = 2;
+  ANNOUNCEMENT_SEND_TO_FILTER_PENDING_ONLY = 3;
+}
+
+// M5.C — announcement aggregate status computed at read time from
+// announcement_recipient.dm_status (PRD §5.4 "Bulk announcements" + schema.md).
+enum AnnouncementStatus {
+  ANNOUNCEMENT_STATUS_UNSPECIFIED = 0;
+  ANNOUNCEMENT_STATUS_SENDING = 1;
+  ANNOUNCEMENT_STATUS_SENT = 2;
+  ANNOUNCEMENT_STATUS_PARTIAL = 3;
+  ANNOUNCEMENT_STATUS_FAILED = 4;
 }
 
 // ---------------- entities ----------------
@@ -596,6 +858,14 @@ message Playtest {
   // when auto_approve is true (bounded 1..100,000, DB-enforced).
   bool auto_approve = 22;
   optional int32 auto_approve_limit = 23;
+  // ADT distribution fields (PRD §5.1 / §4.8, M5.B). Populated when
+  // distribution_model = DISTRIBUTION_MODEL_ADT; all three identifiers
+  // immutable post-create. adt_fallback_download_url is the static
+  // per-playtest URL used when ADT can't mint a per-applicant URL.
+  optional string adt_namespace = 24;
+  optional string adt_game_id = 25;
+  optional string adt_build_id = 26;
+  optional string adt_fallback_download_url = 27;
 }
 
 // PublicPlaytest is the restricted field set exposed to unauthenticated
@@ -653,6 +923,12 @@ message Applicant {
   // approved via the auto-approve signup chain rather than a manual
   // ApproveApplicant click. Used for cap accounting.
   bool auto_approved = 15;
+  // Player-visible. Set when the caller has already submitted a survey
+  // response for this playtest (PRD §5.6 one-shot). Powers the
+  // post-submit "Feedback submitted ✓" affordance on the Pending page so
+  // the client can flip CTA state without an extra round-trip. Unset
+  // when no response exists or surveys aren't configured.
+  google.protobuf.Timestamp survey_response_submitted_at = 16;
 }
 
 // NDAAcceptance — append-only acceptance row (schema.md §"NDA"). PK is
@@ -794,11 +1070,35 @@ message GetPublicPlaytestResponse {
   PublicPlaytest playtest = 1;
 }
 
+message GetPublicConfigRequest {}
+message GetPublicConfigResponse {
+  // Public origin of the player Svelte bundle (from backend env
+  // PLAYER_BASE_URL). Empty string when unset — callers SHOULD treat
+  // empty as "player URL not configured" and surface that to the user
+  // rather than falling back silently.
+  string player_base_url = 1;
+}
+
 message GetPlaytestForPlayerRequest {
   string slug = 1;
 }
 message GetPlaytestForPlayerResponse {
   PlayerPlaytest playtest = 1;
+}
+
+message WhoAmIRequest {}
+message WhoAmIResponse {
+  // AGS user id in dashless form (matches the wire shape the rest of
+  // the player surface uses — pkg/agsid.Format).
+  string user_id = 1;
+  // Best-effort human-readable Discord handle (e.g. "shadowrealm#4421").
+  // Empty when the caller is not Discord-federated, the Discord bot
+  // client is unconfigured, or the lookup fails. Informational — never
+  // treat as identity, never log alongside NDA / survey content.
+  string discord_handle = 2;
+  // Discord snowflake when available. Empty otherwise. Useful for the
+  // frontend to badge the account without round-tripping through AGS.
+  string discord_id = 3;
 }
 
 message AdminGetPlaytestRequest {
@@ -834,6 +1134,15 @@ message CreatePlaytestRequest {
   // docs/errors.md.
   bool auto_approve = 13;
   optional int32 auto_approve_limit = 14;
+  // ADT distribution (M5.B). Required when distribution_model = ADT;
+  // rejected when set on STEAM_KEYS / AGS_CAMPAIGN. The linkage row
+  // covering (studio_namespace, adt_namespace) must already exist —
+  // CompleteADTLink first. adt_build_id is verified against
+  // adt.Client.ListBuilds(adt_namespace, adt_game_id) at create-time.
+  optional string adt_namespace = 15;
+  optional string adt_game_id = 16;
+  optional string adt_build_id = 17;
+  optional string adt_fallback_download_url = 18;
 }
 message CreatePlaytestResponse {
   Playtest playtest = 1;
@@ -859,6 +1168,11 @@ message EditPlaytestRequest {
   // — operators tune the cap while signups are flowing in.
   bool auto_approve = 11;
   optional int32 auto_approve_limit = 12;
+  // ADT distribution (M5.B). adt_namespace / adt_game_id / adt_build_id
+  // are immutable post-create (mirrors ags_item_id); only the static
+  // fallback URL is editable so operators can repoint without
+  // recreating the playtest.
+  optional string adt_fallback_download_url = 13;
 }
 message EditPlaytestResponse {
   Playtest playtest = 1;
@@ -937,6 +1251,24 @@ message GetGrantedCodeResponse {
   // app renders model-specific instructions off distribution_model.
   string value = 1;
   DistributionModel distribution_model = 2;
+}
+
+// GetADTDownloadInfo — player-side, M5.B / PRD §4.8.
+message GetADTDownloadInfoRequest {
+  string playtest_id = 1;
+}
+message GetADTDownloadInfoResponse {
+  // Resolved download URLs in ADT's original order. Issued via
+  // adt.Client.IssueDownloadURL when ADT can mint URLs (one per build
+  // asset — single-file builds → one element, multi-asset builds →
+  // many); falls back to a single-element list containing the
+  // playtest's static adtFallbackDownloadUrl when ADT 4xx/5xx but the
+  // linkage row is still present.
+  repeated string urls = 1;
+  // Optional expiry; zero when ADT does not surface one.
+  google.protobuf.Timestamp expires_at = 2;
+  // "issued" (ADT-minted URLs) or "fallback" (static playtest URL).
+  string source = 3;
 }
 
 message ListApplicantsRequest {
@@ -1159,6 +1491,212 @@ message WorkerHealthEntry {
 
 message GetWorkerHealthResponse {
   repeated WorkerHealthEntry workers = 1;
+}
+
+// ---------------- M5.B (ADT) entities + request/response messages ----------------
+
+// ADTLinkage mirrors the adt_linkage row (schema.md §"adt_linkage table"
+// / PRD §4.8.1). Identity columns only — no credential payload exists
+// to leak (PRD §4.8.2). `deleted_at` is unset on live rows.
+message ADTLinkage {
+  string id = 1;
+  string studio_namespace = 2;
+  string adt_namespace = 3;
+  string linked_by_user_id = 4;
+  google.protobuf.Timestamp linked_at = 5;
+  google.protobuf.Timestamp deleted_at = 6;
+}
+
+// ADTBuild is the minimum build row the admin UI / pth CLI needs to
+// drive the build picker. Mirrors pkg/adt.Build but rendered as proto.
+message ADTBuild {
+  string id = 1;
+  string name = 2;
+  string version = 3;
+  google.protobuf.Timestamp uploaded_at = 4;
+  // Platform — the ADT-reported target ("windows", "linux", ...). Empty
+  // when ADT does not surface it. Wire-added 2026-05-20 alongside the
+  // ADT-eng API spec resolution.
+  string platform = 5;
+}
+
+message ListADTLinkagesRequest {
+  // Mirrors the existing admin RPC namespace path-param convention.
+  // Service layer ignores it for authorization (linkage scope is the
+  // studio derived from the caller's token, not this path), but the
+  // value MUST equal AGS_NAMESPACE so the URL remains stable across
+  // existing CORS / gateway routing.
+  string namespace = 1;
+}
+message ListADTLinkagesResponse {
+  repeated ADTLinkage linkages = 1;
+}
+
+message StartADTLinkRequest {
+  string namespace = 1;
+}
+message StartADTLinkResponse {
+  // Full URL the admin UI assigns to window.location.href to begin the
+  // ADT-side linking dance. Carries the redirect_uri + state +
+  // studio_namespace query params (PRD §4.8.2).
+  string link_url = 1;
+  // The opaque CSRF nonce. Admin UI keeps it (and ADT round-trips it
+  // verbatim) so CompleteADTLink can match the adt_link_pending row.
+  string state = 2;
+  // Expiry of the adt_link_pending row, in seconds-from-epoch. Surfaced
+  // so a CLI driver can decide whether to retry before the row sweeps.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message CompleteADTLinkRequest {
+  string namespace = 1;
+  // CSRF nonce echoed by ADT on the redirect-back URL.
+  string state = 2;
+  // ADT namespace ADT echoed on the redirect-back URL. Required —
+  // missing/empty → InvalidArgument byte-exact (errors.md).
+  string adt_namespace = 3;
+}
+message CompleteADTLinkResponse {
+  ADTLinkage linkage = 1;
+}
+
+message UnlinkADTRequest {
+  string namespace = 1;
+  string adt_linkage_id = 2;
+}
+message UnlinkADTResponse {}
+
+message RecoverADTLinkageRequest {
+  string namespace = 1;
+  // ADT namespace whose orphan flag (present on ADT's side, absent
+  // locally) the caller wants to adopt. Required.
+  string adt_namespace = 2;
+}
+message RecoverADTLinkageResponse {
+  ADTLinkage linkage = 1;
+}
+
+message ListADTBuildsRequest {
+  string namespace = 1;
+  string adt_linkage_id = 2;
+  // ADT game id under the linkage's namespace. Required.
+  string adt_game_id = 3;
+}
+message ListADTBuildsResponse {
+  repeated ADTBuild builds = 1;
+}
+
+// ADTGame is the minimum game row the admin UI / pth CLI needs to drive
+// the create-playtest build-picker's top-level dropdown. Mirrors
+// pkg/adt.Game (STATUS_M5.md "Addendum 2026-05-21 — games-list endpoint").
+message ADTGame {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message ListADTGamesRequest {
+  string namespace = 1;
+  string adt_linkage_id = 2;
+}
+message ListADTGamesResponse {
+  repeated ADTGame games = 1;
+}
+
+message GetADTClientDiagnosticsRequest {
+  string namespace = 1;
+}
+
+// GetADTClientDiagnosticsResponse — booleans only. Values for the AGS
+// IAM client id / secret are NEVER returned; only their presence
+// (non-empty at boot) is exposed.
+message GetADTClientDiagnosticsResponse {
+  // Which adt.Client implementation the bootapp wired:
+  //   "http" — adt.NewHTTPClient (live ADT calls).
+  //   "mem"  — adt.NewMemClient (no-op for ADT-side propagation).
+  string adt_client_kind = 1;
+  // PLUGIN_GRPC_SERVER_AUTH_ENABLED at boot.
+  bool auth_enabled = 2;
+  // True when ADT_BASE_URL was non-empty at boot.
+  bool adt_base_url_set = 3;
+  // True when AGS_BASE_URL was non-empty at boot.
+  bool ags_base_url_set = 4;
+  // True when AGS_IAM_CLIENT_ID was non-empty at boot.
+  bool ags_iam_client_id_set = 5;
+  // True when AGS_IAM_CLIENT_SECRET was non-empty at boot.
+  bool ags_iam_client_secret_set = 6;
+}
+
+// ---------------- M5.C entities + messages ----------------
+
+// ParticipantRow — one row per applicant for the M5.C Participants tab.
+// Cache-only read; the four ADT telemetry fields ship dormant across
+// M5.C (always NULL / 0 — M6 fills them).
+message ParticipantRow {
+  string applicant_id = 1;
+  string user_id = 2;
+  string discord_handle = 3;
+  google.protobuf.Timestamp signup_at = 4;
+  google.protobuf.Timestamp nda_accepted_at = 5;
+  // STEAM_KEYS / AGS_CAMPAIGN only — derived at read time from the
+  // latest dm.sent audit row (PRD §5.4 "Code Sent Date — derived field").
+  // ADT rows leave this NULL; the analogue (Download Date) is deferred to M6.
+  google.protobuf.Timestamp code_sent_at = 6;
+  ApplicantStatus status = 7;
+  bool auto_approved = 8;
+  // Four dormant ADT telemetry cache fields (M5.C → M6 forward-compat).
+  // All are NULL / 0 across M5.C.
+  google.protobuf.Timestamp adt_download_at = 9;
+  optional int32 adt_total_playtime_seconds = 10;
+  optional string adt_hardware_specs_json = 11;
+  int32 adt_crash_count = 12;
+}
+
+message GetPlaytestParticipantsRequest {
+  string namespace = 1;
+  string playtest_id = 2;
+  // Optional status filter; UNSPECIFIED → no filter.
+  ApplicantStatus status_filter = 3;
+}
+
+message GetPlaytestParticipantsResponse {
+  repeated ParticipantRow participants = 1;
+}
+
+// Announcement — one row per admin-authored broadcast. Subject + message
+// are PII-sensitive (never logged / audited).
+message Announcement {
+  string id = 1;
+  string playtest_id = 2;
+  AnnouncementSendToFilter send_to_filter = 3;
+  string subject = 4;
+  string message = 5;
+  AnnouncementStatus status = 6;
+  int32 recipients_total = 7;
+  int32 recipients_sent = 8;
+  string created_by_user_id = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message CreateAnnouncementRequest {
+  string namespace = 1;
+  string playtest_id = 2;
+  AnnouncementSendToFilter send_to_filter = 3;
+  string subject = 4;
+  string message = 5;
+}
+
+message CreateAnnouncementResponse {
+  Announcement announcement = 1;
+}
+
+message ListAnnouncementsRequest {
+  string namespace = 1;
+  string playtest_id = 2;
+}
+
+message ListAnnouncementsResponse {
+  repeated Announcement announcements = 1;
 }
 
 // ---------------- swagger root ----------------

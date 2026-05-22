@@ -17,6 +17,315 @@
     "application/json"
   ],
   "paths": {
+    "/v1/admin/namespaces/{namespace}/adt/linkages": {
+      "get": {
+        "summary": "List ADT linkages for the caller's studio (admin)",
+        "description": "Scoped to the caller's studio namespace (union_namespace ?? namespace). Returns identity columns only — no credential bytes exist (PRD §4.8.2).",
+        "operationId": "PlaytesthubService_ListADTLinkages",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListADTLinkagesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Mirrors the existing admin RPC namespace path-param convention.\nService layer ignores it for authorization (linkage scope is the\nstudio derived from the caller's token, not this path), but the\nvalue MUST equal AGS_NAMESPACE so the URL remains stable across\nexisting CORS / gateway routing.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/adt/linkages/{adtLinkageId}": {
+      "delete": {
+        "summary": "Soft-delete an ADT linkage (admin; idempotent)",
+        "description": "Idempotent re-unlink against an already soft-deleted row is a no-op success. Linkage absent for the caller's studio → NotFound (PRD §4.8). Best-effort calls ADT's DELETE /linkage in the same flow so the ADT-side flag and the local row drop together.",
+        "operationId": "PlaytesthubService_UnlinkADT",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UnlinkADTResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "adtLinkageId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/adt/linkages/{adtLinkageId}/builds": {
+      "get": {
+        "summary": "List builds in an ADT linkage's namespace + game (admin)",
+        "description": "Proxies adt.Client.ListBuilds keyed on the studio derived from the caller's token. Returns FailedPrecondition when ADT reports the linkage flag missing.",
+        "operationId": "PlaytesthubService_ListADTBuilds",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListADTBuildsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "adtLinkageId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "adtGameId",
+            "description": "ADT game id under the linkage's namespace. Required.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/adt/linkages/{adtLinkageId}/games": {
+      "get": {
+        "summary": "List games registered under an ADT linkage's namespace (admin)",
+        "description": "Proxies adt.Client.ListGames keyed on the studio derived from the caller's token. Drives the create-playtest build-picker's top-level dropdown (STATUS_M5.md B12 + Addendum 2026-05-21). Returns FailedPrecondition when ADT reports the linkage flag missing.",
+        "operationId": "PlaytesthubService_ListADTGames",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListADTGamesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "adtLinkageId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/adt/linkages:complete": {
+      "post": {
+        "summary": "Finalize an ADT linking round-trip (admin)",
+        "description": "Consumes the adt_link_pending row matching `state` (not expired); inserts the adt_linkage identity row with `adt_namespace` echoed by ADT on the callback URL. No outbound ADT call — tampering is self-defeating because the first downstream service-JWT call would 401 (PRD §4.8.2).",
+        "operationId": "PlaytesthubService_CompleteADTLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CompleteADTLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PlaytesthubServiceCompleteADTLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/adt/linkages:recover": {
+      "post": {
+        "summary": "Adopt an ADT-side linkage that has no local row (admin)",
+        "description": "Operator-recovery surface for the 2026-05-21 orphan-flag bug: when ADT still carries a linkage flag but no local adt_linkage row exists, StartADTLink + the redirect dance fail with 409 / already_linked. RecoverADTLinkage probes ADT (ListGames) to confirm the orphan flag, then inserts the local row directly. No OAuth round-trip. AlreadyExists when a live row for (studio, adtNamespace) is already present; FailedPrecondition when ADT reports no flag for the pair; Unavailable on ADT transient errors.",
+        "operationId": "PlaytesthubService_RecoverADTLinkage",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecoverADTLinkageResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PlaytesthubServiceRecoverADTLinkageBody"
+            }
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/adt/linkages:start": {
+      "post": {
+        "summary": "Begin an ADT linking round-trip (admin)",
+        "description": "Mints a 32-byte CSRF state, persists adt_link_pending, returns linkUrl that the admin UI redirects to. studio_namespace is derived server-side from the caller's token. No credential is exchanged (PRD §4.8.2).",
+        "operationId": "PlaytesthubService_StartADTLink",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartADTLinkResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PlaytesthubServiceStartADTLinkBody"
+            }
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
     "/v1/admin/namespaces/{namespace}/applicants/{applicantId}:approve": {
       "post": {
         "summary": "Approve a PENDING applicant (admin; reserve → fenced finalize per schema.md)",
@@ -158,6 +467,43 @@
             "schema": {
               "$ref": "#/definitions/PlaytesthubServiceRetryDMBody"
             }
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/diagnostics/adt-client-kind": {
+      "get": {
+        "summary": "Report which ADT client kind was wired at boot + presence of every gate env var (admin)",
+        "description": "Diagnostic surface for the 2026-05-21 silent-fallback bug: the bootapp gate that selects HTTP-backed vs in-memory ADT client requires ALL of AuthEnabled + ADT_BASE_URL + AGS_BASE_URL + AGS_IAM_CLIENT_ID + AGS_IAM_CLIENT_SECRET. When any one is empty the gate silently falls to the in-memory MemClient and UnlinkADT's ADT-side propagation becomes a no-op. This RPC returns the gate decision (\"http\" | \"mem\") plus a boolean presence flag for each env var so the operator can pinpoint the missing one without needing the boot log. Secret values are NEVER returned — only booleans.",
+        "operationId": "PlaytesthubService_GetADTClientDiagnostics",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetADTClientDiagnosticsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
           }
         ],
         "tags": [
@@ -367,6 +713,98 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/PlaytesthubServiceEditPlaytestBody"
+            }
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/admin/namespaces/{namespace}/playtests/{playtestId}/announcements": {
+      "get": {
+        "summary": "List announcement history for a playtest (admin)",
+        "description": "Per-row status aggregated from announcement_recipient.dm_status: SENT (all sent), SENDING (any queued), PARTIAL (mix sent + failed), FAILED (all failed).",
+        "operationId": "PlaytesthubService_ListAnnouncements",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListAnnouncementsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "playtestId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create a bulk DM broadcast for a playtest (admin)",
+        "description": "Resolves recipients at call time (NOT a stored snapshot). Subject + message are PII-sensitive and are never written to audit JSONB or structured logs.",
+        "operationId": "PlaytesthubService_CreateAnnouncement",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateAnnouncementResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "playtestId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/PlaytesthubServiceCreateAnnouncementBody"
             }
           }
         ],
@@ -778,6 +1216,63 @@
         ]
       }
     },
+    "/v1/admin/namespaces/{namespace}/playtests/{playtestId}/participants": {
+      "get": {
+        "summary": "List participants with derived code-sent timestamps (admin; M5.C detail page)",
+        "description": "Read joins applicant + the latest dm.sent audit row to derive code_sent_at for STEAM_KEYS / AGS_CAMPAIGN rows; ADT rows return NULL code_sent_at. Four ADT telemetry cache fields ship in the response shape but stay NULL/zero across M5.C.",
+        "operationId": "PlaytesthubService_GetPlaytestParticipants",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetPlaytestParticipantsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "playtestId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "statusFilter",
+            "description": "Optional status filter; UNSPECIFIED → no filter.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "APPLICANT_STATUS_UNSPECIFIED",
+              "APPLICANT_STATUS_PENDING",
+              "APPLICANT_STATUS_APPROVED",
+              "APPLICANT_STATUS_REJECTED"
+            ],
+            "default": "APPLICANT_STATUS_UNSPECIFIED"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
     "/v1/admin/namespaces/{namespace}/playtests/{playtestId}/survey": {
       "post": {
         "summary": "Create the survey for a playtest (admin; first-version only — second call returns AlreadyExists)",
@@ -1065,10 +1560,76 @@
         ]
       }
     },
+    "/v1/player/me": {
+      "get": {
+        "summary": "Get the authenticated caller's identity (player)",
+        "description": "Returns the caller's AGS user id plus the best-effort Discord handle resolved via the same bot-token lookup the signup flow uses. discord_handle is empty when the caller is not Discord-federated or the lookup fails — the field is informational; callers must not treat it as authoritative identity.",
+        "operationId": "PlaytesthubService_WhoAmI",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1WhoAmIResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
+    "/v1/player/playtests/{playtestId}/adtDownload": {
+      "get": {
+        "summary": "Get the ADT build download URL for the caller (authenticated player; APPROVED applicants only)",
+        "description": "FailedPrecondition for non-ADT playtests. URL re-minted on every call so the player always sees a fresh (possibly per-applicant) URL.",
+        "operationId": "PlaytesthubService_GetADTDownloadInfo",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetADTDownloadInfoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "playtestId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "PlaytesthubService"
+        ],
+        "security": [
+          {
+            "Bearer": []
+          }
+        ]
+      }
+    },
     "/v1/player/playtests/{playtestId}/grantedCode": {
       "get": {
         "summary": "Get the granted code for the caller (authenticated player; APPROVED applicants only)",
-        "description": "NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md).",
+        "description": "NotFound for any soft-deleted playtest regardless of applicant state (PRD §5.1 / errors.md). FailedPrecondition for ADT playtests — use GetADTDownloadInfo.",
         "operationId": "PlaytesthubService_GetGrantedCode",
         "responses": {
           "200": {
@@ -1346,6 +1907,30 @@
         ]
       }
     },
+    "/v1/public/config": {
+      "get": {
+        "summary": "Get the public client config (unauthenticated)",
+        "description": "Returns environment-derived client config that both the admin and player frontends need to construct cross-app URLs. player_base_url is the public origin of the player Svelte bundle (from backend env PLAYER_BASE_URL); empty string when unset.",
+        "operationId": "PlaytesthubService_GetPublicConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetPublicConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "PlaytesthubService"
+        ]
+      }
+    },
     "/v1/public/playtests/{slug}": {
       "get": {
         "summary": "Get a playtest by slug (unauthenticated)",
@@ -1385,6 +1970,33 @@
     },
     "PlaytesthubServiceApproveApplicantBody": {
       "type": "object"
+    },
+    "PlaytesthubServiceCompleteADTLinkBody": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "CSRF nonce echoed by ADT on the redirect-back URL."
+        },
+        "adtNamespace": {
+          "type": "string",
+          "description": "ADT namespace ADT echoed on the redirect-back URL. Required —\nmissing/empty → InvalidArgument byte-exact (errors.md)."
+        }
+      }
+    },
+    "PlaytesthubServiceCreateAnnouncementBody": {
+      "type": "object",
+      "properties": {
+        "sendToFilter": {
+          "$ref": "#/definitions/v1AnnouncementSendToFilter"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
     },
     "PlaytesthubServiceCreatePlaytestBody": {
       "type": "object",
@@ -1435,6 +2047,19 @@
         "autoApproveLimit": {
           "type": "integer",
           "format": "int32"
+        },
+        "adtNamespace": {
+          "type": "string",
+          "description": "ADT distribution (M5.B). Required when distribution_model = ADT;\nrejected when set on STEAM_KEYS / AGS_CAMPAIGN. The linkage row\ncovering (studio_namespace, adt_namespace) must already exist —\nCompleteADTLink first. adt_build_id is verified against\nadt.Client.ListBuilds(adt_namespace, adt_game_id) at create-time."
+        },
+        "adtGameId": {
+          "type": "string"
+        },
+        "adtBuildId": {
+          "type": "string"
+        },
+        "adtFallbackDownloadUrl": {
+          "type": "string"
         }
       }
     },
@@ -1490,6 +2115,10 @@
         "autoApproveLimit": {
           "type": "integer",
           "format": "int32"
+        },
+        "adtFallbackDownloadUrl": {
+          "type": "string",
+          "description": "ADT distribution (M5.B). adt_namespace / adt_game_id / adt_build_id\nare immutable post-create (mirrors ags_item_id); only the static\nfallback URL is editable so operators can repoint without\nrecreating the playtest."
         }
       },
       "description": "EditPlaytestRequest mutable-field whitelist tracks PRD §5.1 L146.\nImmutable fields (slug, namespace path params excluded, status,\ndistribution_model, initial_code_quantity, ags_*, timestamps) are\ndeliberately absent — clients that send them on the JSON body still have\nthem rejected at the handler layer."
@@ -1504,6 +2133,15 @@
             "$ref": "#/definitions/v1SurveyQuestion"
           },
           "description": "Ordered question array. For each entry: `id` non-empty → preserve\n(must match an existing question's id on the current version);\n`id` empty → mint a new UUID. Same rule applies to MultiChoiceOption.id.\nThe server bumps version each call."
+        }
+      }
+    },
+    "PlaytesthubServiceRecoverADTLinkageBody": {
+      "type": "object",
+      "properties": {
+        "adtNamespace": {
+          "type": "string",
+          "description": "ADT namespace whose orphan flag (present on ADT's side, absent\nlocally) the caller wants to adopt. Required."
         }
       }
     },
@@ -1532,6 +2170,9 @@
           }
         }
       }
+    },
+    "PlaytesthubServiceStartADTLinkBody": {
+      "type": "object"
     },
     "PlaytesthubServiceSubmitSurveyResponseBody": {
       "type": "object",
@@ -1611,6 +2252,71 @@
         }
       }
     },
+    "v1ADTBuild": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "uploadedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "platform": {
+          "type": "string",
+          "description": "Platform — the ADT-reported target (\"windows\", \"linux\", ...). Empty\nwhen ADT does not surface it. Wire-added 2026-05-20 alongside the\nADT-eng API spec resolution."
+        }
+      },
+      "description": "ADTBuild is the minimum build row the admin UI / pth CLI needs to\ndrive the build picker. Mirrors pkg/adt.Build but rendered as proto."
+    },
+    "v1ADTGame": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ADTGame is the minimum game row the admin UI / pth CLI needs to drive\nthe create-playtest build-picker's top-level dropdown. Mirrors\npkg/adt.Game (STATUS_M5.md \"Addendum 2026-05-21 — games-list endpoint\")."
+    },
+    "v1ADTLinkage": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "studioNamespace": {
+          "type": "string"
+        },
+        "adtNamespace": {
+          "type": "string"
+        },
+        "linkedByUserId": {
+          "type": "string"
+        },
+        "linkedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deletedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "ADTLinkage mirrors the adt_linkage row (schema.md §\"adt_linkage table\"\n/ PRD §4.8.1). Identity columns only — no credential payload exists\nto leak (PRD §4.8.2). `deleted_at` is unset on live rows."
+    },
     "v1AcceptNDAResponse": {
       "type": "object",
       "properties": {
@@ -1626,6 +2332,68 @@
           "$ref": "#/definitions/v1Playtest"
         }
       }
+    },
+    "v1Announcement": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "playtestId": {
+          "type": "string"
+        },
+        "sendToFilter": {
+          "$ref": "#/definitions/v1AnnouncementSendToFilter"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1AnnouncementStatus"
+        },
+        "recipientsTotal": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "recipientsSent": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "createdByUserId": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "description": "Announcement — one row per admin-authored broadcast. Subject + message\nare PII-sensitive (never logged / audited)."
+    },
+    "v1AnnouncementSendToFilter": {
+      "type": "string",
+      "enum": [
+        "ANNOUNCEMENT_SEND_TO_FILTER_UNSPECIFIED",
+        "ANNOUNCEMENT_SEND_TO_FILTER_ALL",
+        "ANNOUNCEMENT_SEND_TO_FILTER_APPROVED_ONLY",
+        "ANNOUNCEMENT_SEND_TO_FILTER_PENDING_ONLY"
+      ],
+      "default": "ANNOUNCEMENT_SEND_TO_FILTER_UNSPECIFIED",
+      "description": "M5.C — announcement send-to filter (PRD §5.4 \"Bulk announcements\").\nResolved at call time, NOT a stored snapshot."
+    },
+    "v1AnnouncementStatus": {
+      "type": "string",
+      "enum": [
+        "ANNOUNCEMENT_STATUS_UNSPECIFIED",
+        "ANNOUNCEMENT_STATUS_SENDING",
+        "ANNOUNCEMENT_STATUS_SENT",
+        "ANNOUNCEMENT_STATUS_PARTIAL",
+        "ANNOUNCEMENT_STATUS_FAILED"
+      ],
+      "default": "ANNOUNCEMENT_STATUS_UNSPECIFIED",
+      "description": "M5.C — announcement aggregate status computed at read time from\nannouncement_recipient.dm_status (PRD §5.4 \"Bulk announcements\" + schema.md)."
     },
     "v1Applicant": {
       "type": "object",
@@ -1681,6 +2449,11 @@
         "autoApproved": {
           "type": "boolean",
           "description": "PRD §5.4 auto-approve (M5.A). True when this applicant was\napproved via the auto-approve signup chain rather than a manual\nApproveApplicant click. Used for cap accounting."
+        },
+        "surveyResponseSubmittedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Player-visible. Set when the caller has already submitted a survey\nresponse for this playtest (PRD §5.6 one-shot). Powers the\npost-submit \"Feedback submitted ✓\" affordance on the Pending page so\nthe client can flip CTA state without an extra round-trip. Unset\nwhen no response exists or surveys aren't configured."
         }
       },
       "description": "Applicant is the full admin-visible entity (schema.md §\"Applicant entity\").\nPlayer-visible responses carry the same message with restricted fields\npopulated — the handler layer enforces the visibility split (schema.md\nL86–88). Player-visible: status, granted_code_id (presence), approved_at,\nnda_version_hash."
@@ -1800,6 +2573,22 @@
       "default": "CODE_STATE_UNSPECIFIED",
       "description": "CodeState — per-code state machine for the Code pool (PRD §5.5,\nschema.md §\"Code table\"). Pool-only grant (no external entitlement\nin MVP)."
     },
+    "v1CompleteADTLinkResponse": {
+      "type": "object",
+      "properties": {
+        "linkage": {
+          "$ref": "#/definitions/v1ADTLinkage"
+        }
+      }
+    },
+    "v1CreateAnnouncementResponse": {
+      "type": "object",
+      "properties": {
+        "announcement": {
+          "$ref": "#/definitions/v1Announcement"
+        }
+      }
+    },
     "v1CreatePlaytestResponse": {
       "type": "object",
       "properties": {
@@ -1821,9 +2610,11 @@
       "enum": [
         "DISTRIBUTION_MODEL_UNSPECIFIED",
         "DISTRIBUTION_MODEL_STEAM_KEYS",
-        "DISTRIBUTION_MODEL_AGS_CAMPAIGN"
+        "DISTRIBUTION_MODEL_AGS_CAMPAIGN",
+        "DISTRIBUTION_MODEL_ADT"
       ],
-      "default": "DISTRIBUTION_MODEL_UNSPECIFIED"
+      "default": "DISTRIBUTION_MODEL_UNSPECIFIED",
+      "description": " - DISTRIBUTION_MODEL_ADT: ADT — AccelByte Development Toolkit build download. No code pool;\napprove resolves a per-applicant download URL (or static fallback)\nvia pkg/adt. PRD §4.8, schema.md §\"Playtest entity (ADT fields)\"."
     },
     "v1DmStatus": {
       "type": "string",
@@ -1886,6 +2677,57 @@
         }
       }
     },
+    "v1GetADTClientDiagnosticsResponse": {
+      "type": "object",
+      "properties": {
+        "adtClientKind": {
+          "type": "string",
+          "description": "Which adt.Client implementation the bootapp wired:\n  \"http\" — adt.NewHTTPClient (live ADT calls).\n  \"mem\"  — adt.NewMemClient (no-op for ADT-side propagation)."
+        },
+        "authEnabled": {
+          "type": "boolean",
+          "description": "PLUGIN_GRPC_SERVER_AUTH_ENABLED at boot."
+        },
+        "adtBaseUrlSet": {
+          "type": "boolean",
+          "description": "True when ADT_BASE_URL was non-empty at boot."
+        },
+        "agsBaseUrlSet": {
+          "type": "boolean",
+          "description": "True when AGS_BASE_URL was non-empty at boot."
+        },
+        "agsIamClientIdSet": {
+          "type": "boolean",
+          "description": "True when AGS_IAM_CLIENT_ID was non-empty at boot."
+        },
+        "agsIamClientSecretSet": {
+          "type": "boolean",
+          "description": "True when AGS_IAM_CLIENT_SECRET was non-empty at boot."
+        }
+      },
+      "description": "GetADTClientDiagnosticsResponse — booleans only. Values for the AGS\nIAM client id / secret are NEVER returned; only their presence\n(non-empty at boot) is exposed."
+    },
+    "v1GetADTDownloadInfoResponse": {
+      "type": "object",
+      "properties": {
+        "urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Resolved download URLs in ADT's original order. Issued via\nadt.Client.IssueDownloadURL when ADT can mint URLs (one per build\nasset — single-file builds → one element, multi-asset builds →\nmany); falls back to a single-element list containing the\nplaytest's static adtFallbackDownloadUrl when ADT 4xx/5xx but the\nlinkage row is still present."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Optional expiry; zero when ADT does not surface one."
+        },
+        "source": {
+          "type": "string",
+          "description": "\"issued\" (ADT-minted URLs) or \"fallback\" (static playtest URL)."
+        }
+      }
+    },
     "v1GetApplicantStatusResponse": {
       "type": "object",
       "properties": {
@@ -1930,6 +2772,27 @@
         }
       }
     },
+    "v1GetPlaytestParticipantsResponse": {
+      "type": "object",
+      "properties": {
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ParticipantRow"
+          }
+        }
+      }
+    },
+    "v1GetPublicConfigResponse": {
+      "type": "object",
+      "properties": {
+        "playerBaseUrl": {
+          "type": "string",
+          "description": "Public origin of the player Svelte bundle (from backend env\nPLAYER_BASE_URL). Empty string when unset — callers SHOULD treat\nempty as \"player URL not configured\" and surface that to the user\nrather than falling back silently."
+        }
+      }
+    },
     "v1GetPublicPlaytestResponse": {
       "type": "object",
       "properties": {
@@ -1954,6 +2817,54 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1WorkerHealthEntry"
+          }
+        }
+      }
+    },
+    "v1ListADTBuildsResponse": {
+      "type": "object",
+      "properties": {
+        "builds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ADTBuild"
+          }
+        }
+      }
+    },
+    "v1ListADTGamesResponse": {
+      "type": "object",
+      "properties": {
+        "games": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ADTGame"
+          }
+        }
+      }
+    },
+    "v1ListADTLinkagesResponse": {
+      "type": "object",
+      "properties": {
+        "linkages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1ADTLinkage"
+          }
+        }
+      }
+    },
+    "v1ListAnnouncementsResponse": {
+      "type": "object",
+      "properties": {
+        "announcements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Announcement"
           }
         }
       }
@@ -2045,6 +2956,56 @@
         }
       },
       "description": "NDAAcceptance — append-only acceptance row (schema.md §\"NDA\"). PK is\n(user_id, playtest_id, nda_version_hash); a re-accept on the same\ntuple is a no-op that returns the existing row."
+    },
+    "v1ParticipantRow": {
+      "type": "object",
+      "properties": {
+        "applicantId": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "discordHandle": {
+          "type": "string"
+        },
+        "signupAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ndaAcceptedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "codeSentAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "STEAM_KEYS / AGS_CAMPAIGN only — derived at read time from the\nlatest dm.sent audit row (PRD §5.4 \"Code Sent Date — derived field\").\nADT rows leave this NULL; the analogue (Download Date) is deferred to M6."
+        },
+        "status": {
+          "$ref": "#/definitions/v1ApplicantStatus"
+        },
+        "autoApproved": {
+          "type": "boolean"
+        },
+        "adtDownloadAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Four dormant ADT telemetry cache fields (M5.C → M6 forward-compat).\nAll are NULL / 0 across M5.C."
+        },
+        "adtTotalPlaytimeSeconds": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "adtHardwareSpecsJson": {
+          "type": "string"
+        },
+        "adtCrashCount": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "ParticipantRow — one row per applicant for the M5.C Participants tab.\nCache-only read; the four ADT telemetry fields ship dormant across\nM5.C (always NULL / 0 — M6 fills them)."
     },
     "v1Platform": {
       "type": "string",
@@ -2190,6 +3151,19 @@
         "autoApproveLimit": {
           "type": "integer",
           "format": "int32"
+        },
+        "adtNamespace": {
+          "type": "string",
+          "description": "ADT distribution fields (PRD §5.1 / §4.8, M5.B). Populated when\ndistribution_model = DISTRIBUTION_MODEL_ADT; all three identifiers\nimmutable post-create. adt_fallback_download_url is the static\nper-playtest URL used when ADT can't mint a per-applicant URL."
+        },
+        "adtGameId": {
+          "type": "string"
+        },
+        "adtBuildId": {
+          "type": "string"
+        },
+        "adtFallbackDownloadUrl": {
+          "type": "string"
         }
       },
       "description": "Playtest is the full admin-visible entity. Field semantics: PRD §5.1."
@@ -2236,6 +3210,14 @@
       },
       "description": "PublicPlaytest is the restricted field set exposed to unauthenticated\ncallers on GetPublicPlaytest (PRD §5.2)."
     },
+    "v1RecoverADTLinkageResponse": {
+      "type": "object",
+      "properties": {
+        "linkage": {
+          "$ref": "#/definitions/v1ADTLinkage"
+        }
+      }
+    },
     "v1RejectApplicantResponse": {
       "type": "object",
       "properties": {
@@ -2277,6 +3259,24 @@
     },
     "v1SoftDeletePlaytestResponse": {
       "type": "object"
+    },
+    "v1StartADTLinkResponse": {
+      "type": "object",
+      "properties": {
+        "linkUrl": {
+          "type": "string",
+          "description": "Full URL the admin UI assigns to window.location.href to begin the\nADT-side linking dance. Carries the redirect_uri + state +\nstudio_namespace query params (PRD §4.8.2)."
+        },
+        "state": {
+          "type": "string",
+          "description": "The opaque CSRF nonce. Admin UI keeps it (and ADT round-trips it\nverbatim) so CompleteADTLink can match the adt_link_pending row."
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Expiry of the adt_link_pending row, in seconds-from-epoch. Surfaced\nso a CLI driver can decide whether to retry before the row sweeps."
+        }
+      }
     },
     "v1SubmitSurveyResponseResponse": {
       "type": "object",
@@ -2445,6 +3445,9 @@
         }
       }
     },
+    "v1UnlinkADTResponse": {
+      "type": "object"
+    },
     "v1UploadCodesRejection": {
       "type": "object",
       "properties": {
@@ -2476,6 +3479,23 @@
             "type": "object",
             "$ref": "#/definitions/v1UploadCodesRejection"
           }
+        }
+      }
+    },
+    "v1WhoAmIResponse": {
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "AGS user id in dashless form (matches the wire shape the rest of\nthe player surface uses — pkg/agsid.Format)."
+        },
+        "discordHandle": {
+          "type": "string",
+          "description": "Best-effort human-readable Discord handle (e.g. \"shadowrealm#4421\").\nEmpty when the caller is not Discord-federated, the Discord bot\nclient is unconfigured, or the lookup fails. Informational — never\ntreat as identity, never log alongside NDA / survey content."
+        },
+        "discordId": {
+          "type": "string",
+          "description": "Discord snowflake when available. Empty otherwise. Useful for the\nfrontend to badge the account without round-tripping through AGS."
         }
       }
     },

@@ -22,7 +22,8 @@ export type PublicPlaytest = {
 export type DistributionModel =
   | 'DISTRIBUTION_MODEL_UNSPECIFIED'
   | 'DISTRIBUTION_MODEL_STEAM_KEYS'
-  | 'DISTRIBUTION_MODEL_AGS_CAMPAIGN';
+  | 'DISTRIBUTION_MODEL_AGS_CAMPAIGN'
+  | 'DISTRIBUTION_MODEL_ADT';
 
 export type PlaytestStatus =
   | 'PLAYTEST_STATUS_UNSPECIFIED'
@@ -66,6 +67,11 @@ export type Applicant = {
   grantedCodeId?: string;
   approvedAt?: string;
   ndaVersionHash?: string;
+  // PRD §5.6: when the caller has already submitted a survey response
+  // for this playtest, the server returns the RFC3339 submission
+  // timestamp so the Pending CTA can flip between "Submit feedback" and
+  // "Feedback submitted ✓" without an extra round-trip.
+  surveyResponseSubmittedAt?: string;
 };
 
 export class ApiError extends Error {
@@ -128,6 +134,24 @@ export async function fetchPublicPlaytest(config: Config, slug: string): Promise
     { method: 'GET', authed: false },
   );
   return body.playtest;
+}
+
+export type MyProfile = {
+  userId: string;
+  discordHandle: string;
+  discordId: string;
+};
+
+export async function fetchMyProfile(config: Config): Promise<MyProfile> {
+  const body = await doJson<Partial<MyProfile>>(config, '/v1/player/me', {
+    method: 'GET',
+    authed: true,
+  });
+  return {
+    userId: body.userId ?? '',
+    discordHandle: body.discordHandle ?? '',
+    discordId: body.discordId ?? '',
+  };
 }
 
 export async function submitSignup(
@@ -208,6 +232,30 @@ export async function fetchGrantedCode(
   return doJson<GrantedCode>(
     config,
     `/v1/player/playtests/${encodeURIComponent(playtestId)}/grantedCode`,
+    { method: 'GET', authed: true },
+  );
+}
+
+// AdtDownloadInfo mirrors the GetADTDownloadInfoResponse proto shape.
+// `urls` lists every download URL ADT minted in original order — a
+// single-element list for single-file builds, multiple elements for
+// multi-asset builds. `source` is "issued" (ADT-minted URLs) or
+// "fallback" (static per-playtest URL, single-element list) — surfaced
+// in the UI so the player can tell the two apart per dm-queue.md
+// "DM body shape — ADT".
+export type AdtDownloadInfo = {
+  urls: string[];
+  expiresAt?: string;
+  source: 'issued' | 'fallback' | string;
+};
+
+export async function fetchAdtDownloadInfo(
+  config: Config,
+  playtestId: string,
+): Promise<AdtDownloadInfo> {
+  return doJson<AdtDownloadInfo>(
+    config,
+    `/v1/player/playtests/${encodeURIComponent(playtestId)}/adtDownload`,
     { method: 'GET', authed: true },
   );
 }
