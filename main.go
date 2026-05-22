@@ -252,22 +252,7 @@ func main() {
 	}
 
 	if server.DMQueue != nil {
-		// Restart sweep runs once before the worker so any APPROVED row
-		// that was awaiting a DM at last shutdown surfaces as
-		// last_dm_status=failed (lost_on_restart) before the worker
-		// starts draining new approves. Sweep is best-effort: a DB error
-		// here logs WARN but does not block boot, since the next
-		// approve still enqueues normally.
-		if affected, err := server.DMQueue.Sweep(ctx); err != nil {
-			logger.Warn("dm queue restart sweep failed", "error", err)
-		} else {
-			logger.Info("dm queue restart sweep complete", "affected", affected)
-		}
-		go server.DMQueue.Run(ctx)
-		logger.Info("dm queue worker started",
-			"event", "dm_queue_started",
-			"maxDepth", cfg.DMQueueMaxDepth,
-			"drainRatePerSec", cfg.DMDrainRatePerSec)
+		bootDMQueue(ctx, server, cfg, logger)
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
@@ -275,6 +260,42 @@ func main() {
 	<-ctx.Done()
 	logger.Info("signal received")
 	server.Stop()
+}
+
+// bootDMQueue runs the DM-queue boot-time sequence: lost-on-restart
+// sweep → survey-publish restart sweep → worker goroutine. All sweeps
+// are best-effort — a DB error here logs WARN but does not block boot,
+// since subsequent approvals / CreateSurvey fan-outs still enqueue
+// normally.
+func bootDMQueue(ctx context.Context, server *bootapp.Server, cfg *config.Config, logger *slog.Logger) {
+	// Restart sweep runs once before the worker so any APPROVED row
+	// that was awaiting a DM at last shutdown surfaces as
+	// last_dm_status=failed (lost_on_restart) before the worker
+	// starts draining new approves.
+	if affected, err := server.DMQueue.Sweep(ctx); err != nil {
+		logger.Warn("dm queue restart sweep failed", "error", err)
+	} else {
+		logger.Info("dm queue restart sweep complete", "affected", affected)
+	}
+	// Survey-publish DM restart sweep (M5 Track D phase 3 /
+	// docs/dm-queue.md "Survey-publish restart sweep") catches APPROVED
+	// applicants the CreateSurvey fan-out missed on a prior boot —
+	// queue overflow, process restart between MarkSurveyDMSent calls,
+	// applicants who pre-date a server with the new column wiring.
+	// Idempotent: applicants whose last_survey_dm_id already matches
+	// the playtest's current survey id are skipped.
+	if server.SurveyDMSweep != nil {
+		if enqueued, err := server.SurveyDMSweep(ctx); err != nil {
+			logger.Warn("survey-dm restart sweep failed", "error", err)
+		} else {
+			logger.Info("survey-dm restart sweep complete", "enqueued", enqueued)
+		}
+	}
+	go server.DMQueue.Run(ctx)
+	logger.Info("dm queue worker started",
+		"event", "dm_queue_started",
+		"maxDepth", cfg.DMQueueMaxDepth,
+		"drainRatePerSec", cfg.DMDrainRatePerSec)
 }
 
 // holderIDFromEnv returns a stable per-replica identifier for the

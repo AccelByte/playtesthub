@@ -93,6 +93,8 @@ Applicant {
   adtTotalPlaytimeSeconds    INTEGER?    // M6-targeted ADT telemetry cache; ships dormant in M5.C. Aggregated playtime per ADT telemetry.
   adtHardwareSpecs           JSONB?      // M6-targeted ADT telemetry cache; ships dormant in M5.C. Hardware-spec snapshot per ADT telemetry (CPU / GPU / RAM / OS / Storage shape; rendered as the Hardware Specs section in the M6 participant detail modal).
   adtCrashCount              INTEGER     // NOT NULL DEFAULT 0; M6-targeted ADT telemetry cache; ships dormant in M5.C. Per-applicant crash-report count.
+  lastSurveyDmId    UUID?       // M5 Track D phase 3 (migration 0008); the survey.id we last queued a survey-publish DM for. Idempotency contract — see paragraph below the table.
+  lastSurveyDmAt    TIMESTAMP?  // M5 Track D phase 3 (migration 0008); wall-clock UTC of the most recent MarkSurveyDMSent. Forensic only — no production code path reads it.
   createdAt         TIMESTAMP
 }
 ```
@@ -102,6 +104,8 @@ Applicant {
 **Player-visible fields** (returned by `GetApplicantStatus` when caller is the applicant themselves): `status`, `grantedCodeId` (presence only — value retrieved via `GetGrantedCode`), `approvedAt`, `ndaVersionHash` (for the §5.3 re-accept client-side check). **Not visible to the player**: `rejectionReason`, `lastDmStatus`, `lastDmAttemptAt`, `lastDmError`, `discordHandle`, `platforms`, `autoApproved`, and all four ADT telemetry cache columns.
 
 The four ADT telemetry columns (`adtDownloadAt`, `adtTotalPlaytimeSeconds`, `adtHardwareSpecs`, `adtCrashCount`) ship in migration 0007 (M5.C) but stay NULL / zero across the M5.C window — there is no telemetry client, worker, or refresh path in M5.C. The columns exist so M6's worker + endpoint hookup lands with zero schema churn. The `GetPlaytestParticipants` response shape includes them so the proto wire is stable across M5.C → M6; admin UI ignores them in M5.C.
+
+**`lastSurveyDmId` / `lastSurveyDmAt` idempotency contract** (M5 Track D phase 3 / migration 0008; STATUS_M5.md Track D D3). The pair is the per-applicant idempotency stamp for the survey-publish DM channel — distinct from `lastDmStatus` (which tracks approval / retry DMs). The single rule: when `lastSurveyDmId == playtest.surveyId` the applicant has already been queued for a survey-publish DM for the current survey version and the fan-out skips them; when `lastSurveyDmId IS NULL` (or holds a stale survey id) and the applicant is APPROVED + NDA-current, the fan-out is eligible to enqueue. The column is informational, not relational — no `FOREIGN KEY` references `survey(id)` because surveys are versioned (every `EditSurvey` creates a new row) and old rows live forever per PRD §5.6. `CreateSurvey` is the only trigger that fans out a survey-publish DM; `EditSurvey` is silent so editorial iteration on prompt copy never spams recipients. The boot-time restart sweep picks up applicants the in-process fan-out missed (queue overflow, process restart mid-stamp, applicants who pre-date a server with the new column wiring).
 
 ---
 

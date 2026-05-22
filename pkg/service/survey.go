@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -125,6 +127,16 @@ func (s *PlaytesthubServiceServer) CreateSurvey(ctx context.Context, req *pb.Cre
 		}
 	}
 
+	// Fan out a survey-publish DM to APPROVED + NDA-current applicants
+	// who pre-date this survey (M5 Track D phase 3). Per-applicant
+	// idempotency rides on applicant.last_survey_dm_id — re-running
+	// CreateSurvey is a no-op for applicants already DMed for this
+	// survey id, and the boot-time restart sweep picks up the misses
+	// from this best-effort enqueue. Errors here never fail the
+	// CreateSurvey response: the survey row + audit are already
+	// committed, and the restart sweep is the durable backstop.
+	s.fanOutSurveyDM(ctx, pt, created)
+
 	resp, err := surveyToProto(created)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "rendering survey response: %v", err)
@@ -132,11 +144,75 @@ func (s *PlaytesthubServiceServer) CreateSurvey(ctx context.Context, req *pb.Cre
 	return &pb.CreateSurveyResponse{Survey: resp}, nil
 }
 
+// fanOutSurveyDM is the CreateSurvey-time entry point for the
+// survey-publish DM fan-out. Failures are logged but never bubble up —
+// the survey row is already committed and the boot-time restart sweep
+// is the durable backstop. Returns silently when DM wiring is absent
+// (M1 / M2 / unit-test boots).
+func (s *PlaytesthubServiceServer) fanOutSurveyDM(ctx context.Context, pt *repo.Playtest, survey *repo.Survey) {
+	if _, err := s.SweepSurveyDM(ctx, pt, survey.ID); err != nil {
+		slog.WarnContext(ctx, "fanning out survey-publish DM failed; restart sweep will pick up the misses",
+			"playtestId", pt.ID.String(),
+			"surveyId", survey.ID.String(),
+			"error", err.Error())
+	}
+}
+
+// SweepSurveyDM enqueues a survey-publish DM per APPROVED + NDA-current
+// applicant for the playtest whose last_survey_dm_id IS DISTINCT FROM
+// surveyID, then stamps last_survey_dm_id on each one whose enqueue
+// succeeded (M5 Track D phase 3). Returns the count of jobs that
+// reached the queue (overflow / send failures decrement neither
+// counter; the queue has already written its own failed-status audit
+// row). Idempotent: re-running is a no-op for applicants already DMed
+// for surveyID — both CreateSurvey's fan-out and the boot-time restart
+// sweep call this directly.
+//
+// EditSurvey deliberately does not call this helper. The Track D phase
+// 3 decision: every EditSurvey would otherwise re-DM the whole approved
+// cohort, which is editorial noise (admins iterating on prompt copy /
+// fixing typos shouldn't spam recipients). CreateSurvey is the only
+// publish event.
+func (s *PlaytesthubServiceServer) SweepSurveyDM(ctx context.Context, pt *repo.Playtest, surveyID uuid.UUID) (int, error) {
+	if s.dmQueue == nil || s.applicant == nil {
+		return 0, nil
+	}
+	rows, err := s.applicant.ListApprovedNeedingSurveyDM(ctx, pt.ID, surveyID)
+	if err != nil {
+		return 0, fmt.Errorf("listing applicants needing survey-publish DM: %w", err)
+	}
+	var enqueued int
+	for _, a := range rows {
+		job := buildSurveyPublishDMJob(a, pt, s.playerBaseURL, surveyID)
+		if enqErr := s.dmQueue.Enqueue(ctx, job); enqErr != nil {
+			// Queue overflow / sender error: leave last_survey_dm_id
+			// nil so the restart sweep retries. The queue itself has
+			// already stamped applicant.last_dm_status=failed if it
+			// rejected at overflow (dm-queue.md).
+			continue
+		}
+		if _, markErr := s.applicant.MarkSurveyDMSent(ctx, a.ID, surveyID, time.Now().UTC()); markErr != nil {
+			slog.WarnContext(ctx, "marking applicant survey-publish DM sent failed; restart sweep may re-enqueue",
+				"applicantId", a.ID.String(),
+				"surveyId", surveyID.String(),
+				"error", markErr.Error())
+		}
+		enqueued++
+	}
+	return enqueued, nil
+}
+
 // EditSurvey writes a new survey row with version = previous + 1.
 // Question UUIDs are preserved for kept questions (client passes the
 // existing id) and minted for new ones (id empty). Multi-choice option
 // ids likewise — keeps histogram aggregation keys stable across edits
 // per schema.md.
+//
+// EditSurvey does NOT fan out a survey-publish DM. Admins iterate on
+// prompt copy / fix typos via EditSurvey; re-DMing the entire approved
+// cohort on every edit would be editorial noise. CreateSurvey
+// (and the boot-time restart sweep) are the only survey-publish DM
+// trigger points (M5 Track D phase 3).
 func (s *PlaytesthubServiceServer) EditSurvey(ctx context.Context, req *pb.EditSurveyRequest) (*pb.EditSurveyResponse, error) {
 	actorID, err := requireActor(ctx)
 	if err != nil {

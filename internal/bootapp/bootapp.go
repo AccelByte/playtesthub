@@ -91,6 +91,15 @@ type Server struct {
 	// disabled). main.go calls it during boot; the e2e suite ignores
 	// it because tests run AuthEnabled=false.
 	PlatformLogin func() error
+
+	// SurveyDMSweep walks every live playtest with surveyId set and
+	// fans out a survey-publish DM to APPROVED + NDA-current applicants
+	// who haven't been DMed for the current survey id yet (M5 Track D
+	// phase 3 / docs/dm-queue.md "Survey-publish restart sweep").
+	// Idempotent — re-running is a no-op for applicants whose
+	// last_survey_dm_id already matches. main.go calls it once on boot
+	// before serving traffic; the e2e suite ignores it.
+	SurveyDMSweep func(ctx context.Context) (int, error)
 }
 
 // New constructs a Server from opts. It does not Serve; the caller
@@ -151,13 +160,55 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	grpc_health_v1.RegisterHealthServer(grpcSrv, health.NewServer())
 	prometheusGrpc.Register(grpcSrv)
 
+	surveyDMSweep := buildSurveyDMSweep(opts.Config, opts.DBPool, svcServer, logger)
+
 	return &Server{
 		GRPC:          grpcSrv,
 		listener:      opts.Listener,
 		logger:        logger,
 		DMQueue:       dmQueue,
 		PlatformLogin: platformLogin,
+		SurveyDMSweep: surveyDMSweep,
 	}, nil
+}
+
+// buildSurveyDMSweep returns the boot-time survey-publish DM restart
+// sweep (M5 Track D phase 3). For every live playtest with surveyId
+// set, the sweep walks applicants needing a survey-publish DM and
+// enqueues + marks each one through the same primitives CreateSurvey's
+// fan-out uses. Returns nil when the playtest store is unwired (the
+// e2e suite ignores it).
+func buildSurveyDMSweep(cfg *config.Config, dbPool *pgxpool.Pool, svcServer *service.PlaytesthubServiceServer, logger *slog.Logger) func(ctx context.Context) (int, error) {
+	if dbPool == nil || svcServer == nil {
+		return nil
+	}
+	playtestStore := repo.NewPgPlaytestStore(dbPool)
+	return func(ctx context.Context) (int, error) {
+		logger.Info("survey-dm restart sweep starting", "event", "survey_dm_restart_sweep_start")
+		playtests, err := playtestStore.List(ctx, cfg.AGSNamespace, false)
+		if err != nil {
+			return 0, fmt.Errorf("listing playtests for survey-dm restart sweep: %w", err)
+		}
+		var enqueued int
+		for _, pt := range playtests {
+			if pt.SurveyID == nil {
+				continue
+			}
+			n, sweepErr := svcServer.SweepSurveyDM(ctx, pt, *pt.SurveyID)
+			if sweepErr != nil {
+				logger.Warn("survey-dm restart sweep: playtest scan failed",
+					"event", "survey_dm_restart_sweep_playtest_failed",
+					"playtestId", pt.ID.String(),
+					"error", sweepErr.Error())
+				continue
+			}
+			enqueued += n
+		}
+		logger.Info("survey-dm restart sweep finished",
+			"event", "survey_dm_restart_sweep_finished",
+			"enqueued", enqueued)
+		return enqueued, nil
+	}
 }
 
 // Addr returns the listener's address as "host:port" so callers

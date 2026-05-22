@@ -95,6 +95,24 @@ When the playtest has a survey configured (`pt.SurveyID` non-nil) the approval D
 
 Playtests with no survey see the historical single-line body unchanged — the append is a no-op when `pt.SurveyID` is nil.
 
+## DM body shape — survey-publish (Track D phase 3)
+
+`CreateSurvey` fans out a standalone survey-publish DM to every APPROVED + NDA-current applicant whose `applicant.last_survey_dm_id IS DISTINCT FROM` the new `survey.id`. Distinct from the approval DM (which already carries the survey nudge for applicants approved *after* the survey is created — see "survey-link append" above), this body is the discovery channel for the cohort approved *before* the survey was authored. `EditSurvey` is silent — only `CreateSurvey` triggers the fan-out, so iterating on prompt copy never re-DMs the cohort.
+
+- **Configured `PLAYER_BASE_URL`** (the production shape):
+
+  ```text
+  Survey is live for "Acme Closed Beta" — share your feedback: https://x/#/playtest/acme-beta/survey
+  ```
+
+- **Empty `PLAYER_BASE_URL`** (smoke / offline boots):
+
+  ```text
+  Survey is live for "Acme Closed Beta" — open the playtest hub to share your feedback.
+  ```
+
+The slug uses `url.PathEscape` matching the approval DM's survey-link append. Idempotency rides on `applicant.last_survey_dm_id`: every successful `Enqueue` is followed by `MarkSurveyDMSent(applicantId, surveyId, now)`. The column tracks "we attempted delivery for this surveyId", not "delivery confirmed" — the queue's retry / circuit breaker handles the latter. Enqueue overflow or sender errors leave `last_survey_dm_id` nil so the **survey-publish restart sweep** (run once at boot before the DM worker starts, alongside the existing `Sweep` for `lost_on_restart`) catches them on the next process boot. The sweep walks every live playtest with `surveyId IS NOT NULL` and re-runs the same `ListApprovedNeedingSurveyDM` predicate — re-running it is a no-op for applicants already stamped for the current survey id. Jobs are enqueued with `Manual=false` so the queue does **not** emit the `applicant.dm_sent` audit row (that's reserved for admin-triggered Retry DM successes per PRD §5.4).
+
 ## `lastDmError` truncation
 
 - `lastDmError` is byte-truncated to **500 chars** (PRD §5.2 — Applicant entity).

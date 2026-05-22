@@ -56,7 +56,17 @@ type Applicant struct {
 	// ApproveApplicant click. Used by the cap query in Signup to count
 	// existing auto-approvals against playtest.auto_approve_limit.
 	AutoApproved bool
-	CreatedAt    time.Time
+	// LastSurveyDMID is the survey.id we last queued a survey-publish DM
+	// for (M5 Track D phase 3). Nil means "no survey-publish DM ever
+	// queued for this applicant" — the restart sweep treats these as
+	// eligible when the playtest has a survey. CreateSurvey skips
+	// applicants whose value already matches the new survey id, so
+	// re-creating an identical survey row is a no-op.
+	LastSurveyDMID *uuid.UUID
+	// LastSurveyDMAt is the wall-clock UTC stamp paired with
+	// LastSurveyDMID. Forensic-only; no production code path reads it.
+	LastSurveyDMAt *time.Time
+	CreatedAt      time.Time
 }
 
 // ApplicantPage carries one page of applicant rows + the opaque cursor
@@ -143,6 +153,20 @@ type ApplicantStore interface {
 	// failed cohort is bounded by the queue cap (10k) which is also the
 	// upper bound on what can be re-enqueued in one call.
 	ListDMFailedByPlaytest(ctx context.Context, playtestID uuid.UUID) ([]*Applicant, error)
+	// ListApprovedNeedingSurveyDM returns every APPROVED, NDA-current
+	// applicant for the playtest whose last_survey_dm_id IS DISTINCT FROM
+	// the supplied newSurveyID (M5 Track D phase 3). Drives the
+	// CreateSurvey fan-out and the boot-time restart sweep — both rely on
+	// the same predicate so re-running either is a no-op for applicants
+	// already DMed for the current survey version. NDA-current means
+	// applicant.nda_version_hash equals playtest.current_nda_version_hash
+	// (or the playtest does not require an NDA).
+	ListApprovedNeedingSurveyDM(ctx context.Context, playtestID, newSurveyID uuid.UUID) ([]*Applicant, error)
+	// MarkSurveyDMSent stamps applicant.last_survey_dm_id + .last_survey_dm_at
+	// after the survey-publish DM is enqueued. Tracks "we attempted
+	// delivery for this surveyId", not "delivery confirmed" — the DM
+	// queue's retry / circuit breaker handles the latter.
+	MarkSurveyDMSent(ctx context.Context, applicantID, surveyID uuid.UUID, at time.Time) (*Applicant, error)
 }
 
 type PgApplicantStore struct {
@@ -157,7 +181,8 @@ const applicantColumns = `
 	id, playtest_id, user_id, discord_handle, discord_user_id, platforms,
 	nda_version_hash, status, granted_code_id, approved_at,
 	rejection_reason, last_dm_status, last_dm_attempt_at,
-	last_dm_error, auto_approved, created_at`
+	last_dm_error, auto_approved, last_survey_dm_id, last_survey_dm_at,
+	created_at`
 
 // Insert creates an applicant row. Hits the UNIQUE (playtest_id,
 // user_id) index on re-signup; the service layer (phase 7) is expected
@@ -576,7 +601,8 @@ func applicantColumnsPrefixed(alias string) string {
 		"id", "playtest_id", "user_id", "discord_handle", "discord_user_id", "platforms",
 		"nda_version_hash", "status", "granted_code_id", "approved_at",
 		"rejection_reason", "last_dm_status", "last_dm_attempt_at",
-		"last_dm_error", "auto_approved", "created_at",
+		"last_dm_error", "auto_approved", "last_survey_dm_id", "last_survey_dm_at",
+		"created_at",
 	}
 	var b strings.Builder
 	for i, c := range cols {
@@ -588,6 +614,70 @@ func applicantColumnsPrefixed(alias string) string {
 		b.WriteString(c)
 	}
 	return b.String()
+}
+
+// ListApprovedNeedingSurveyDM returns the APPROVED + NDA-current
+// applicant cohort for the playtest whose last_survey_dm_id IS DISTINCT
+// FROM newSurveyID — i.e. applicants who have not yet been DMed for the
+// current survey version. The JOIN onto playtest applies the
+// NDA-currency predicate server-side so soft-deleted playtests are
+// silently excluded and the predicate stays consistent between the
+// CreateSurvey fan-out and the boot-time restart sweep. The
+// applicant_pending_survey_dm_idx partial index (migration 0008)
+// supports the "never DMed yet" branch.
+func (s *PgApplicantStore) ListApprovedNeedingSurveyDM(ctx context.Context, playtestID, newSurveyID uuid.UUID) ([]*Applicant, error) {
+	sql := `
+		SELECT ` + applicantColumnsPrefixed("a") + `
+		  FROM applicant a
+		  JOIN playtest p ON p.id = a.playtest_id
+		 WHERE a.playtest_id = $1
+		   AND p.deleted_at IS NULL
+		   AND a.status = 'APPROVED'
+		   AND (NOT p.nda_required OR a.nda_version_hash = p.current_nda_version_hash)
+		   AND (a.last_survey_dm_id IS DISTINCT FROM $2)
+		 ORDER BY a.created_at ASC, a.id ASC`
+
+	rows, err := s.pool.Query(ctx, sql, playtestID, newSurveyID)
+	if err != nil {
+		return nil, fmt.Errorf("listing applicants needing survey dm: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*Applicant, 0)
+	for rows.Next() {
+		a, scanErr := scanApplicant(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scanning applicant row: %w", scanErr)
+		}
+		out = append(out, a)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("iterating applicant rows: %w", rowsErr)
+	}
+	return out, nil
+}
+
+// MarkSurveyDMSent stamps applicant.last_survey_dm_id + .last_survey_dm_at.
+// Single-row update keyed on applicant.id. The caller invokes this
+// after dmQueue.Enqueue succeeds — the column tracks "we attempted
+// delivery for this surveyId", not "delivery confirmed".
+func (s *PgApplicantStore) MarkSurveyDMSent(ctx context.Context, applicantID, surveyID uuid.UUID, at time.Time) (*Applicant, error) {
+	const sql = `
+		UPDATE applicant
+		   SET last_survey_dm_id = $2,
+		       last_survey_dm_at = $3
+		 WHERE id = $1
+		RETURNING ` + applicantColumns
+
+	row := s.pool.QueryRow(ctx, sql, applicantID, surveyID, at)
+	got, err := scanApplicant(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("marking applicant survey dm sent: %w", classifyPgError(err))
+	}
+	return got, nil
 }
 
 // SetNDAVersionHash updates only the nda_version_hash column. Returns
@@ -628,15 +718,17 @@ func truncateUTF8(s string, maxBytes int) string {
 
 func scanApplicant(row pgx.Row) (*Applicant, error) {
 	var (
-		a             Applicant
-		discordUserID pgtype.Text
-		ndaHash       pgtype.Text
-		grantedCode   pgtype.UUID
-		approvedAt    pgtype.Timestamptz
-		rejReason     pgtype.Text
-		lastDMStatus  pgtype.Text
-		lastDMAttempt pgtype.Timestamptz
-		lastDMError   pgtype.Text
+		a              Applicant
+		discordUserID  pgtype.Text
+		ndaHash        pgtype.Text
+		grantedCode    pgtype.UUID
+		approvedAt     pgtype.Timestamptz
+		rejReason      pgtype.Text
+		lastDMStatus   pgtype.Text
+		lastDMAttempt  pgtype.Timestamptz
+		lastDMError    pgtype.Text
+		lastSurveyDMID pgtype.UUID
+		lastSurveyDMAt pgtype.Timestamptz
 	)
 	err := row.Scan(
 		&a.ID,
@@ -654,6 +746,8 @@ func scanApplicant(row pgx.Row) (*Applicant, error) {
 		&lastDMAttempt,
 		&lastDMError,
 		&a.AutoApproved,
+		&lastSurveyDMID,
+		&lastSurveyDMAt,
 		&a.CreatedAt,
 	)
 	if err != nil {
@@ -667,5 +761,7 @@ func scanApplicant(row pgx.Row) (*Applicant, error) {
 	a.LastDMStatus = stringPtrFromPg(lastDMStatus)
 	a.LastDMAttemptAt = timePtrFromPg(lastDMAttempt)
 	a.LastDMError = stringPtrFromPg(lastDMError)
+	a.LastSurveyDMID = uuidPtrFromPg(lastSurveyDMID)
+	a.LastSurveyDMAt = timePtrFromPg(lastSurveyDMAt)
 	return &a, nil
 }

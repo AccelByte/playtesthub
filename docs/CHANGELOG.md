@@ -1,5 +1,9 @@
 # playtesthub — Full Version History
 
+## v2.6.3 — 2026-05-22
+
+**Survey discovery — `CreateSurvey` fan-out DM + per-applicant idempotency** — closes the third surface in the survey-discovery trio (STATUS_M5.md Track D D3; phases D1 + D2 wired the Pending CTA + approval-DM append). When an admin creates a survey for a playtest that already has an APPROVED + NDA-current cohort, the backend now enqueues one standalone survey-publish DM per applicant via the existing M2 RetryDM machinery. `EditSurvey` stays silent so iterating on prompt copy does not re-broadcast. Per-applicant idempotency rides on a new pair of `applicant` columns (`lastSurveyDmId UUID?` + `lastSurveyDmAt TIMESTAMPTZ?`, migration 0008) so re-running `CreateSurvey` is a no-op and the boot-time survey-publish restart sweep can pick up applicants the in-process fan-out missed (queue overflow, restart mid-stamp). PRD §4.1 step 8 + §5.6 spell out the three discovery surfaces. `dm-queue.md` documents the standalone body shape — tappable URL with `PLAYER_BASE_URL` configured, non-clickable nudge otherwise — and pins `Manual=false` so the queue does not emit the manual-only `applicant.dm_sent` audit row. No proto change; no admin / player UI change.
+
 ## v2.6.2 — 2026-05-21
 
 **ADT linkage resilience — UnlinkADT propagates + RecoverADTLinkage RPC** — repairs the 2026-05-21 orphan-flag state surfaced by a live operator. They unlinked locally before the live ADT HTTP adapter shipped, leaving a flag dangling on ADT's side; today's re-link returned 409 / `already_linked`. The orphan flag was scrubbed manually via curl, but the two code paths that allowed the gap are now closed:

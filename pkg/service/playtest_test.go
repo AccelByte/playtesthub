@@ -165,6 +165,20 @@ func (f *fakePlaytestStore) TransitionStatus(_ context.Context, namespace string
 	return nil, repo.ErrStatusCASMismatch
 }
 
+// getByIDForSurveyDM implements playtestLookupForSurveyDM so
+// fakeApplicantStore.ListApprovedNeedingSurveyDM can resolve a
+// playtest's NDA-currency predicate without taking a typed dependency
+// on fakePlaytestStore.
+func (f *fakePlaytestStore) getByIDForSurveyDM(playtestID uuid.UUID) *repo.Playtest {
+	for _, r := range f.rows {
+		if r.ID == playtestID {
+			clone := *r
+			return &clone
+		}
+	}
+	return nil
+}
+
 // fakeApplicantStore is an in-memory ApplicantStore for service unit
 // tests. It mirrors the real UNIQUE (playtest_id, user_id) constraint so
 // the Signup idempotency path exercises the same ErrUniqueViolation
@@ -173,6 +187,12 @@ type fakeApplicantStore struct {
 	rows                   []*repo.Applicant
 	insertErr              error // set per-test to force a non-unique error path
 	forceRejectCASMismatch bool  // when true, RejectCAS returns ErrStatusCASMismatch — simulates the read-pending → CAS-races-to-approved path
+	// playtestLookup wires fakeApplicantStore's NDA-currency check for
+	// ListApprovedNeedingSurveyDM. Optional — tests that exercise the
+	// survey fan-out NDA-gating wire fakePlaytestStore through
+	// newTestServer; tests that don't care leave it nil and the survey
+	// fan-out treats every playtest as NDA-not-required.
+	playtestLookup playtestLookupForSurveyDM
 }
 
 func (f *fakeApplicantStore) Insert(_ context.Context, a *repo.Applicant) (*repo.Applicant, error) {
@@ -444,6 +464,79 @@ func (f *fakeApplicantStore) ListLostDMOnRestart(_ context.Context, _ string) ([
 	return out, nil
 }
 
+// ListApprovedNeedingSurveyDM mirrors the SQL contract for the M5 Track
+// D phase 3 fan-out: APPROVED + NDA-current applicants for the playtest
+// whose last_survey_dm_id IS DISTINCT FROM newSurveyID. The fake's
+// "NDA-current" branch resolves via the lazily-walked fakePlaytestStore
+// the rig wires alongside, so tests that set up NDA-required playtests
+// see the same exclusion as production.
+func (f *fakeApplicantStore) ListApprovedNeedingSurveyDM(_ context.Context, playtestID, newSurveyID uuid.UUID) ([]*repo.Applicant, error) {
+	out := make([]*repo.Applicant, 0)
+	pt := f.lookupPlaytestForSurveyDM(playtestID)
+	for _, a := range f.rows {
+		if a.PlaytestID != playtestID {
+			continue
+		}
+		if a.Status != applicantStatusApproved {
+			continue
+		}
+		if pt != nil && pt.NDARequired {
+			if a.NDAVersionHash == nil || *a.NDAVersionHash != pt.CurrentNDAVersionHash {
+				continue
+			}
+		}
+		if a.LastSurveyDMID != nil && *a.LastSurveyDMID == newSurveyID {
+			continue
+		}
+		clone := *a
+		out = append(out, &clone)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return bytesLess(out[i].ID[:], out[j].ID[:])
+	})
+	return out, nil
+}
+
+// playtestLookupForSurveyDM is the optional bridge that lets
+// fakeApplicantStore resolve a playtest's NDA currency without taking
+// a direct dependency on fakePlaytestStore. Tests that need NDA-aware
+// behaviour wire this; the default (nil) treats every playtest as
+// NDA-not-required.
+type playtestLookupForSurveyDM interface {
+	getByIDForSurveyDM(playtestID uuid.UUID) *repo.Playtest
+}
+
+// MarkSurveyDMSent stamps the survey-publish DM attribution columns on
+// a single applicant row. ErrNotFound when the row is missing.
+func (f *fakeApplicantStore) MarkSurveyDMSent(_ context.Context, applicantID, surveyID uuid.UUID, at time.Time) (*repo.Applicant, error) {
+	for i, existing := range f.rows {
+		if existing.ID != applicantID {
+			continue
+		}
+		clone := *existing
+		sid := surveyID
+		t := at
+		clone.LastSurveyDMID = &sid
+		clone.LastSurveyDMAt = &t
+		f.rows[i] = &clone
+		ret := clone
+		return &ret, nil
+	}
+	return nil, repo.ErrNotFound
+}
+
+func bytesLess(a, b []byte) bool {
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
 // ListDMFailedByPlaytest mirrors the SQL contract: APPROVED applicants
 // for the playtest with last_dm_status='failed', newest-first.
 func (f *fakeApplicantStore) ListDMFailedByPlaytest(_ context.Context, playtestID uuid.UUID) ([]*repo.Applicant, error) {
@@ -470,13 +563,20 @@ func (f *fakeApplicantStore) ListDMFailedByPlaytest(_ context.Context, playtestI
 	return out, nil
 }
 
+func (f *fakeApplicantStore) lookupPlaytestForSurveyDM(playtestID uuid.UUID) *repo.Playtest {
+	if f.playtestLookup == nil {
+		return nil
+	}
+	return f.playtestLookup.getByIDForSurveyDM(playtestID)
+}
+
 // ---------------- test helpers ----------------------------------------------
 
 const testNamespace = "playtesthub-test"
 
 func newTestServer() (*PlaytesthubServiceServer, *fakePlaytestStore, *fakeApplicantStore) {
 	pt := &fakePlaytestStore{}
-	ap := &fakeApplicantStore{}
+	ap := &fakeApplicantStore{playtestLookup: pt}
 	return NewPlaytesthubServiceServer(pt, ap, testNamespace), pt, ap
 }
 

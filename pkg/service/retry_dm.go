@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -248,6 +249,45 @@ func appendSurveyLine(body string, pt *repo.Playtest, playerBaseURL string) stri
 	}
 	surveyLink := fmt.Sprintf("%s/#/playtest/%s/survey", playerBaseURL, url.PathEscape(pt.Slug))
 	return fmt.Sprintf("%s\nAfter you've played, share feedback: %s", body, surveyLink)
+}
+
+// buildSurveyPublishDMJob assembles the queue Job for the
+// survey-publish fan-out (M5 Track D phase 3). Recipient resolution
+// mirrors buildDMJob: applicant.discord_user_id is the snowflake; rows
+// without one fall through to the queue's missing_recipient branch.
+// Manual=false so the queue does NOT emit the manual-Retry-only
+// applicant.dm_sent audit row — survey-publish is a system-emitted
+// fan-out, not an admin click.
+func buildSurveyPublishDMJob(a *repo.Applicant, pt *repo.Playtest, playerBaseURL string, _ uuid.UUID) dmqueue.Job {
+	var recipient string
+	if a.DiscordUserID != nil {
+		recipient = *a.DiscordUserID
+	}
+	return dmqueue.Job{
+		ApplicantID:   a.ID,
+		PlaytestID:    a.PlaytestID,
+		UserID:        a.UserID,
+		DiscordUserID: recipient,
+		Message:       buildSurveyPublishDMBody(pt, playerBaseURL),
+		Manual:        false,
+	}
+}
+
+// buildSurveyPublishDMBody renders the standalone survey-publish DM
+// body sent to applicants who were approved before the survey existed
+// (M5 Track D phase 3 / docs/dm-queue.md "Survey-publish DM body"). The
+// approval DM already carries the survey nudge for applicants approved
+// after the survey is created (Track D phase 2); this body covers the
+// pre-survey cohort. With a configured playerBaseURL the link is a
+// tappable URL anchored at the same hash-router shape as the approval
+// DM's survey line; without it, the line falls back to a non-clickable
+// nudge so smoke / offline boots still surface the survey channel.
+func buildSurveyPublishDMBody(pt *repo.Playtest, playerBaseURL string) string {
+	if playerBaseURL == "" {
+		return fmt.Sprintf("Survey is live for %q — open the playtest hub to share your feedback.", pt.Title)
+	}
+	link := fmt.Sprintf("%s/#/playtest/%s/survey", playerBaseURL, url.PathEscape(pt.Slug))
+	return fmt.Sprintf("Survey is live for %q — share your feedback: %s", pt.Title, link)
 }
 
 // buildADTApprovalDMBody renders the ADT-flavoured DM body. Single-URL
