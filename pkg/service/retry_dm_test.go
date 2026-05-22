@@ -426,6 +426,93 @@ func TestBuildApprovalDMBody_ADT_MultiURL(t *testing.T) {
 	}
 }
 
+// TestBuildApprovalDMBody_NoBaseURL_SurveySet_AppendsFallbackLine pins
+// the non-clickable survey copy used when PLAYER_BASE_URL is unset but
+// the playtest has a survey configured (Track D phase 2). Players see a
+// nudge to share feedback in-app rather than a dead link.
+func TestBuildApprovalDMBody_NoBaseURL_SurveySet_AppendsFallbackLine(t *testing.T) {
+	surveyID := uuid.New()
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta", SurveyID: &surveyID}
+	got := buildApprovalDMBody(pt, "", nil)
+	want := "You're approved for \"Acme Closed Beta\". Open the playtest to view your code.\n" +
+		"Share feedback in the playtest hub after you play."
+	if got != want {
+		t.Fatalf("survey + no-baseurl DM body mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestBuildApprovalDMBody_WithBaseURL_SurveySet_AppendsSurveyLink covers
+// the production-shape body: deep-link to the pending view plus a
+// second tappable link to the survey, both anchored at the same player
+// origin so Discord renders each as its own tappable URL.
+func TestBuildApprovalDMBody_WithBaseURL_SurveySet_AppendsSurveyLink(t *testing.T) {
+	surveyID := uuid.New()
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta", SurveyID: &surveyID}
+	got := buildApprovalDMBody(pt, "https://x", nil)
+	want := "You're approved for \"Acme Closed Beta\". View your code: https://x/#/playtest/acme-beta/pending\n" +
+		"After you've played, share feedback: https://x/#/playtest/acme-beta/survey"
+	if got != want {
+		t.Fatalf("survey + baseurl DM body mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestBuildApprovalDMBody_WithBaseURL_SurveyNil_NoAppend is the
+// regression guard that playtests without a survey see the historical
+// single-line body — no trailing survey copy slips in via the
+// always-on-append codepath.
+func TestBuildApprovalDMBody_WithBaseURL_SurveyNil_NoAppend(t *testing.T) {
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta"}
+	got := buildApprovalDMBody(pt, "https://x", nil)
+	want := `You're approved for "Acme Closed Beta". View your code: https://x/#/playtest/acme-beta/pending`
+	if got != want {
+		t.Fatalf("survey-nil DM body must match legacy shape:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestBuildApprovalDMBody_ADT_WithBaseURL_SurveySet_AppendsSurveyLink:
+// ADT playtests with a survey configured render the download line plus
+// a separate survey URL, mirroring the non-ADT clickable shape.
+func TestBuildApprovalDMBody_ADT_WithBaseURL_SurveySet_AppendsSurveyLink(t *testing.T) {
+	surveyID := uuid.New()
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta", DistributionModel: distModelADT, SurveyID: &surveyID}
+	got := buildApprovalDMBody(pt, "https://x", []string{"https://cdn.example/build.zip"})
+	want := "Download your playtest build for \"Acme Closed Beta\": https://cdn.example/build.zip\n" +
+		"After you've played, share feedback: https://x/#/playtest/acme-beta/survey"
+	if got != want {
+		t.Fatalf("ADT + survey + baseurl DM body mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestBuildApprovalDMBody_ADT_NoBaseURL_SurveySet_AppendsFallbackLine
+// pins the ADT branch's non-clickable copy when the player origin is
+// unset — operators running a smoke or offline ADT flow still see the
+// feedback nudge instead of a dead URL.
+func TestBuildApprovalDMBody_ADT_NoBaseURL_SurveySet_AppendsFallbackLine(t *testing.T) {
+	surveyID := uuid.New()
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "acme-beta", DistributionModel: distModelADT, SurveyID: &surveyID}
+	got := buildApprovalDMBody(pt, "", []string{"https://cdn.example/build.zip"})
+	want := "Download your playtest build for \"Acme Closed Beta\": https://cdn.example/build.zip\n" +
+		"Share feedback in the playtest hub after you play."
+	if got != want {
+		t.Fatalf("ADT + survey + no-baseurl DM body mismatch:\n  got:  %q\n  want: %q", got, want)
+	}
+}
+
+// TestBuildApprovalDMBody_SurveyLink_EscapesSlug exercises the
+// url.PathEscape contract on the survey-link slug segment. Today's PRD
+// §5.1 only allows slug characters that PathEscape leaves unchanged,
+// but the helper keeps future slug grammar safe — same reasoning as
+// the pending-link block.
+func TestBuildApprovalDMBody_SurveyLink_EscapesSlug(t *testing.T) {
+	surveyID := uuid.New()
+	pt := &repo.Playtest{Title: "Acme Closed Beta", Slug: "weird path", SurveyID: &surveyID}
+	got := buildApprovalDMBody(pt, "https://x", nil)
+	wantSurveyFragment := "https://x/#/playtest/weird%20path/survey"
+	if !strings.Contains(got, wantSurveyFragment) {
+		t.Fatalf("survey link slug not URL-escaped:\n  got:  %q\n  want substring: %q", got, wantSurveyFragment)
+	}
+}
+
 // TestApproveApplicant_DMBodyIncludesDeepLinkWhenConfigured wires
 // WithPlayerBaseURL end-to-end through ApproveApplicant and asserts the
 // enqueued job's Message carries the deep link, proving the bootapp

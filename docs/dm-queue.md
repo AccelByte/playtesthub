@@ -80,6 +80,21 @@ ADT-distribution playtests substitute the standard "your code is here" copy with
 
 `RetryDM` re-mints fresh URLs via `adt.Client.IssueDownloadURL` on every call because the previous URLs may have expired (ADT bounds them with a 24h CDN TTL — PRD §4.8.3). The same numbered-list rendering applies to the re-sent body. The audit row's `adtUrls` array (schema.md `applicant.approve`) records the URL list as minted at approve time; RetryDM does NOT rewrite that audit row even when a fresh resolution returns different URLs.
 
+## DM body shape — survey-link append (Track D phase 2)
+
+When the playtest has a survey configured (`pt.SurveyID` non-nil) the approval DM gains a trailing survey-link line so approved players see the feedback channel in the same message that delivers their code (or ADT build). The append applies to both branches (STEAM_KEYS / AGS_CAMPAIGN and ADT) — every approval DM carries the same nudge. With `PLAYER_BASE_URL` configured the line is a tappable URL anchored at the same hash-router shape as the pending link, with the slug passed through `url.PathEscape` so future grammar relaxations stay safe; without it, the line falls back to a non-clickable nudge.
+
+- **Configured `PLAYER_BASE_URL` + survey set** (the production shape):
+
+  ```text
+  You're approved for "Acme Closed Beta". View your code: https://x/#/playtest/acme-beta/pending
+  After you've played, share feedback: https://x/#/playtest/acme-beta/survey
+  ```
+
+- **Empty `PLAYER_BASE_URL` + survey set** (smoke / offline boots): the second line reads `Share feedback in the playtest hub after you play.` — non-clickable but still surfaces the survey channel. ADT bodies follow the same pattern: download line first, then either the tappable survey URL or the fallback nudge.
+
+Playtests with no survey see the historical single-line body unchanged — the append is a no-op when `pt.SurveyID` is nil.
+
 ## `lastDmError` truncation
 
 - `lastDmError` is byte-truncated to **500 chars** (PRD §5.2 — Applicant entity).

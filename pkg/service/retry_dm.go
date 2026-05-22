@@ -207,15 +207,47 @@ func buildDMJob(a *repo.Applicant, pt *repo.Playtest, manual bool, playerBaseURL
 // Multi-asset builds → "Download your playtest build for %q:\n1) %s\n
 // 2) %s" so the recipient sees one tappable link per asset. RetryDM
 // re-mints fresh URLs because the previous ones may have expired.
+//
+// Survey discovery (M5 Track D phase 2 / dm-queue.md "Survey-link
+// append"): when pt.SurveyID is non-nil the body gains a second line
+// pointing at the player-side survey route. With a configured
+// playerBaseURL that line is a tappable URL —
+// "After you've played, share feedback: <base>/#/playtest/<slug>/survey"
+// — using the same hash-router shape and the same url.PathEscape slug
+// segment as the pending link. With no playerBaseURL the line falls
+// back to the non-clickable nudge
+// "Share feedback in the playtest hub after you play." so smoke /
+// offline boots still surface the survey signal without dangling URLs.
+// The append happens on both the STEAM_KEYS / AGS_CAMPAIGN and the ADT
+// branches — every approval channel carries the same feedback ask.
 func buildApprovalDMBody(pt *repo.Playtest, playerBaseURL string, adtDownloadURLs []string) string {
+	var body string
 	if pt.DistributionModel == distModelADT {
-		return buildADTApprovalDMBody(pt.Title, adtDownloadURLs)
+		body = buildADTApprovalDMBody(pt.Title, adtDownloadURLs)
+	} else if playerBaseURL == "" {
+		body = fmt.Sprintf("You're approved for %q. Open the playtest to view your code.", pt.Title)
+	} else {
+		link := fmt.Sprintf("%s/#/playtest/%s/pending", playerBaseURL, url.PathEscape(pt.Slug))
+		body = fmt.Sprintf("You're approved for %q. View your code: %s", pt.Title, link)
+	}
+	return appendSurveyLine(body, pt, playerBaseURL)
+}
+
+// appendSurveyLine adds the survey-link line to the DM body when the
+// playtest has a survey configured. With a configured playerBaseURL the
+// line carries a tappable URL; otherwise it falls back to a
+// non-clickable nudge so the message still mentions the survey channel.
+// No-op when pt.SurveyID is nil — pre-survey playtests keep the
+// historical single-line body.
+func appendSurveyLine(body string, pt *repo.Playtest, playerBaseURL string) string {
+	if pt.SurveyID == nil {
+		return body
 	}
 	if playerBaseURL == "" {
-		return fmt.Sprintf("You're approved for %q. Open the playtest to view your code.", pt.Title)
+		return body + "\nShare feedback in the playtest hub after you play."
 	}
-	link := fmt.Sprintf("%s/#/playtest/%s/pending", playerBaseURL, url.PathEscape(pt.Slug))
-	return fmt.Sprintf("You're approved for %q. View your code: %s", pt.Title, link)
+	surveyLink := fmt.Sprintf("%s/#/playtest/%s/survey", playerBaseURL, url.PathEscape(pt.Slug))
+	return fmt.Sprintf("%s\nAfter you've played, share feedback: %s", body, surveyLink)
 }
 
 // buildADTApprovalDMBody renders the ADT-flavoured DM body. Single-URL
