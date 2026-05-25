@@ -15,6 +15,8 @@ import (
 	"github.com/anggorodewanto/playtesthub/pkg/repo"
 )
 
+const testADTFallbackURL = "https://example.com/build.zip"
+
 // fakeDMQueue captures enqueued jobs for assertion.
 type fakeDMQueue struct {
 	jobs []dmqueue.Job
@@ -131,8 +133,8 @@ func TestApproveApplicant_ADT_FallbackURLWhenADTUnavailable(t *testing.T) {
 	// without consulting the fallback URL. To exercise the fallback we
 	// need a non-linkage-missing error; swap in a client that returns a
 	// generic error.
-	h.svr.WithADTClient(&erroringADTClient{baseURL: "https://example.com/build.zip"})
-	fallback := "https://example.com/build.zip"
+	h.svr.WithADTClient(&erroringADTClient{baseURL: testADTFallbackURL})
+	fallback := testADTFallbackURL
 	pt := seedADTPlaytest(t, h)
 	pt.ADTFallbackDownloadURL = &fallback
 	a := seedPendingApplicantADT(t, h.svr, pt.ID)
@@ -231,4 +233,74 @@ func TestGetADTDownloadInfo_NonADTPlaytest_FailedPrecondition(t *testing.T) {
 	})
 	requireStatus(t, err, codes.FailedPrecondition)
 	requireMsgContains(t, err, "use GetGrantedCode")
+}
+
+// buildNotFoundADTClient fails IssueDownloadURL with ErrBuildNotFound,
+// exercising the "build deleted from ADT" surface (errorCode 1003303402).
+type buildNotFoundADTClient struct{}
+
+func (buildNotFoundADTClient) ListBuilds(context.Context, string, string, string) ([]adt.Build, error) {
+	return nil, nil
+}
+func (buildNotFoundADTClient) ListGames(context.Context, string, string) ([]adt.Game, error) {
+	return nil, nil
+}
+func (buildNotFoundADTClient) IssueDownloadURL(context.Context, adt.IssueDownloadURLParams) (adt.IssuedDownloadURL, error) {
+	return adt.IssuedDownloadURL{}, adt.ErrBuildNotFound
+}
+func (buildNotFoundADTClient) DeleteLinkage(context.Context, string, string) error { return nil }
+
+func seedApprovedApplicantADT(t *testing.T, svr *PlaytesthubServiceServer, ptID, userID uuid.UUID) {
+	t.Helper()
+	approvedAt := time.Now().UTC()
+	if _, err := svr.applicant.Insert(context.Background(), &repo.Applicant{
+		PlaytestID: ptID,
+		UserID:     userID,
+		Platforms:  []string{"STEAM"},
+		Status:     applicantStatusApproved,
+		ApprovedAt: &approvedAt,
+	}); err != nil {
+		t.Fatalf("seed approved applicant: %v", err)
+	}
+}
+
+// Build deleted from ADT + no fallback URL → FailedPrecondition with the
+// build-gone message, NOT a misleading Unavailable.
+func TestGetADTDownloadInfo_BuildNotFound_NoFallback_FailedPrecondition(t *testing.T) {
+	h := newADTApprovedHarness(t)
+	h.svr.WithADTClient(buildNotFoundADTClient{})
+	pt := seedADTPlaytest(t, h)
+	userID := uuid.New()
+	seedApprovedApplicantADT(t, h.svr, pt.ID, userID)
+
+	_, err := h.svr.GetADTDownloadInfo(authCtx(userID), &pb.GetADTDownloadInfoRequest{
+		PlaytestId: pt.ID.String(),
+	})
+	requireStatus(t, err, codes.FailedPrecondition)
+	requireMsgContains(t, err, "ADT build no longer exists")
+}
+
+// Build deleted from ADT + fallback URL set → fallback is served (the
+// operator's escape hatch wins over the build-gone error).
+func TestGetADTDownloadInfo_BuildNotFound_WithFallback_UsesFallback(t *testing.T) {
+	h := newADTApprovedHarness(t)
+	h.svr.WithADTClient(buildNotFoundADTClient{})
+	pt := seedADTPlaytest(t, h)
+	fallback := testADTFallbackURL
+	pt.ADTFallbackDownloadURL = &fallback
+	userID := uuid.New()
+	seedApprovedApplicantADT(t, h.svr, pt.ID, userID)
+
+	resp, err := h.svr.GetADTDownloadInfo(authCtx(userID), &pb.GetADTDownloadInfoRequest{
+		PlaytestId: pt.ID.String(),
+	})
+	if err != nil {
+		t.Fatalf("GetADTDownloadInfo: %v", err)
+	}
+	if resp.GetSource() != adtURLSourceFallback {
+		t.Errorf("source = %q, want %q", resp.GetSource(), adtURLSourceFallback)
+	}
+	if len(resp.GetUrls()) != 1 || resp.GetUrls()[0] != fallback {
+		t.Errorf("urls = %v, want [%s]", resp.GetUrls(), fallback)
+	}
 }

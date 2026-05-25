@@ -38,6 +38,14 @@ type HTTPClient struct {
 	UserAgent string
 }
 
+// adtListPageLimit caps the games/builds list calls. ADT paginates both
+// endpoints and defaults to a small page when no limit is supplied, so
+// without this the admin picker silently truncates to ADT's default.
+// v1 has no pagination loop (PRD: operators pick from the full list), so
+// this is a deliberate single-page ceiling — studios with more than this
+// many games/builds would need a follow-up pagination pass.
+const adtListPageLimit = "200"
+
 // NewHTTPClient constructs the live adapter. baseURL is origin only
 // (no path); http defaults to a 30s-timeout client when nil; policy
 // defaults to DefaultRetryPolicy when zero-valued. Token must be
@@ -94,7 +102,7 @@ func (c *HTTPClient) ListGames(ctx context.Context, studioNamespace, adtNamespac
 	if c.BaseURL == "" {
 		return nil, fmt.Errorf("adt: HTTPClient BaseURL is empty")
 	}
-	endpoint := c.BaseURL + "/profiling/namespaces/" + url.PathEscape(adtNamespace) + "/agsplaytesthub/games"
+	endpoint := c.BaseURL + "/profiling/namespaces/" + url.PathEscape(adtNamespace) + "/agsplaytesthub/games?limit=" + adtListPageLimit
 
 	var raw struct {
 		Data []struct {
@@ -127,7 +135,7 @@ func (c *HTTPClient) ListBuilds(ctx context.Context, studioNamespace, adtNamespa
 		return nil, fmt.Errorf("adt: HTTPClient BaseURL is empty")
 	}
 	endpoint := c.BaseURL + "/profiling/namespaces/" + url.PathEscape(adtNamespace) +
-		"/agsplaytesthub/games/" + url.PathEscape(adtGameID) + "/builds"
+		"/agsplaytesthub/games/" + url.PathEscape(adtGameID) + "/builds?limit=" + adtListPageLimit
 
 	var raw struct {
 		Data []struct {

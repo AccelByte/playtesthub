@@ -179,6 +179,9 @@ func (s *PlaytesthubServiceServer) resolveADTDownloadURL(ctx context.Context, pl
 	if playtest.ADTFallbackDownloadURL != nil && *playtest.ADTFallbackDownloadURL != "" {
 		return []string{*playtest.ADTFallbackDownloadURL}, adtURLSourceFallback, nil
 	}
+	if errors.Is(issueErr, adt.ErrBuildNotFound) {
+		return nil, "", status.Error(codes.FailedPrecondition, "ADT build no longer exists; it may have been deleted from ADT. Set a fallback download URL or re-create the playtest with a current build.")
+	}
 	return nil, "", status.Errorf(codes.Unavailable, "calling ADT IssueDownloadURL: %v", issueErr)
 }
 

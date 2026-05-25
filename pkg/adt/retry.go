@@ -125,7 +125,8 @@ func (p RetryPolicy) shouldRetry(err error) bool {
 //     caller abort — same sentinel either way).
 //  2. JSON errorCode in the response body (when ADTErrorCodeCarrier is
 //     satisfied AND the code is nonzero): 99 → ErrLinkageMissing,
-//     401 → ErrUnauthenticated, 20001 → ErrPermissionDenied.
+//     401 → ErrUnauthenticated, 20001 → ErrPermissionDenied,
+//     1003303402 → ErrBuildNotFound.
 //  3. HTTP status fallback for plaintext bodies / unknown errorCodes:
 //     429 → ErrRateLimited, 5xx → ErrUnavailable, other 4xx →
 //     *ClientError.
@@ -151,6 +152,8 @@ func classify(err error, opName string) error {
 			return ErrUnauthenticated
 		case 20001:
 			return ErrPermissionDenied
+		case 1003303402:
+			return ErrBuildNotFound
 		}
 	}
 	var carrier HTTPStatusCarrier

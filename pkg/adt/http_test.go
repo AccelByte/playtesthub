@@ -92,7 +92,7 @@ func TestHTTPClient_ListBuilds_HappyPath(t *testing.T) {
 	var capturedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedAuth = r.Header.Get("Authorization")
-		capturedPath = r.URL.Path
+		capturedPath = r.URL.Path + "?" + r.URL.RawQuery
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{
 				{
@@ -127,6 +127,9 @@ func TestHTTPClient_ListBuilds_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(capturedPath, "/profiling/namespaces/adt-ns/agsplaytesthub/games/game-1/builds") {
 		t.Errorf("path = %q", capturedPath)
+	}
+	if !strings.Contains(capturedPath, "limit=") {
+		t.Errorf("missing limit query param in path = %q", capturedPath)
 	}
 }
 
@@ -357,12 +360,32 @@ func TestHTTPClient_IssueDownloadURL_EmptyListIsClientError(t *testing.T) {
 	}
 }
 
+// TestHTTPClient_IssueDownloadURL_404ErrorCode1003303402MapsToBuildNotFound
+// covers ADT's downloadUrls "build not found" surface: HTTP 404 + JSON
+// `{"errorCode": 1003303402}` → ErrBuildNotFound (not a plaintext mux
+// 404, not ErrLinkageMissing).
+func TestHTTPClient_IssueDownloadURL_404ErrorCode1003303402MapsToBuildNotFound(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errorCode":1003303402,"errorMessage":"build not found"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newTestClient(t, srv, tokenGetterReturning("svc-jwt"))
+	_, err := c.IssueDownloadURL(context.Background(), adt.IssueDownloadURLParams{ADTNamespace: "n", ADTGameID: "g", ADTBuildID: "b"})
+	if !errors.Is(err, adt.ErrBuildNotFound) {
+		t.Fatalf("err = %v, want ErrBuildNotFound", err)
+	}
+}
+
 func TestHTTPClient_ListGames_HappyPath(t *testing.T) {
 	t.Parallel()
 	var capturedAuth, capturedPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedAuth = r.Header.Get("Authorization")
-		capturedPath = r.URL.Path
+		capturedPath = r.URL.Path + "?" + r.URL.RawQuery
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]any{
 				{"id": "game-1", "name": "Aces", "created_at": "2026-05-21T10:00:00Z"},
@@ -390,6 +413,9 @@ func TestHTTPClient_ListGames_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(capturedPath, "/profiling/namespaces/adt-ns/agsplaytesthub/games") {
 		t.Errorf("path = %q", capturedPath)
+	}
+	if !strings.Contains(capturedPath, "limit=") {
+		t.Errorf("missing limit query param in path = %q", capturedPath)
 	}
 }
 

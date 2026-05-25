@@ -18,9 +18,10 @@ import (
 //
 // Live errorCode → sentinel mapping (Bug 4 fix):
 //
-//	errorCode 99    → ErrLinkageMissing      ("Namespace is not registered")
-//	errorCode 401   → ErrUnauthenticated     (bearer missing/garbage)
-//	errorCode 20001 → ErrPermissionDenied    (token valid, route perm absent)
+//	errorCode 99         → ErrLinkageMissing   ("Namespace is not registered")
+//	errorCode 401        → ErrUnauthenticated  (bearer missing/garbage)
+//	errorCode 20001      → ErrPermissionDenied (token valid, route perm absent)
+//	errorCode 1003303402 → ErrBuildNotFound    (downloadUrls: build gone from ADT)
 //
 // HTTP-status fallback (no JSON body OR errorCode not in the table
 // above):
@@ -66,6 +67,16 @@ var (
 	// playtesthub service client", distinct from linkage-missing and
 	// from bearer-broken.
 	ErrPermissionDenied = errors.New("adt: bearer token lacks required permission scope")
+
+	// ErrBuildNotFound maps to gRPC FailedPrecondition. ADT's
+	// downloadUrls endpoint returns `HTTP 404 {"errorCode": 1003303402,
+	// "errorMessage": "build not found"}` when the (game, build) pair no
+	// longer resolves to a downloadable artifact — e.g. the build was
+	// deleted from ADT after the playtest was created. Distinct from
+	// ErrLinkageMissing (the linkage flag is intact, only the build is
+	// gone) so the service layer can surface "set a fallback URL / pick
+	// a current build" instead of a misleading Unavailable.
+	ErrBuildNotFound = errors.New("adt: build not found")
 )
 
 // ClientError is the typed wrapper for HTTP 4xx (other than 429 / the
@@ -104,6 +115,10 @@ func IsUnauthenticated(err error) bool { return errors.Is(err, ErrUnauthenticate
 // IsPermissionDenied returns true when err (or any error in its chain)
 // is ErrPermissionDenied.
 func IsPermissionDenied(err error) bool { return errors.Is(err, ErrPermissionDenied) }
+
+// IsBuildNotFound returns true when err (or any error in its chain) is
+// ErrBuildNotFound.
+func IsBuildNotFound(err error) bool { return errors.Is(err, ErrBuildNotFound) }
 
 // IsClientError returns true when err (or any error in its chain) is
 // a *ClientError.

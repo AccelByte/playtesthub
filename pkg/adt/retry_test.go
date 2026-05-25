@@ -111,6 +111,19 @@ func TestRetry_401ErrorCode20001MapsToPermissionDenied(t *testing.T) {
 	}
 }
 
+// ADT's downloadUrls endpoint returns HTTP 404 + errorCode=1003303402
+// ("build not found") when the build was deleted from ADT. classify
+// must map it to ErrBuildNotFound — distinct from the plaintext 404
+// (route missing → *ClientError) and from errorCode=99 (linkage gone).
+func TestRetry_404ErrorCode1003303402MapsToBuildNotFound(t *testing.T) {
+	err := policyForTest().Run(context.Background(), "IssueDownloadURL", func(_ context.Context) error {
+		return &httpErr{status: 404, errorCode: 1003303402}
+	})
+	if !errors.Is(err, adt.ErrBuildNotFound) {
+		t.Fatalf("err = %v, want ErrBuildNotFound", err)
+	}
+}
+
 // Bare 401 with no JSON errorCode (e.g. plaintext mux-level reply)
 // falls through to *ClientError per the 2026-05-21 classification
 // order — no longer collapses to ErrLinkageMissing.
