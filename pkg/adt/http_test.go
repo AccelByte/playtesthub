@@ -102,6 +102,15 @@ func TestHTTPClient_ListBuilds_HappyPath(t *testing.T) {
 					"build_name":        "ignored-build-name",
 					"created_at":        "2026-05-20T12:00:00Z",
 					"platform_name":     "windows",
+					"build_type":        "buildinfo",
+				},
+				{
+					"id":                "build-2",
+					"game_version_name": "v1.2.3 SB",
+					"game_version_id":   "def",
+					"created_at":        "2026-05-21T12:00:00Z",
+					"platform_name":     "windows",
+					"build_type":        "smartbuild",
 				},
 			},
 		})
@@ -113,14 +122,20 @@ func TestHTTPClient_ListBuilds_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if len(builds) != 1 {
-		t.Fatalf("len(builds) = %d, want 1", len(builds))
+	if len(builds) != 2 {
+		t.Fatalf("len(builds) = %d, want 2", len(builds))
 	}
 	if builds[0].ID != "build-1" || builds[0].Name != "v1.2.3" || builds[0].Version != "abc" || builds[0].Platform != "windows" {
 		t.Errorf("build = %+v", builds[0])
 	}
 	if builds[0].UploadedAt.IsZero() {
 		t.Errorf("UploadedAt zero, want parsed")
+	}
+	if builds[0].BuildType != "buildinfo" || !builds[0].Downloadable() {
+		t.Errorf("build[0] type = %q downloadable = %v, want buildinfo/true", builds[0].BuildType, builds[0].Downloadable())
+	}
+	if builds[1].BuildType != "smartbuild" || builds[1].Downloadable() {
+		t.Errorf("build[1] type = %q downloadable = %v, want smartbuild/false", builds[1].BuildType, builds[1].Downloadable())
 	}
 	if capturedAuth != bearerSvcJWT {
 		t.Errorf("Authorization = %q", capturedAuth)

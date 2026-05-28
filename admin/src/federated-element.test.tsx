@@ -505,6 +505,49 @@ describe('PlaytestCreatePage', () => {
       expect(within(dialog).getByText('b2')).toBeInTheDocument()
     })
 
+    it('greys out and disables non-buildinfo (smartbuild) builds while keeping buildinfo selectable', async () => {
+      setLinkages()
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev' }] },
+        isLoading: false,
+        error: null
+      })
+      mockGetAdtBuilds.mockReturnValue({
+        data: {
+          builds: [
+            { id: 'b-info', name: 'v1.3', version: 'v1.3', platform: 'windows', uploadedAt: '2026-05-10T00:00:00Z', buildType: 'buildinfo' },
+            { id: 'b-smart', name: 'v1.3', version: 'v1.3', platform: 'windows', uploadedAt: '2026-05-09T00:00:00Z', buildType: 'smartbuild' }
+          ]
+        },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+      await user.click(await screen.findByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      await user.click(within(dialog).getByTestId('adt-picker-version-v1.3'))
+
+      // Both build-type labels render so operators can tell them apart.
+      expect(within(dialog).getByTestId('adt-picker-build-type-b-info')).toHaveTextContent('buildinfo')
+      expect(within(dialog).getByTestId('adt-picker-build-type-b-smart')).toHaveTextContent('smartbuild')
+      // The smartbuild card is greyed out + carries the not-downloadable note.
+      expect(within(dialog).getByTestId('adt-picker-build-b-smart')).toHaveStyle({ cursor: 'not-allowed' })
+      expect(within(dialog).getByText(/only buildinfo builds can be distributed/i)).toBeInTheDocument()
+
+      const useBtn = within(dialog).getByRole('button', { name: /use this build/i })
+      // Clicking the smartbuild card must NOT enable selection.
+      await user.click(within(dialog).getByTestId('adt-picker-build-b-smart'))
+      expect(useBtn).toBeDisabled()
+      // Clicking the buildinfo card does.
+      await user.click(within(dialog).getByTestId('adt-picker-build-b-info'))
+      expect(useBtn).toBeEnabled()
+    })
+
     it('wires both adtGameId and adtBuildId on the parent form when Use This Build is clicked', async () => {
       setLinkages()
       const mutate = vi.fn()

@@ -142,7 +142,7 @@ Applies only to playtests with `distributionModel = AGS_CAMPAIGN`.
 | CompleteADTLink | admin | `state`, `adt_namespace` | `ADTLinkage` | natural key (`state` — single-use; replay returns `InvalidArgument`) | M5.B |
 | UnlinkADT | admin | `adtLinkageId` | success/empty | idempotent (re-unlink is no-op); best-effort propagates the unlink to ADT (`adt.Client.DeleteLinkage`) in the same flow — failures are logged + counted on `ADTUnlinkADTSideFailures` but do not block the local soft-delete (PRD §4.8). | M5.B |
 | RecoverADTLinkage | admin | `adtNamespace` | `ADTLinkage` | not idempotent (single-use orphan adoption); rejected with `AlreadyExists` when a live row for the pair already exists | M5.B |
-| ListADTBuilds | admin | `adtLinkageId`, `adtGameId` | `[]Build` (proxied through `adt.Client`) | read-only | M5.B |
+| ListADTBuilds | admin | `adtLinkageId`, `adtGameId` | `[]Build` (proxied through `adt.Client`; each `Build` carries `buildType` — `buildinfo` is downloadable, `smartbuild` is not, see §4.8.3) | read-only | M5.B |
 | ListADTGames | admin | `adtLinkageId` | `[]Game` (proxied through `adt.Client.ListGames`; drives the create-playtest build-picker top-level dropdown — see [`STATUS_M5.md`](STATUS_M5.md) "Addendum 2026-05-21 — games-list endpoint") | read-only | M5.B |
 | ChangeADTBuild | admin | `playtestId`, `adtGameId`, `adtBuildId` | Playtest | repoints an ADT playtest at a new `(adtGameId, adtBuildId)` pair under its existing `adtNamespace` (immutable here — see §4.8.6); verifies the pair against the linkage via the same `adt.Client.ListBuilds` round-trip `CreatePlaytest` runs before persisting; `FailedPrecondition` on a non-ADT playtest | M5.C |
 | GetADTDownloadInfo | player | `playtestId` | `{url, expiresAt?, source ('issued'|'fallback')}` (gated on `applicant.status='APPROVED'` exactly like `GetGrantedCode`) | read-only (each call may mint a fresh URL per ADT semantics) | M5.B |
@@ -177,6 +177,8 @@ ADT (AccelByte Development Toolkit) playtests distribute an in-development build
 #### 4.8.3 Build URL strategy at approve time
 
 Per the 2026-05-20 ADT API spec (see [`STATUS_M5.md`](STATUS_M5.md) §"Open questions"), ADT issues **per-build** download URLs — not per-applicant. Every approved applicant for a given playtest receives the same URL; ADT bounds it with a fixed 24-hour CDN TTL. Per-applicant audit attribution lives on the playtesthub side (`applicant.approve` row carries the applicant id + URL); per-applicant revocation is not available via ADT — `RejectApplicant` is the revocation primitive (cuts off `GetADTDownloadInfo` access on the playtesthub side; the URL itself stays valid for the TTL).
+
+**Only `buildinfo` builds are downloadable.** ADT's builds-list response (`ListADTBuilds`) tags each row with a `build_type` discriminator (added 2026-05-28): `buildinfo` is a real build that can mint a download URL, while `smartbuild` is a SmartBuild entry that cannot. The admin build picker surfaces every build with its `build_type` label but **greys out and disables selection of non-`buildinfo` builds**, so an operator cannot point a playtest at a build that would fail at approve time. The list is shown unfiltered (both types) for transparency.
 
 `ApproveApplicant` against an ADT playtest:
 - Skips code reservation entirely (no `Code` row).
