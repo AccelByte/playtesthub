@@ -1,5 +1,5 @@
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
-import { Card, Modal, Select, Space, Typography } from 'antd'
+import { Card, Modal, Select, Space, Tag, Typography } from 'antd'
 import { useMemo, useState } from 'react'
 import type { V1AdtBuild } from '../playtesthubapi/generated-definitions/V1AdtBuild'
 import type { V1AdtGame } from '../playtesthubapi/generated-definitions/V1AdtGame'
@@ -144,17 +144,41 @@ export function ADTBuildPickerModal({
           {versionName && (
             <Space direction="vertical" style={{ width: '100%' }} size={12}>
               {versionBuilds.map(b => {
+                // "smartbuild" (and any other explicitly non-buildinfo
+                // type) cannot mint a download URL, so it is surfaced but
+                // greyed out + non-selectable. An empty/absent buildType
+                // (legacy ADT drops predating the field) stays selectable
+                // so the picker is never wholesale-disabled — only a build
+                // ADT positively labels non-buildinfo is blocked.
+                const buildType = (b.buildType ?? '').toLowerCase()
+                const downloadable = buildType === '' || buildType === 'buildinfo'
                 const selected = b.id === pickedBuildId
                 return (
                   <Card
                     key={b.id ?? ''}
                     size="small"
-                    hoverable
-                    onClick={() => setPickedBuildId(b.id ?? null)}
-                    style={{ borderColor: selected ? '#1677ff' : undefined }}
+                    hoverable={downloadable}
+                    onClick={downloadable ? () => setPickedBuildId(b.id ?? null) : undefined}
+                    style={{
+                      borderColor: selected ? '#1677ff' : undefined,
+                      opacity: downloadable ? 1 : 0.6,
+                      cursor: downloadable ? 'pointer' : 'not-allowed'
+                    }}
                     data-testid={`adt-picker-build-${b.id}`}>
                     <Space direction="vertical" size={2}>
-                      <Typography.Text strong>{b.platform ?? 'unknown platform'}</Typography.Text>
+                      <Space size={8}>
+                        <Typography.Text strong>{b.platform ?? 'unknown platform'}</Typography.Text>
+                        {b.buildType && (
+                          <Tag color={downloadable ? 'green' : 'default'} data-testid={`adt-picker-build-type-${b.id}`}>
+                            {b.buildType}
+                          </Tag>
+                        )}
+                      </Space>
+                      {!downloadable && (
+                        <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                          Not downloadable — only buildinfo builds can be distributed.
+                        </Typography.Text>
+                      )}
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                         Uploaded {b.uploadedAt ?? '—'}
                       </Typography.Text>

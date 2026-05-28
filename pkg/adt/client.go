@@ -39,6 +39,7 @@ package adt
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -130,6 +131,7 @@ type Client interface {
 //	                                       short-hash-style version tag)
 //	UploadedAt ← ADT `created_at`        (RFC3339)
 //	Platform   ← ADT `platform_name`     (e.g. "windows")
+//	BuildType  ← ADT `build_type`        ("buildinfo" | "smartbuild")
 type Build struct {
 	ID         string
 	Name       string
@@ -138,6 +140,32 @@ type Build struct {
 	// Platform is the ADT-reported target platform ("windows" /
 	// "linux" / etc.). Empty when ADT does not surface it.
 	Platform string
+	// BuildType is ADT's `build_type` discriminator (added to the
+	// builds-list response 2026-05-28). Observed values: "buildinfo" —
+	// a real build that can mint a download URL — and "smartbuild" — a
+	// SmartBuild entry that cannot be downloaded. Only BuildTypeBuildInfo
+	// is downloadable; the admin picker greys the rest out. Empty when
+	// ADT omits the field on older drops.
+	BuildType string
+}
+
+// Build-type discriminators ADT returns on the builds-list response
+// (`build_type`). Only buildinfo builds can mint a download URL; the
+// admin picker greys everything else out as non-downloadable.
+const (
+	BuildTypeBuildInfo  = "buildinfo"
+	BuildTypeSmartBuild = "smartbuild"
+)
+
+// Downloadable reports whether this build may be distributed to
+// playtesters. "smartbuild" (and any future explicitly non-buildinfo
+// type) cannot mint a download URL and is reported false. An empty
+// BuildType is treated as downloadable — legacy ADT drops that predate
+// the `build_type` field must not have every build greyed out — so only
+// a build ADT positively labels non-buildinfo is excluded. The check is
+// case-insensitive to tolerate ADT casing drift.
+func (b Build) Downloadable() bool {
+	return b.BuildType == "" || strings.EqualFold(b.BuildType, BuildTypeBuildInfo)
 }
 
 // Game is the minimum game row the admin UI / pth CLI needs to drive

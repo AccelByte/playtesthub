@@ -144,6 +144,7 @@ func (c *HTTPClient) ListBuilds(ctx context.Context, studioNamespace, adtNamespa
 			GameVersionID   string `json:"game_version_id"`
 			CreatedAt       string `json:"created_at"`
 			PlatformName    string `json:"platform_name"`
+			BuildType       string `json:"build_type"`
 		} `json:"data"`
 	}
 	if err := c.Policy.Run(ctx, "ListBuilds", func(attemptCtx context.Context) error {
@@ -165,6 +166,7 @@ func (c *HTTPClient) ListBuilds(ctx context.Context, studioNamespace, adtNamespa
 			Version:    b.GameVersionID,
 			UploadedAt: uploaded,
 			Platform:   b.PlatformName,
+			BuildType:  b.BuildType,
 		})
 	}
 	return out, nil

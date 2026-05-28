@@ -10,7 +10,8 @@ export const V1AdtBuild = z.object({
   name: z.string().nullish(),
   version: z.string().nullish(),
   uploadedAt: z.string().nullish(),
-  platform: z.string().nullish()
+  platform: z.string().nullish(),
+  buildType: z.string().nullish()
 })
 
 export interface V1AdtBuild extends z.TypeOf<typeof V1AdtBuild> {}

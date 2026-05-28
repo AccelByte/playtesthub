@@ -5830,7 +5830,14 @@ type ADTBuild struct {
 	// Platform — the ADT-reported target ("windows", "linux", ...). Empty
 	// when ADT does not surface it. Wire-added 2026-05-20 alongside the
 	// ADT-eng API spec resolution.
-	Platform      string `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`
+	Platform string `protobuf:"bytes,5,opt,name=platform,proto3" json:"platform,omitempty"`
+	// BuildType — the ADT `build_type` discriminator (wire-added 2026-05-28
+	// per the ADT-eng builds-list addendum). Observed values: "buildinfo"
+	// (a real, downloadable build) and "smartbuild" (a SmartBuild entry
+	// that cannot mint a download URL). Only "buildinfo" builds are
+	// selectable in the admin picker; everything else is greyed out as
+	// non-downloadable. Empty when ADT omits it on older drops.
+	BuildType     string `protobuf:"bytes,6,opt,name=build_type,json=buildType,proto3" json:"build_type,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5896,6 +5903,13 @@ func (x *ADTBuild) GetUploadedAt() *timestamppb.Timestamp {
 func (x *ADTBuild) GetPlatform() string {
 	if x != nil {
 		return x.Platform
+	}
+	return ""
+}
+
+func (x *ADTBuild) GetBuildType() string {
+	if x != nil {
+		return x.BuildType
 	}
 	return ""
 }
@@ -8060,14 +8074,16 @@ const file_playtesthub_v1_playtesthub_proto_rawDesc = "" +
 	"\x11linked_by_user_id\x18\x04 \x01(\tR\x0elinkedByUserId\x127\n" +
 	"\tlinked_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blinkedAt\x129\n" +
 	"\n" +
-	"deleted_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\xa1\x01\n" +
+	"deleted_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\xc0\x01\n" +
 	"\bADTBuild\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x03 \x01(\tR\aversion\x12;\n" +
 	"\vuploaded_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"uploadedAt\x12\x1a\n" +
-	"\bplatform\x18\x05 \x01(\tR\bplatform\"6\n" +
+	"\bplatform\x18\x05 \x01(\tR\bplatform\x12\x1d\n" +
+	"\n" +
+	"build_type\x18\x06 \x01(\tR\tbuildType\"6\n" +
 	"\x16ListADTLinkagesRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\"Q\n" +
 	"\x17ListADTLinkagesResponse\x126\n" +
