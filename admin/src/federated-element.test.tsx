@@ -613,6 +613,68 @@ describe('PlaytestCreatePage', () => {
       expect(screen.getByLabelText(/playtest title/i)).toHaveValue('My Title')
     })
   })
+
+  // PM fix #2: a duplicate slug returns gRPC AlreadyExists (code 6) → HTTP 409.
+  // The inline Alert must show the friendly slug-conflict copy, not the generic
+  // "Create failed" fallback. The message text is implementation-defined so we
+  // drive the mutation into the {code:6}/409 shape and assert on the UI copy.
+  describe('create error surfacing (PM fix #2)', () => {
+    it('shows the slug-conflict copy when the create mutation fails with code 6 / 409', () => {
+      mockCreateMutation.mockReturnValue({
+        mutate: vi.fn(),
+        isPending: false,
+        isError: true,
+        error: { response: { status: 409, data: { code: 6, message: 'slug "x" already exists in namespace "y"', details: [] } } }
+      })
+      renderAt('/new')
+      expect(screen.getByText('Slug is already in-use, please use another')).toBeInTheDocument()
+    })
+
+    it('shows the server message for a non-slug error (e.g. code 13 / 500)', () => {
+      mockCreateMutation.mockReturnValue({
+        mutate: vi.fn(),
+        isPending: false,
+        isError: true,
+        error: { response: { status: 500, data: { code: 13, message: 'internal boom', details: [] } } }
+      })
+      renderAt('/new')
+      expect(screen.getByText('internal boom')).toBeInTheDocument()
+      expect(screen.queryByText('Slug is already in-use, please use another')).not.toBeInTheDocument()
+    })
+  })
+
+  // PM fix #5: when no ADT linkage exists, the ADT radio card carries the
+  // "linking required" warning. Add a Link ADT button beside it that drives the
+  // existing StartADTLink flow (the LinkADTModal → start mutation).
+  describe('ADT-not-linked Link button (PM fix #5)', () => {
+    it('renders a Link ADT Namespace button when linkageCount is 0', () => {
+      mockGetAdtLinkages.mockReturnValue({ data: { linkages: [] }, isLoading: false, error: null })
+      renderAt('/new')
+      expect(screen.getByRole('button', { name: /link adt namespace/i })).toBeInTheDocument()
+    })
+
+    it('does not render the Link ADT button once a linkage exists', () => {
+      mockGetAdtLinkages.mockReturnValue({
+        data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A' }] },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      expect(screen.queryByRole('button', { name: /link adt namespace/i })).not.toBeInTheDocument()
+    })
+
+    it('opens the Link ADT modal and fires StartADTLink on Proceed', async () => {
+      const startMutate = vi.fn()
+      mockStartAdtLinkMutation.mockReturnValue({ mutate: startMutate, isPending: false, isError: false, error: null })
+      mockGetAdtLinkages.mockReturnValue({ data: { linkages: [] }, isLoading: false, error: null })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { name: /link adt namespace/i }))
+      expect(await screen.findByText(/you will be redirected to ADT to authorise the linkage/i)).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /^proceed$/i }))
+      expect(startMutate).toHaveBeenCalledWith({ data: {} })
+    })
+  })
 })
 
 describe('ADTLinkagesPanel', () => {

@@ -173,16 +173,18 @@ export function PlaytestDetailPage() {
           </Typography.Title>
           <Space size={12} style={{ marginTop: 4 }}>
             <Typography.Text type="secondary">{formatDateRange(playtest.startsAt, playtest.endsAt)}</Typography.Text>
-            <Button
-              type="link"
-              size="small"
-              icon={<CopyOutlined />}
-              iconPosition="end"
-              onClick={copyShareLink}
-              style={{ padding: 0, height: 'auto' }}
-            >
-              Playtest Link
-            </Button>
+            {!isDraft && (
+              <Button
+                type="link"
+                size="small"
+                icon={<CopyOutlined />}
+                iconPosition="end"
+                onClick={copyShareLink}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                Playtest Link
+              </Button>
+            )}
           </Space>
         </div>
         <Space wrap data-testid="playtest-header-actions">
@@ -235,6 +237,7 @@ const DISTRIBUTION_MODEL_LABEL: Record<string, string> = {
 
 function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; playerBaseUrl: string }) {
   const navigate = useNavigate()
+  const isDraft = playtest.status === PlaytestStatus.DRAFT
 
   const distributionLabel = playtest.distributionModel
     ? (DISTRIBUTION_MODEL_LABEL[playtest.distributionModel] ?? playtest.distributionModel)
@@ -301,21 +304,27 @@ function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; pl
         ))}
       </Card>
 
-      <div data-testid="playtest-share-link">
-        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-          Shareable Sign-Up Link
+      {isDraft ? (
+        <Typography.Text type="secondary">
+          Sign-up link becomes available once the playtest is published.
         </Typography.Text>
-        <Input
-          readOnly
-          value={shareLink}
-          style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}
-          suffix={
-            <Button type="link" size="small" onClick={copyShareLink} style={{ padding: 0 }}>
-              Copy
-            </Button>
-          }
-        />
-      </div>
+      ) : (
+        <div data-testid="playtest-share-link">
+          <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+            Shareable Sign-Up Link
+          </Typography.Text>
+          <Input
+            readOnly
+            value={shareLink}
+            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}
+            suffix={
+              <Button type="link" size="small" onClick={copyShareLink} style={{ padding: 0 }}>
+                Copy
+              </Button>
+            }
+          />
+        </div>
+      )}
     </Space>
   )
 }

@@ -74,7 +74,13 @@ function ADTPanel({ playtest }: { playtest: V1Playtest }) {
   const linkagesQuery = usePlaytesthubServiceAdminApi_GetAdtLinkages(sdk, {})
   const linkages = (linkagesQuery.data?.linkages ?? []) as V1AdtLinkage[]
   const linkage = linkages.find(l => l.adtNamespace === playtest.adtNamespace) ?? null
-  const linked = Boolean(playtest.adtNamespace)
+  // GetAdtLinkages returns LIVE linkages only (unlinked rows are excluded), so a
+  // matching linkage IS the connection state. Deriving from playtest.adtNamespace
+  // (frozen at create time) would keep showing "Connected" after an unlink.
+  const linked = Boolean(linkage)
+  // Until the query settles we don't know the real state — avoid a false
+  // "Not Connected" flash by rendering a loading indicator instead.
+  const linkagesPending = linkagesQuery.isLoading || (linkagesQuery.data === undefined && !linkagesQuery.error)
 
   const [pickerOpen, setPickerOpen] = useState(false)
 
@@ -109,7 +115,7 @@ function ADTPanel({ playtest }: { playtest: V1Playtest }) {
         data-testid="adt-connection-card"
         title="ADT Connection"
         extra={
-          linked ? (
+          linkagesPending ? null : linked ? (
             <Tag color="green" style={{ marginInlineEnd: 0 }}>
               ● Connected
             </Tag>
@@ -117,7 +123,9 @@ function ADTPanel({ playtest }: { playtest: V1Playtest }) {
             <Tag style={{ marginInlineEnd: 0 }}>Not Connected</Tag>
           )
         }>
-        {linked ? (
+        {linkagesPending ? (
+          <Spin data-testid="adt-connection-loading" />
+        ) : linked ? (
           <div style={{ display: 'flex', gap: 48, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <FieldColumn label="ADT NAMESPACE" value={<code>{playtest.adtNamespace ?? '—'}</code>} />
             <FieldColumn label="LINKED AS" value={linkage?.linkedByUserId ?? '—'} />
@@ -126,6 +134,17 @@ function ADTPanel({ playtest }: { playtest: V1Playtest }) {
               value={linkage?.linkedAt ? dayjs(linkage.linkedAt).format('MMM D, YYYY, h:mm A') : '—'}
             />
           </div>
+        ) : playtest.adtNamespace ? (
+          <Space direction="vertical">
+            <Typography.Text strong>ADT Namespace No Longer Linked</Typography.Text>
+            <Alert
+              type="warning"
+              showIcon
+              data-testid="adt-relink-warning"
+              message="This playtest's ADT namespace is no longer linked"
+              description="Builds can't be changed and the player download link is unavailable. Download link for the players cannot be generated unless they re-link the ADT again. Re-link from the Playtests list page → Link new ADT Namespace."
+            />
+          </Space>
         ) : (
           <Space direction="vertical">
             <Typography.Text strong>ADT Namespace Not Linked</Typography.Text>
@@ -139,7 +158,7 @@ function ADTPanel({ playtest }: { playtest: V1Playtest }) {
         )}
       </Card>
 
-      {linked && (
+      {!linkagesPending && linked && (
         <Card
           data-testid="adt-build-card"
           title="Game Build"

@@ -66,7 +66,7 @@ const PLATFORMS = [
 
 import { DistributionModel, PlaytestStatus } from './shared/playtesthub-enums'
 import { usePlaytesthubServiceApi_GetConfig } from './playtesthubapi/generated-public/queries/PlaytesthubService.query'
-import { toastError } from './shared/api-error'
+import { apiErrorMessage, isSlugConflict, toastError } from './shared/api-error'
 import { ADTBuildPickerModal } from './shared/adt-build-picker'
 
 const STATUS_TAG: Record<string, { text: string; color: string }> = {
@@ -82,6 +82,8 @@ function StatusTag({ status, startsAt, endsAt }: { status: string | null | undef
   if (!preview) return tag
   return <Tooltip title={preview}>{tag}</Tooltip>
 }
+
+const SLUG_CONFLICT_MESSAGE = 'Slug is already in-use, please use another'
 
 const DISTRIBUTION_LABEL: Record<string, string> = {
   [DistributionModel.STEAM_KEYS]: 'Steam Keys',
@@ -869,17 +871,35 @@ function RadioCardLabel({
 function DistributionRadioCards({
   value,
   onChange,
-  linkageCount
+  linkageCount,
+  onLinkAdt
 }: {
   value?: string
   onChange?: (v: string) => void
   linkageCount: number
+  onLinkAdt?: () => void
 }) {
   const adtBadge =
     linkageCount === 0 ? (
-      <Tag color="warning" style={{ marginInlineStart: 0 }}>
-        ⚠ ADT namespace linking required
-      </Tag>
+      <Space size={8} align="center" wrap>
+        <Tag color="warning" style={{ marginInlineStart: 0 }}>
+          ⚠ ADT namespace linking required
+        </Tag>
+        {onLinkAdt && (
+          <Button
+            size="small"
+            htmlType="button"
+            onClick={e => {
+              // Stop the click from toggling the wrapping Radio when the badge
+              // lives inside the ADT radio card.
+              e.stopPropagation()
+              e.preventDefault()
+              onLinkAdt()
+            }}>
+            Link ADT Namespace
+          </Button>
+        )}
+      </Space>
     ) : null
   // aria-label pins each radio's accessible name to the bare title so tests
   // (and screen readers) can disambiguate without dragging the description
@@ -889,19 +909,19 @@ function DistributionRadioCards({
       value={value}
       onChange={e => onChange?.(e.target.value)}
       style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
-      <Radio value={DistributionModel.STEAM_KEYS} aria-label="Steam keys" style={radioCardStyle(value === DistributionModel.STEAM_KEYS)}>
+      <Radio value={DistributionModel.STEAM_KEYS} aria-label="Steam keys" className="pth-radio-card" style={radioCardStyle(value === DistributionModel.STEAM_KEYS)}>
         <RadioCardLabel
           title="Steam keys"
           description="Upload a CSV of Steam keys. Approved players receive a key via Discord DM and redeem it manually on Steam."
         />
       </Radio>
-      <Radio value={DistributionModel.AGS_CAMPAIGN} aria-label="AGS Campaign" style={radioCardStyle(value === DistributionModel.AGS_CAMPAIGN)}>
+      <Radio value={DistributionModel.AGS_CAMPAIGN} aria-label="AGS Campaign" className="pth-radio-card" style={radioCardStyle(value === DistributionModel.AGS_CAMPAIGN)}>
         <RadioCardLabel
           title="AGS Campaign"
           description="Auto-generate redeemable codes via AGS Platform Campaign API. Players redeem codes in-game through the AGS entitlement system."
         />
       </Radio>
-      <Radio value={DistributionModel.ADT} aria-label="ADT" style={radioCardStyle(value === DistributionModel.ADT)}>
+      <Radio value={DistributionModel.ADT} aria-label="ADT" className="pth-radio-card" style={radioCardStyle(value === DistributionModel.ADT)}>
         <RadioCardLabel
           title="ADT"
           description="Distribute game builds directly via AccelByte Development Toolkit (ADT). Approved players receive a direct download link via Discord DM — no additional launcher required. Supports crash reporting and hardware telemetry."
@@ -924,13 +944,13 @@ function ApprovalRadioCards({
       value={value}
       onChange={e => onChange?.(e.target.value)}
       style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
-      <Radio value={false} aria-label="Manual Approval" style={radioCardStyle(value === false)}>
+      <Radio value={false} aria-label="Manual Approval" className="pth-radio-card" style={radioCardStyle(value === false)}>
         <RadioCardLabel
           title="Manual Approval"
           description="Review each sign-up and manually approve or reject participants from the admin panel."
         />
       </Radio>
-      <Radio value={true} aria-label="Auto-Approve" style={radioCardStyle(value === true)}>
+      <Radio value={true} aria-label="Auto-Approve" className="pth-radio-card" style={radioCardStyle(value === true)}>
         <RadioCardLabel
           title="Auto-Approve"
           description="Automatically approve participants on sign-up, up to a maximum capacity. No manual review required."
@@ -958,14 +978,26 @@ function PlaytestCreatePage() {
   const linkagesQuery = usePlaytesthubServiceAdminApi_GetAdtLinkages(sdk, {})
   const linkageCount = ((linkagesQuery.data?.linkages ?? []) as V1AdtLinkage[]).length
 
+  const [linkAdtOpen, setLinkAdtOpen] = useState(false)
+
   const createMutation = usePlaytesthubServiceAdminApi_CreatePlaytestMutation(sdk, {
     onSuccess: () => {
       message.success('Playtest created')
       queryClient.invalidateQueries({ queryKey: [Key_PlaytesthubServiceAdmin.Playtests] })
       navigate('/')
     },
-    onError: toastError('create')
+    onError: err => {
+      if (isSlugConflict(err)) {
+        message.error(SLUG_CONFLICT_MESSAGE)
+        return
+      }
+      message.error(apiErrorMessage(err, 'Create failed'))
+    }
   })
+
+  const createError = createMutation.error
+  const createErrorMessage =
+    createError && isSlugConflict(createError) ? SLUG_CONFLICT_MESSAGE : apiErrorMessage(createError ?? {}, 'Create failed')
 
   const handleSubmit = (values: FormValues) => {
     const isADT = values.distributionModel === DistributionModel.ADT
@@ -1002,6 +1034,7 @@ function PlaytestCreatePage() {
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
+        scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
         initialValues={{
           platforms: [],
           ndaRequired: false,
@@ -1061,7 +1094,7 @@ function PlaytestCreatePage() {
             title="Distribution Model"
             description="Choose how the game build or keys will be delivered to approved participants.">
             <Form.Item name="distributionModel" rules={[{ required: true }]} style={{ marginBottom: 0 }}>
-              <DistributionRadioCards linkageCount={linkageCount} />
+              <DistributionRadioCards linkageCount={linkageCount} onLinkAdt={() => setLinkAdtOpen(true)} />
             </Form.Item>
             {distributionModel === DistributionModel.AGS_CAMPAIGN && (
               <Form.Item
@@ -1126,7 +1159,7 @@ function PlaytestCreatePage() {
           <Alert
             type="error"
             style={{ marginTop: 16 }}
-            message={createMutation.error?.response?.data?.errorMessage ?? 'Create failed'}
+            message={createErrorMessage}
           />
         )}
 
@@ -1148,6 +1181,7 @@ function PlaytestCreatePage() {
           </Button>
         </div>
       </Form>
+      <LinkADTModal open={linkAdtOpen} onClose={() => setLinkAdtOpen(false)} />
     </>
   )
 }
@@ -1234,7 +1268,13 @@ function PlaytestEditPage() {
       <Typography.Text type="secondary">
         Slug <code>{playtest.slug}</code> · distribution model <code>{playtest.distributionModel}</code> (immutable after creation).
       </Typography.Text>
-      <Form<FormValues> form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: 16 }} initialValues={initialValues as FormValues}>
+      <Form<FormValues>
+        form={form}
+        layout="vertical"
+        onFinish={handleSubmit}
+        scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
+        style={{ marginTop: 16 }}
+        initialValues={initialValues as FormValues}>
         <Form.Item label="Title" name="title" rules={[{ required: true, message: 'Title is required' }]}>
           <Input maxLength={200} />
         </Form.Item>

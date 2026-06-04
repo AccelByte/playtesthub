@@ -1,2 +1,19 @@
 @import "tailwindcss/theme" prefix(appui);
 @import "tailwindcss/utilities.css" prefix(appui);
+
+/* Distribution / approval radio cards: the wrapping label is laid out as a
+   flex card (see radioCardStyle). The default antd flex sizing lets the radio
+   indicator and the label span grow, so on narrower viewports (e.g. 1440px)
+   the long ADT description wraps and the indicator visibly stretches. Pin the
+   indicator to its intrinsic size and let only the label flex, scoped to the
+   .pth-radio-card class so global radios are untouched. antd v6 markup:
+   label.ant-radio-wrapper > span.ant-radio (indicator) + span.ant-radio-label. */
+.pth-radio-card.ant-radio-wrapper > .ant-radio {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+.pth-radio-card.ant-radio-wrapper > .ant-radio-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}

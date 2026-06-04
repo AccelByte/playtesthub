@@ -145,3 +145,44 @@ describe('ADTPanel (build health surfacing)', () => {
     await waitFor(() => expect(mutate).toHaveBeenCalledWith({ playtestId: 'pt-adt', data: {} }))
   })
 })
+
+describe('ADTPanel (connection state derived from live linkages)', () => {
+  it('shows Connected when a live linkage matches the playtest namespace', () => {
+    mockGetAdtLinkages.mockReturnValue({
+      data: { linkages: [{ id: 'l1', adtNamespace: 'ns-x', studioNamespace: 'studio-A', linkedAt: '2026-05-19T00:00:00Z' }] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderTab({ ...ADT_PT, adtNamespace: 'ns-x' })
+    expect(screen.getByText('● Connected')).toBeInTheDocument()
+    expect(screen.getByTestId('adt-build-card')).toBeInTheDocument()
+  })
+
+  it('shows Not Connected + re-link warning when the namespace is set but no live linkage exists', () => {
+    mockGetAdtLinkages.mockReturnValue({
+      data: { linkages: [{ id: 'l-other', adtNamespace: 'some-other-ns', studioNamespace: 'studio-A' }] },
+      isLoading: false,
+      error: null,
+      refetch: vi.fn()
+    })
+    renderTab({ ...ADT_PT, adtNamespace: 'ns-x' })
+    expect(screen.getByText('Not Connected')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Download link for the players cannot be generated unless they re-link the ADT again\./i)
+    ).toBeInTheDocument()
+    // Game Build card / Change Build affordance must be hidden when unlinked.
+    expect(screen.queryByTestId('adt-build-card')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /change build/i })).not.toBeInTheDocument()
+  })
+
+  it('does not flash Not Connected while the linkages query is still loading', () => {
+    mockGetAdtLinkages.mockReturnValue({ data: undefined, isLoading: true, error: null, refetch: vi.fn() })
+    renderTab({ ...ADT_PT, adtNamespace: 'ns-x' })
+    expect(screen.queryByText('Not Connected')).not.toBeInTheDocument()
+    expect(screen.queryByText('● Connected')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/Download link for the players cannot be generated unless they re-link the ADT again\./i)
+    ).not.toBeInTheDocument()
+  })
+})
