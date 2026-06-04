@@ -476,21 +476,37 @@ describe('PlaytestDetailPage shell', () => {
   it('Copy share link uses the backend-supplied player_base_url, not the admin host', async () => {
     mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: 'https://play.example.com/' } })
     const user = userEvent.setup()
-    renderDetail('autumn-draft')
+    // The header "Playtest Link" button only renders for OPEN/CLOSED (hidden in DRAFT).
+    renderDetail('autumn-open')
     await user.click(screen.getByRole('button', { name: /Playtest Link/ }))
     await waitFor(async () => {
       const text = await navigator.clipboard.readText()
-      expect(text).toBe('https://play.example.com/#/playtest/autumn-draft')
+      expect(text).toBe('https://play.example.com/#/playtest/autumn-open')
     })
   })
 
   it('Copy share link shows an error when player_base_url is unset (no clipboard write)', async () => {
     mockGetPublicConfig.mockReturnValue({ data: { playerBaseUrl: '' } })
     const user = userEvent.setup()
-    renderDetail('autumn-draft')
+    renderDetail('autumn-open')
     await user.click(screen.getByRole('button', { name: /Playtest Link/ }))
     expect(await screen.findByText(/PLAYER_BASE_URL/)).toBeInTheDocument()
     expect(await navigator.clipboard.readText()).toBe('')
+  })
+
+  it('hides the player-facing link (header button + share input) while DRAFT', () => {
+    renderDetail('autumn-draft')
+    expect(screen.queryByText('Playtest Link')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('playtest-share-link')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue(/play\.example\.com/)).not.toBeInTheDocument()
+    expect(screen.getByText(/becomes available once the playtest is published/i)).toBeInTheDocument()
+  })
+
+  it('shows the player-facing link (header button + share input) once OPEN', () => {
+    renderDetail('autumn-open')
+    expect(screen.getByRole('button', { name: /Playtest Link/ })).toBeInTheDocument()
+    const share = screen.getByTestId('playtest-share-link')
+    expect(within(share).getByDisplayValue('https://play.example.com/#/playtest/autumn-open')).toBeInTheDocument()
   })
 
   it('Publish click triggers the transition mutation via confirm modal', async () => {
