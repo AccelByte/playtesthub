@@ -10,12 +10,14 @@ import {
   Form,
   Input,
   InputNumber,
+  Tabs,
   Modal,
   Popconfirm,
   Radio,
   Select,
   Space,
   Spin,
+  Steps,
   Switch,
   Table,
   Tag,
@@ -88,7 +90,7 @@ const SLUG_CONFLICT_MESSAGE = 'Slug is already in-use, please use another'
 const DISTRIBUTION_LABEL: Record<string, string> = {
   [DistributionModel.STEAM_KEYS]: 'Steam Keys',
   [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign Codes',
-  [DistributionModel.ADT]: 'Direct Download (ADT)'
+  [DistributionModel.ADT]: 'ADT (Direct Download)'
 }
 
 function WorkerHealthBanner() {
@@ -116,7 +118,7 @@ function WorkerHealthBanner() {
 
 export function FederatedElement() {
   return (
-    <div style={{ padding: 16, backgroundColor: '#f0f2f5', minHeight: '100%' }}>
+    <div style={{ padding: 16, backgroundColor: '#f0f2f5', minHeight: '100vh' }}>
       <WorkerHealthBanner />
       <Routes>
         <Route path="/" index element={<PlaytestsListPage />} />
@@ -338,6 +340,9 @@ function PlaytestsListPage() {
   const publicConfigQuery = usePlaytesthubServiceApi_GetConfig(sdk, {})
   const playerBaseUrl = publicConfigQuery.data?.playerBaseUrl ?? ''
 
+  const [activeTab, setActiveTab] = useState<'list' | 'config'>('list')
+  const [search, setSearch] = useState('')
+
   const deleteMutation = usePlaytesthubServiceAdminApi_DeletePlaytest_ByPlaytestIdMutation(sdk, {
     onSuccess: () => {
       message.success('Playtest deleted')
@@ -354,6 +359,11 @@ function PlaytestsListPage() {
   })
 
   const playtests = (data?.playtests ?? []) as V1Playtest[]
+  const filtered = playtests.filter(p =>
+    !search ||
+    (p.title ?? '').toLowerCase().includes(search.toLowerCase()) ||
+    (p.slug ?? '').toLowerCase().includes(search.toLowerCase())
+  )
 
   const copyLink = (slug: string) => {
     if (!playerBaseUrl) {
@@ -419,16 +429,22 @@ function PlaytestsListPage() {
       render: (value: string | null | undefined) => <Typography.Text strong>{value ?? '—'}</Typography.Text>
     },
     {
-      title: 'Slug',
-      dataIndex: 'slug',
-      key: 'slug',
-      render: (value: string | null | undefined) => (value ? <Typography.Text code>{value}</Typography.Text> : '—')
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      render: (_: unknown, row: V1Playtest) => <StatusTag status={row.status} startsAt={row.startsAt} endsAt={row.endsAt} />
     },
     {
       title: 'Distribution',
       dataIndex: 'distributionModel',
       key: 'distributionModel',
       render: (value: string | null | undefined) => DISTRIBUTION_LABEL[value ?? ''] ?? value ?? '—'
+    },
+    {
+      title: 'Slug',
+      dataIndex: 'slug',
+      key: 'slug',
+      render: (value: string | null | undefined) => (value ? <Typography.Text code>{value}</Typography.Text> : '—')
     },
     {
       title: 'Approval',
@@ -438,19 +454,7 @@ function PlaytestsListPage() {
         value ? <Tag color="green">Auto-Approve</Tag> : <Tag color="orange">Manual</Tag>
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (_: unknown, row: V1Playtest) => <StatusTag status={row.status} startsAt={row.startsAt} endsAt={row.endsAt} />
-    },
-    {
-      title: 'Updated',
-      dataIndex: 'updatedAt',
-      key: 'updatedAt',
-      render: (value: string | null | undefined) => (value ? dayjs(value).format('M/D/YYYY, h:mm A') : '—')
-    },
-    {
-      title: 'Action',
+      title: 'Actions',
       key: 'actions',
       render: (_: unknown, row: V1Playtest) => {
         const isDraft = row.status === PlaytestStatus.DRAFT
@@ -486,40 +490,67 @@ function PlaytestsListPage() {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <Typography.Title level={2} style={{ margin: 0 }}>
+      {/* Full-width white header — negative margins counteract FederatedElement's padding: 16 */}
+      <div style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '20px 24px 0' }}>
+        <Typography.Title level={2} style={{ margin: '0 0 2px' }}>
           Playtest Hub
         </Typography.Title>
-        <Button type="primary" onClick={() => navigate('new')}>
-          + Create Playtest
-        </Button>
+        <Tabs
+          activeKey={activeTab}
+          onChange={key => setActiveTab(key as 'list' | 'config')}
+          items={[
+            { key: 'list', label: 'Playtest List', children: null },
+            { key: 'config', label: 'Global Configurations', children: null }
+          ]}
+          tabBarStyle={{ marginBottom: 0 }}
+        />
       </div>
 
-      {error && (
-        <Alert
-          type="error"
-          message="Failed to load playtests."
-          style={{ marginBottom: 16 }}
-          action={
-            <Button size="small" onClick={() => refetch()}>
-              Retry
-            </Button>
-          }
-        />
-      )}
-      <Card title="Playtest List">
-        {isLoading ? (
-          <Spin description="Loading playtests..." />
-        ) : (
-          <Table<V1Playtest>
-            rowKey={row => row.id ?? row.slug ?? ''}
-            dataSource={playtests}
-            columns={columns}
-            pagination={{ pageSize: 20 }}
-          />
+      <div style={{ paddingTop: 16 }}>
+        {activeTab === 'list' && (
+          <>
+            {error && (
+              <Alert
+                type="error"
+                message="Failed to load playtests."
+                style={{ marginBottom: 16 }}
+                action={
+                  <Button size="small" onClick={() => refetch()}>
+                    Retry
+                  </Button>
+                }
+              />
+            )}
+            <Card
+              title="Playtest List"
+              extra={
+                <Button type="primary" onClick={() => navigate('new')}>
+                  + Create Playtest
+                </Button>
+              }
+            >
+              <Input
+                placeholder="Search by title or slug"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                allowClear
+                style={{ marginBottom: 16, maxWidth: 320 }}
+              />
+              {isLoading ? (
+                <Spin description="Loading playtests..." />
+              ) : (
+                <Table<V1Playtest>
+                  rowKey={row => row.id ?? row.slug ?? ''}
+                  dataSource={filtered}
+                  columns={columns}
+                  pagination={{ pageSize: 20 }}
+                />
+              )}
+            </Card>
+          </>
         )}
-      </Card>
-      <ADTLinkagesPanel />
+        {activeTab === 'config' && <ADTLinkagesPanel />}
+      </div>
     </>
   )
 }
@@ -618,14 +649,12 @@ function ADTLinkagesPanel() {
     }
   ]
   return (
-    <div style={{ marginTop: 24 }} data-testid="adt-linkages-panel">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          ADT Linkages
-        </Typography.Title>
-        <Button onClick={() => setModalOpen(true)}>Link new ADT Namespace</Button>
-      </div>
-      <Typography.Paragraph type="secondary">
+    <Card
+      data-testid="adt-linkages-panel"
+      title="ADT Linkages"
+      extra={<Button onClick={() => setModalOpen(true)}>Link new ADT Namespace</Button>}
+    >
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
         Studio-wide linkage — one row covers every game namespace under your studio.
       </Typography.Paragraph>
       {isLoading && <Spin />}
@@ -640,7 +669,7 @@ function ADTLinkagesPanel() {
         />
       )}
       <LinkADTModal open={modalOpen} onClose={() => setModalOpen(false)} />
-    </div>
+    </Card>
   )
 }
 
@@ -831,8 +860,9 @@ function PlatformsPills({
 }
 
 const radioCardStyle = (active: boolean): React.CSSProperties => ({
-  display: 'flex',
-  alignItems: 'flex-start',
+  display: 'grid',
+  gridTemplateColumns: 'auto 1fr',
+  alignItems: 'start',
   width: '100%',
   margin: 0,
   padding: 16,
@@ -915,17 +945,17 @@ function DistributionRadioCards({
           description="Upload a CSV of Steam keys. Approved players receive a key via Discord DM and redeem it manually on Steam."
         />
       </Radio>
+      <Radio value={DistributionModel.ADT} aria-label="ADT" className="pth-radio-card" style={radioCardStyle(value === DistributionModel.ADT)}>
+        <RadioCardLabel
+          title="ADT (Direct Download)"
+          description="Distribute game builds directly via AccelByte Development Toolkit (ADT). Approved players receive a direct download link via Discord DM — no additional launcher required. Supports crash reporting and hardware telemetry."
+          badge={adtBadge}
+        />
+      </Radio>
       <Radio value={DistributionModel.AGS_CAMPAIGN} aria-label="AGS Campaign" className="pth-radio-card" style={radioCardStyle(value === DistributionModel.AGS_CAMPAIGN)}>
         <RadioCardLabel
           title="AGS Campaign"
           description="Auto-generate redeemable codes via AGS Platform Campaign API. Players redeem codes in-game through the AGS entitlement system."
-        />
-      </Radio>
-      <Radio value={DistributionModel.ADT} aria-label="ADT" className="pth-radio-card" style={radioCardStyle(value === DistributionModel.ADT)}>
-        <RadioCardLabel
-          title="ADT"
-          description="Distribute game builds directly via AccelByte Development Toolkit (ADT). Approved players receive a direct download link via Discord DM — no additional launcher required. Supports crash reporting and hardware telemetry."
-          badge={adtBadge}
         />
       </Radio>
     </Radio.Group>
@@ -1025,134 +1055,171 @@ function PlaytestCreatePage() {
 
   const sectionDivider = <div style={{ borderTop: '1px solid #f0f0f0' }} />
 
+  const [currentStep, setCurrentStep] = useState(0)
+
+  const handleNext = async () => {
+    try {
+      await form.validateFields()
+      setCurrentStep(s => s + 1)
+    } catch {
+      // validation errors shown inline — stay on current step
+    }
+  }
+
   return (
     <>
-      <Typography.Title level={2} style={{ marginTop: 0 }}>
-        Create New Playtest
-      </Typography.Title>
+      {/* Full-width white header — title only */}
+      <div style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '20px 24px' }}>
+        <Typography.Title level={2} style={{ margin: 0 }}>
+          Create New Playtest
+        </Typography.Title>
+      </div>
+
       <Form<FormValues>
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
         scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
+        style={{ marginTop: 16, paddingBottom: 80 }}
         initialValues={{
           platforms: [],
           ndaRequired: false,
           distributionModel: DistributionModel.STEAM_KEYS,
           autoApprove: false
         }}>
-        <Card
-          styles={{ body: { padding: '0 32px' } }}
-          style={{ borderRadius: 8 }}>
-          <SectionRow title="Basic Information" description="General details about your playtest event.">
-            <Form.Item label="Playtest Title" name="title" rules={[{ required: true, message: 'Title is required' }]}>
-              <Input maxLength={200} placeholder="e.g. Starfield Alpha — Wave 2" />
-            </Form.Item>
-            <Form.Item
-              label="Slug"
-              name="slug"
-              rules={[{ required: true, message: 'Slug is required' }]}
-              extra="URL-safe identifier. Lowercase, numbers, hyphens. 3–64 characters.">
-              <Input placeholder="e.g. starfield-alpha-w2" />
-            </Form.Item>
-            <Form.Item label="Description (optional)" name="description">
-              <Input.TextArea rows={3} maxLength={10000} placeholder="Describe your playtest goals, what players should expect, etc." />
-            </Form.Item>
-            <Form.Item
-              label="Banner Image URL (optional)"
-              name="bannerImageUrl"
-              rules={[bannerImageUrlRule]}
-              extra="https only — backend rejects http."
-              style={{ marginBottom: 0 }}>
-              <Input placeholder="https://cdn.example.com/banner.jpg" data-testid="banner-image-url" />
-            </Form.Item>
-          </SectionRow>
+        <Card styles={{ body: { padding: 0 } }} style={{ borderRadius: 8 }}>
+          <Steps
+            type="navigation"
+            current={currentStep}
+            style={{ borderBottom: '1px solid #f0f0f0' }}
+            items={[
+              { title: 'Playtest Setup', description: 'Name, schedule & platforms' },
+              { title: 'Build Distribution', description: 'How players access the game' },
+              { title: 'Access & Privacy', description: 'Approval & NDA settings' },
+            ]}
+          />
+          <div style={{ maxWidth: 800, margin: '0 auto', padding: '0 32px' }}>
 
-          {sectionDivider}
+          {/* Step 1 — Playtest Setup */}
+          {currentStep === 0 && (
+            <>
+              <SectionRow title="Basic Information" description="General details about your playtest event.">
+                <Form.Item label="Playtest Title" name="title" rules={[{ required: true, message: 'Title is required' }]}>
+                  <Input maxLength={200} placeholder="e.g. Starfield Alpha — Wave 2" />
+                </Form.Item>
+                <Form.Item
+                  label="Slug"
+                  name="slug"
+                  rules={[{ required: true, message: 'Slug is required' }]}
+                  extra="URL-safe identifier. Lowercase, numbers, hyphens. 3–64 characters.">
+                  <Input placeholder="e.g. starfield-alpha-w2" />
+                </Form.Item>
+                <Form.Item label="Description (optional)" name="description">
+                  <Input.TextArea rows={3} maxLength={10000} placeholder="Describe your playtest goals, what players should expect, etc." />
+                </Form.Item>
+                <Form.Item
+                  label="Banner Image URL (optional)"
+                  name="bannerImageUrl"
+                  rules={[bannerImageUrlRule]}
+                  extra="https only — backend rejects http."
+                  style={{ marginBottom: 0 }}>
+                  <Input placeholder="https://cdn.example.com/banner.jpg" data-testid="banner-image-url" />
+                </Form.Item>
+              </SectionRow>
 
-          <SectionRow title="Schedule & Platforms" description="Set the playtest window and target platforms.">
-            <Form.Item
-              label={DATE_RANGE_LABEL}
-              name="dateRange"
-              extra={DATE_RANGE_HELP}
-              rules={[dateRangeWindowRule]}
-              getValueFromEvent={dateRangeUtcFromEvent}>
-              <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
-            </Form.Item>
-            <Form.Item
-              label="Platforms"
-              name="platforms"
-              rules={[{ required: true, message: 'platforms must include at least one platform' }]}
-              style={{ marginBottom: 0 }}>
-              <PlatformsPills options={PLATFORMS} />
-            </Form.Item>
-          </SectionRow>
+              {sectionDivider}
 
-          {sectionDivider}
+              <SectionRow title="Schedule & Platforms" description="Set the playtest window and target platforms.">
+                <Form.Item
+                  label={DATE_RANGE_LABEL}
+                  name="dateRange"
+                  extra={DATE_RANGE_HELP}
+                  rules={[dateRangeWindowRule]}
+                  getValueFromEvent={dateRangeUtcFromEvent}>
+                  <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item
+                  label="Platforms"
+                  name="platforms"
+                  rules={[{ required: true, message: 'platforms must include at least one platform' }]}
+                  style={{ marginBottom: 0 }}>
+                  <PlatformsPills options={PLATFORMS} />
+                </Form.Item>
+              </SectionRow>
+            </>
+          )}
 
-          <SectionRow
-            title="Distribution Model"
-            description="Choose how the game build or keys will be delivered to approved participants.">
-            <Form.Item name="distributionModel" rules={[{ required: true }]} style={{ marginBottom: 0 }}>
-              <DistributionRadioCards linkageCount={linkageCount} onLinkAdt={() => setLinkAdtOpen(true)} />
-            </Form.Item>
-            {distributionModel === DistributionModel.AGS_CAMPAIGN && (
-              <Form.Item
-                label="Initial code quantity"
-                name="initialCodeQuantity"
-                rules={[{ type: 'number', min: 1, max: 50000 }]}
-                style={{ marginTop: 16, marginBottom: 0 }}>
-                <InputNumber min={1} max={50000} style={{ width: '100%' }} />
+          {/* Step 2 — Build Distribution */}
+          {currentStep === 1 && (
+            <SectionRow
+              title="Distribution Model"
+              description="Choose how the game build or keys will be delivered to approved participants.">
+              <Form.Item name="distributionModel" rules={[{ required: true }]} noStyle>
+                <DistributionRadioCards linkageCount={linkageCount} onLinkAdt={() => setLinkAdtOpen(true)} />
               </Form.Item>
-            )}
-            {distributionModel === DistributionModel.ADT && (
-              <div style={{ marginTop: 16 }}>
-                <ADTCreateFields
-                  form={form}
-                  linkageId={adtLinkageId ?? ''}
-                  adtGameId={adtGameId ?? ''}
-                  adtBuildId={adtBuildId ?? ''}
-                />
-              </div>
-            )}
-          </SectionRow>
+              {distributionModel === DistributionModel.AGS_CAMPAIGN && (
+                <Form.Item
+                  label="Initial code quantity"
+                  name="initialCodeQuantity"
+                  rules={[{ type: 'number', min: 1, max: 50000 }]}
+                  style={{ marginTop: 16, marginBottom: 0 }}>
+                  <InputNumber min={1} max={50000} style={{ width: '100%' }} />
+                </Form.Item>
+              )}
+              {distributionModel === DistributionModel.ADT && (
+                <div style={{ marginTop: 16 }}>
+                  <ADTCreateFields
+                    form={form}
+                    linkageId={adtLinkageId ?? ''}
+                    adtGameId={adtGameId ?? ''}
+                    adtBuildId={adtBuildId ?? ''}
+                  />
+                </div>
+              )}
+            </SectionRow>
+          )}
 
-          {sectionDivider}
+          {/* Step 3 — Access & Privacy */}
+          {currentStep === 2 && (
+            <>
+              <SectionRow title="Participant Approval" description="Configure how players are approved to join the playtest.">
+                <Form.Item name="autoApprove" noStyle>
+                  <ApprovalRadioCards />
+                </Form.Item>
+                {autoApprove && (
+                  <Form.Item
+                    label="Auto-approve limit"
+                    name="autoApproveLimit"
+                    dependencies={['autoApprove']}
+                    rules={[autoApproveLimitRule]}
+                    style={{ marginTop: 16, marginBottom: 0 }}>
+                    <InputNumber style={{ width: '100%' }} />
+                  </Form.Item>
+                )}
+              </SectionRow>
 
-          <SectionRow title="Participant Approval" description="Configure how players are approved to join the playtest.">
-            <Form.Item name="autoApprove" style={{ marginBottom: 0 }}>
-              <ApprovalRadioCards />
-            </Form.Item>
-            {autoApprove && (
-              <Form.Item
-                label="Auto-approve limit"
-                name="autoApproveLimit"
-                dependencies={['autoApprove']}
-                rules={[autoApproveLimitRule]}
-                style={{ marginTop: 16, marginBottom: 0 }}>
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            )}
-          </SectionRow>
+              {sectionDivider}
 
-          {sectionDivider}
+              <SectionRow
+                title="NDA / Confidentiality"
+                description="Optionally require players to accept a non-disclosure agreement before participating.">
+                <Form.Item name="ndaRequired" valuePropName="checked" style={{ marginBottom: 0 }}>
+                  <Checkbox>Require NDA acceptance</Checkbox>
+                </Form.Item>
+                {ndaRequired && (
+                  <Form.Item
+                    label="NDA text"
+                    name="ndaText"
+                    rules={[{ required: true, message: 'NDA text required when NDA enabled' }]}
+                    style={{ marginTop: 16, marginBottom: 0 }}>
+                    <Input.TextArea rows={4} />
+                  </Form.Item>
+                )}
+              </SectionRow>
+            </>
+          )}
 
-          <SectionRow
-            title="NDA / Confidentiality"
-            description="Optionally require players to accept a non-disclosure agreement before participating.">
-            <Form.Item name="ndaRequired" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox>Require NDA acceptance</Checkbox>
-            </Form.Item>
-            {ndaRequired && (
-              <Form.Item
-                label="NDA text"
-                name="ndaText"
-                rules={[{ required: true, message: 'NDA text required when NDA enabled' }]}
-                style={{ marginTop: 16, marginBottom: 0 }}>
-                <Input.TextArea rows={4} />
-              </Form.Item>
-            )}
-          </SectionRow>
+          </div>
         </Card>
 
         {createMutation.isError && (
@@ -1165,20 +1232,37 @@ function PlaytestCreatePage() {
 
         <div
           style={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             padding: '16px 32px',
-            marginTop: 16,
             background: '#fff',
-            borderRadius: 8
+            borderTop: '1px solid #f0f0f0',
+            zIndex: 10,
           }}>
-          <Button type="link" htmlType="button" onClick={() => navigate('/')} style={{ paddingInline: 0 }}>
+          <Button htmlType="button" onClick={() => navigate('/')}>
             Cancel
           </Button>
-          <Button type="primary" htmlType="submit" loading={createMutation.isPending}>
-            Create
-          </Button>
+          <Space size={24}>
+            {currentStep > 0 && (
+              <Button type="link" htmlType="button" onClick={() => setCurrentStep(s => s - 1)} style={{ paddingInline: 0 }}>
+                Back
+              </Button>
+            )}
+            {currentStep < 2 ? (
+              <Button type="primary" htmlType="button" onClick={handleNext}>
+                Next
+              </Button>
+            ) : (
+              <Button type="primary" htmlType="button" loading={createMutation.isPending} onClick={() => form.submit()}>
+                Create Playtest
+              </Button>
+            )}
+          </Space>
         </div>
       </Form>
       <LinkADTModal open={linkAdtOpen} onClose={() => setLinkAdtOpen(false)} />

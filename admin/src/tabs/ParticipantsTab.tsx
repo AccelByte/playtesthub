@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Button,
+  Card,
   Checkbox,
   Descriptions,
   Form,
@@ -269,11 +270,13 @@ export function ParticipantsTab({ playtest }: { playtest: V1Playtest }) {
   return (
     <Space direction="vertical" style={{ width: '100%' }} data-testid="participants-tab">
       <LowPoolBanner stats={codesQuery.data?.stats} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
-        <Typography.Text>
-          {enrolled} / {cap ?? '∞'} enrolled
-        </Typography.Text>
-        <Space wrap>
+      <Card
+        title="Participants"
+        extra={
+          <Typography.Text type="secondary">{enrolled} / {cap ?? '∞'} enrolled</Typography.Text>
+        }
+      >
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <Select
             allowClear
             placeholder="Filter by status"
@@ -290,15 +293,15 @@ export function ParticipantsTab({ playtest }: { playtest: V1Playtest }) {
           <Checkbox checked={dmFailedOnly} onChange={e => setDmFailedOnly(e.target.checked)}>
             DM failed only
           </Checkbox>
-        </Space>
-      </div>
-      <Table<MergedRow>
-        rowKey={row => row.applicantId ?? ''}
-        loading={participantsQuery.isLoading}
-        dataSource={rows}
-        columns={columns}
-        pagination={{ pageSize: 25 }}
-      />
+        </div>
+        <Table<MergedRow>
+          rowKey={row => row.applicantId ?? ''}
+          loading={participantsQuery.isLoading}
+          dataSource={rows}
+          columns={columns}
+          pagination={{ pageSize: 25 }}
+        />
+      </Card>
       <Modal
         title="Reject applicant"
         open={!!rejectTarget}

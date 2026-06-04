@@ -1,5 +1,5 @@
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
-import { Alert, Button, Input, Select, Space, Spin, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Input, Select, Space, Spin, Table, Tag, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useState } from 'react'
 import type { V1AuditLogEntry } from '../playtesthubapi/generated-definitions/V1AuditLogEntry'
@@ -207,84 +207,88 @@ export function AuditTab({ playtest }: { playtest: V1Playtest }) {
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} data-testid="audit-tab">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Typography.Text type="secondary">Read-only. System-emitted rows show actor as “system”.</Typography.Text>
-        <Button onClick={() => auditQuery.refetch()}>Refresh</Button>
-      </div>
+      <Card
+        title="Audit Log"
+        extra={<Button onClick={() => auditQuery.refetch()}>Refresh</Button>}
+      >
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          Read-only. System-emitted rows show actor as "system".
+        </Typography.Text>
 
-      <Space wrap>
-        <Select
-          aria-label="Actor filter"
-          value={actorMode}
-          onChange={onActorModeChange}
-          style={{ width: 200 }}
-          options={[
-            { value: ACTOR_ALL, label: 'All actors' },
-            { value: ACTOR_SYSTEM, label: 'System' },
-            { value: ACTOR_USER, label: 'Admin user…' }
-          ]}
-        />
-        {actorMode === ACTOR_USER && (
-          <Input
-            aria-label="Actor user id"
-            placeholder="Admin user id (UUID), press Enter"
-            value={actorUserInput}
-            onChange={e => setActorUserInput(e.target.value)}
-            onBlur={commitActorUserInput}
-            onPressEnter={commitActorUserInput}
-            style={{ width: 320 }}
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Select
+            aria-label="Actor filter"
+            value={actorMode}
+            onChange={onActorModeChange}
+            style={{ width: 200 }}
+            options={[
+              { value: ACTOR_ALL, label: 'All actors' },
+              { value: ACTOR_SYSTEM, label: 'System' },
+              { value: ACTOR_USER, label: 'Admin user…' }
+            ]}
+          />
+          {actorMode === ACTOR_USER && (
+            <Input
+              aria-label="Actor user id"
+              placeholder="Admin user id (UUID), press Enter"
+              value={actorUserInput}
+              onChange={e => setActorUserInput(e.target.value)}
+              onBlur={commitActorUserInput}
+              onPressEnter={commitActorUserInput}
+              style={{ width: 320 }}
+            />
+          )}
+          <Select
+            aria-label="Action filter"
+            allowClear
+            placeholder="All actions"
+            value={actionFilter}
+            onChange={onActionFilterChange}
+            style={{ width: 280 }}
+            options={AUDIT_ACTIONS.map(a => ({ value: a, label: a }))}
+          />
+        </Space>
+
+        {auditQuery.isLoading && <Spin description="Loading audit log..." />}
+        {auditQuery.error && (
+          <Alert
+            type="error"
+            message="Failed to load audit log."
+            action={
+              <Button size="small" onClick={() => auditQuery.refetch()}>
+                Retry
+              </Button>
+            }
           />
         )}
-        <Select
-          aria-label="Action filter"
-          allowClear
-          placeholder="All actions"
-          value={actionFilter}
-          onChange={onActionFilterChange}
-          style={{ width: 280 }}
-          options={AUDIT_ACTIONS.map(a => ({ value: a, label: a }))}
-        />
-      </Space>
-
-      {auditQuery.isLoading && <Spin description="Loading audit log..." />}
-      {auditQuery.error && (
-        <Alert
-          type="error"
-          message="Failed to load audit log."
-          action={
-            <Button size="small" onClick={() => auditQuery.refetch()}>
-              Retry
-            </Button>
-          }
-        />
-      )}
-      {!auditQuery.isLoading && !auditQuery.error && (
-        <>
-          <Table<V1AuditLogEntry>
-            rowKey={row => row.id ?? ''}
-            dataSource={entries}
-            columns={columns}
-            pagination={false}
-            expandable={{
-              expandedRowRender: row => <AuditDiff beforeJson={row.beforeJson} afterJson={row.afterJson} />,
-              rowExpandable: () => true
-            }}
-          />
-          <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
-            <Typography.Text type="secondary">
-              {entries.length} row(s){pageStack.length > 0 ? ` · page ${pageStack.length + 1}` : ''}
-            </Typography.Text>
-            <Space>
-              <Button onClick={onPrev} disabled={pageStack.length === 0}>
-                Previous
-              </Button>
-              <Button onClick={onNext} disabled={!nextPageToken}>
-                Next
-              </Button>
-            </Space>
-          </div>
-        </>
-      )}
+        {!auditQuery.isLoading && !auditQuery.error && (
+          <>
+            <Table<V1AuditLogEntry>
+              rowKey={row => row.id ?? ''}
+              dataSource={entries}
+              columns={columns}
+              pagination={false}
+              expandable={{
+                expandedRowRender: row => <AuditDiff beforeJson={row.beforeJson} afterJson={row.afterJson} />,
+                rowExpandable: () => true
+              }}
+            />
+            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
+              <Typography.Text type="secondary">
+                {entries.length} row(s){pageStack.length > 0 ? ` · page ${pageStack.length + 1}` : ''}
+              </Typography.Text>
+              <Space>
+                <Button onClick={onPrev} disabled={pageStack.length === 0}>
+                  Previous
+                </Button>
+                <Button onClick={onNext} disabled={!nextPageToken}>
+                  Next
+                </Button>
+              </Space>
+            </div>
+          </>
+        )}
+      </Card>
     </Space>
   )
 }
