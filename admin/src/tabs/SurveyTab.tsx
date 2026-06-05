@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
   Button,
+  Card,
   Checkbox,
   Form,
   Input,
@@ -238,112 +239,116 @@ function SurveyTabForm({ playtestId, initialSurvey, hasSurvey, draftPreloadFaile
   const saving = createMutation.isPending || editMutation.isPending
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} data-testid="survey-tab">
-      <Typography.Text type="secondary">
-        {hasSurvey ? 'Editing existing survey' : 'Configure the post-playtest survey for approved players.'}
-        {version != null && ` · current version v${version} (saving creates v${version + 1})`}
-      </Typography.Text>
-
-      {draftPreloadFailed && (
-        <Alert
-          type="warning"
-          showIcon
-          message="DRAFT playtest survey can't be previewed"
-          description="Loading existing survey questions requires the playtest to be OPEN. Saving here will create a new version that won't preserve question/option ids — only safe before any responses exist."
-        />
-      )}
-
-      <Space direction="vertical" size="middle" style={{ display: 'flex' }}>
-        {questions.map((q, i) => (
-          <div
-            key={q.key}
-            data-testid="survey-question"
-            style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Typography.Text strong>Question {i + 1}</Typography.Text>
-              <Space size={4}>
-                <Button size="small" onClick={() => moveQuestion(q.key, -1)} disabled={i === 0} aria-label={`Move question ${i + 1} up`}>
-                  ↑
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => moveQuestion(q.key, 1)}
-                  disabled={i === questions.length - 1}
-                  aria-label={`Move question ${i + 1} down`}>
-                  ↓
-                </Button>
-                <Popconfirm title="Remove this question?" okText="Remove" okButtonProps={{ danger: true }} onConfirm={() => removeQuestion(q.key)}>
-                  <Button size="small" danger aria-label={`Remove question ${i + 1}`}>
-                    Remove
-                  </Button>
-                </Popconfirm>
-              </Space>
-            </div>
-            <Form layout="vertical">
-              <Form.Item label="Type">
-                <Select
-                  value={q.type}
-                  onChange={val => setQuestionType(q.key, val)}
-                  options={Object.entries(QUESTION_TYPE_LABEL).map(([value, label]) => ({ value, label }))}
-                />
-              </Form.Item>
-              <Form.Item label="Prompt">
-                <Input.TextArea
-                  value={q.prompt}
-                  maxLength={MAX_PROMPT}
-                  showCount
-                  onChange={e => updateQuestion(q.key, { prompt: e.target.value })}
-                  rows={2}
-                  placeholder="What did you think of the build?"
-                />
-              </Form.Item>
-              <Form.Item>
-                <Checkbox checked={q.required} onChange={e => updateQuestion(q.key, { required: e.target.checked })}>
-                  Required
-                </Checkbox>
-              </Form.Item>
-              {q.type === QUESTION_TYPE_MULTI_CHOICE && (
-                <>
-                  <Form.Item>
-                    <Checkbox checked={q.allowMultiple} onChange={e => updateQuestion(q.key, { allowMultiple: e.target.checked })}>
-                      Allow multiple selections
-                    </Checkbox>
-                  </Form.Item>
-                  <Form.Item label={`Options (${q.options.length}/${MAX_OPTIONS})`}>
-                    <Space direction="vertical" style={{ display: 'flex' }}>
-                      {q.options.map((opt, oIdx) => (
-                        <Space key={oIdx} style={{ width: '100%' }}>
-                          <Input
-                            value={opt.label}
-                            maxLength={MAX_OPTION_LABEL}
-                            onChange={e => updateOption(q.key, oIdx, e.target.value)}
-                            placeholder={`Option ${oIdx + 1}`}
-                          />
-                          <Button onClick={() => removeOption(q.key, oIdx)} disabled={q.options.length <= MIN_OPTIONS}>
-                            ×
-                          </Button>
-                        </Space>
-                      ))}
-                      <Button onClick={() => addOption(q.key)} disabled={q.options.length >= MAX_OPTIONS}>
-                        Add option
-                      </Button>
-                    </Space>
-                  </Form.Item>
-                </>
-              )}
-            </Form>
-          </div>
-        ))}
-        <Button onClick={addQuestion} disabled={questions.length >= MAX_QUESTIONS}>
-          Add question
-        </Button>
-      </Space>
-
-      <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+    <Card
+      data-testid="survey-tab"
+      title="Post-Playtest Survey"
+      extra={
         <Button type="primary" onClick={onSave} loading={saving} disabled={questions.length === 0}>
           {hasSurvey ? 'Save new version' : 'Create survey'}
         </Button>
-      </div>
-    </Space>
+      }
+    >
+      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <Typography.Text type="secondary">
+          {hasSurvey ? 'Editing existing survey.' : 'Configure the post-playtest survey for approved players.'}
+          {version != null && ` Current version v${version} — saving creates v${version + 1}.`}
+        </Typography.Text>
+
+        {draftPreloadFailed && (
+          <Alert
+            type="warning"
+            showIcon
+            message="DRAFT playtest survey can't be previewed"
+            description="Loading existing survey questions requires the playtest to be OPEN. Saving here will create a new version that won't preserve question/option ids — only safe before any responses exist."
+          />
+        )}
+
+        <Space direction="vertical" size="middle" style={{ display: 'flex' }}>
+          {questions.map((q, i) => (
+            <div
+              key={q.key}
+              data-testid="survey-question"
+              style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <Typography.Text strong>Question {i + 1}</Typography.Text>
+                <Space size={4}>
+                  <Button size="small" onClick={() => moveQuestion(q.key, -1)} disabled={i === 0} aria-label={`Move question ${i + 1} up`}>
+                    ↑
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => moveQuestion(q.key, 1)}
+                    disabled={i === questions.length - 1}
+                    aria-label={`Move question ${i + 1} down`}>
+                    ↓
+                  </Button>
+                  <Popconfirm title="Remove this question?" okText="Remove" okButtonProps={{ danger: true }} onConfirm={() => removeQuestion(q.key)}>
+                    <Button size="small" danger aria-label={`Remove question ${i + 1}`}>
+                      Remove
+                    </Button>
+                  </Popconfirm>
+                </Space>
+              </div>
+              <Form layout="vertical">
+                <Form.Item label="Type" style={{ marginBottom: 12 }}>
+                  <Select
+                    value={q.type}
+                    onChange={val => setQuestionType(q.key, val)}
+                    options={Object.entries(QUESTION_TYPE_LABEL).map(([value, label]) => ({ value, label }))}
+                  />
+                </Form.Item>
+                <Form.Item label="Prompt" style={{ marginBottom: 12 }}>
+                  <Input.TextArea
+                    value={q.prompt}
+                    maxLength={MAX_PROMPT}
+                    showCount
+                    onChange={e => updateQuestion(q.key, { prompt: e.target.value })}
+                    rows={2}
+                    placeholder="What did you think of the build?"
+                  />
+                </Form.Item>
+                <Form.Item style={{ marginBottom: q.type === QUESTION_TYPE_MULTI_CHOICE ? 12 : 0 }}>
+                  <Checkbox checked={q.required} onChange={e => updateQuestion(q.key, { required: e.target.checked })}>
+                    Required
+                  </Checkbox>
+                </Form.Item>
+                {q.type === QUESTION_TYPE_MULTI_CHOICE && (
+                  <>
+                    <Form.Item style={{ marginBottom: 12 }}>
+                      <Checkbox checked={q.allowMultiple} onChange={e => updateQuestion(q.key, { allowMultiple: e.target.checked })}>
+                        Allow multiple selections
+                      </Checkbox>
+                    </Form.Item>
+                    <Form.Item label={`Options (${q.options.length}/${MAX_OPTIONS})`} style={{ marginBottom: 0 }}>
+                      <Space direction="vertical" style={{ display: 'flex' }}>
+                        {q.options.map((opt, oIdx) => (
+                          <Space key={oIdx} style={{ width: '100%' }}>
+                            <Input
+                              value={opt.label}
+                              maxLength={MAX_OPTION_LABEL}
+                              onChange={e => updateOption(q.key, oIdx, e.target.value)}
+                              placeholder={`Option ${oIdx + 1}`}
+                            />
+                            <Button onClick={() => removeOption(q.key, oIdx)} disabled={q.options.length <= MIN_OPTIONS}>
+                              ×
+                            </Button>
+                          </Space>
+                        ))}
+                        <Button onClick={() => addOption(q.key)} disabled={q.options.length >= MAX_OPTIONS}>
+                          Add option
+                        </Button>
+                      </Space>
+                    </Form.Item>
+                  </>
+                )}
+              </Form>
+            </div>
+          ))}
+          <Button onClick={addQuestion} disabled={questions.length >= MAX_QUESTIONS}>
+            + Add question
+          </Button>
+        </Space>
+      </Space>
+    </Card>
   )
 }

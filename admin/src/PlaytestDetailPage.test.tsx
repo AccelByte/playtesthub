@@ -494,19 +494,21 @@ describe('PlaytestDetailPage shell', () => {
     expect(await navigator.clipboard.readText()).toBe('')
   })
 
-  it('hides the player-facing link (header button + share input) while DRAFT', () => {
+  it('hides the player-facing link while DRAFT (header button + Info-tab Sign-Up Link)', () => {
     renderDetail('autumn-draft')
+    // Header copy-link button is hidden for DRAFT.
     expect(screen.queryByText('Playtest Link')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('playtest-share-link')).not.toBeInTheDocument()
-    expect(screen.queryByDisplayValue(/play\.example\.com/)).not.toBeInTheDocument()
-    expect(screen.getByText(/becomes available once the playtest is published/i)).toBeInTheDocument()
+    // The Info tab's Sign-Up Link row shows a placeholder, never the live link.
+    expect(screen.queryByText(/play\.example\.com/)).not.toBeInTheDocument()
+    expect(screen.getByText(/available once published/i)).toBeInTheDocument()
   })
 
-  it('shows the player-facing link (header button + share input) once OPEN', () => {
+  it('shows the player-facing link once OPEN (header button + Info-tab Sign-Up Link)', () => {
     renderDetail('autumn-open')
+    // Header exposes a copy-to-clipboard button...
     expect(screen.getByRole('button', { name: /Playtest Link/ })).toBeInTheDocument()
-    const share = screen.getByTestId('playtest-share-link')
-    expect(within(share).getByDisplayValue('https://play.example.com/#/playtest/autumn-open')).toBeInTheDocument()
+    // ...and the Info tab renders the resolved share link as text.
+    expect(screen.getByText('https://play.example.com/#/playtest/autumn-open')).toBeInTheDocument()
   })
 
   it('Publish click triggers the transition mutation via confirm modal', async () => {
@@ -578,7 +580,7 @@ describe('PlaytestDetailPage shell', () => {
     await user.click(screen.getByRole('tab', { name: 'Survey' }))
     await waitFor(() => expect(screen.getAllByTestId('survey-question')).toHaveLength(1))
     expect(screen.getByDisplayValue('Tell us')).toBeInTheDocument()
-    expect(screen.getByText(/current version v2 \(saving creates v3\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/current version v2 — saving creates v3/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /save new version/i })).toBeInTheDocument()
   })
 
@@ -665,8 +667,11 @@ describe('PlaytestDetailPage shell', () => {
     const user = userEvent.setup()
     await user.click(screen.getByRole('tab', { name: 'Responses' }))
     await waitFor(() => expect(screen.getAllByTestId('survey-aggregate')).toHaveLength(2))
-    expect(screen.getByText(/2 response\(s\) total/)).toBeInTheDocument()
-    expect(screen.getByText(/sur_2 \(current\)/)).toBeInTheDocument()
+    // Summary header counts total responses + distinct survey versions.
+    expect(screen.getByText(/2 response\(s\).+2 version\(s\)/)).toBeInTheDocument()
+    // The current version surfaces in the version filter and as a grouped
+    // responses heading; the older version surfaces as its own group.
+    expect(screen.getAllByText(/sur_2 \(current\)/).length).toBeGreaterThan(0)
     expect(screen.getByText('sur_1', { exact: false })).toBeInTheDocument()
     expect(screen.getByTestId('option-bar-q1-o1')).toBeInTheDocument()
     expect(screen.getByTestId('option-bar-q1-o2')).toBeInTheDocument()

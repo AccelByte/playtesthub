@@ -6,10 +6,10 @@ import {
   Breadcrumb,
   Button,
   Card,
-  Input,
   Modal,
   Space,
   Spin,
+  Statistic,
   Tabs,
   Tag,
   Typography,
@@ -22,10 +22,11 @@ import type { V1Playtest } from './playtesthubapi/generated-definitions/V1Playte
 import {
   Key_PlaytesthubServiceAdmin,
   usePlaytesthubServiceAdminApi_CreatePlaytest_ByPlaytestIdTransitionStatuMutation,
+  usePlaytesthubServiceAdminApi_GetParticipants_ByPlaytestId,
   usePlaytesthubServiceAdminApi_GetPlaytests
 } from './playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
 import { usePlaytesthubServiceApi_GetConfig } from './playtesthubapi/generated-public/queries/PlaytesthubService.query'
-import { DistributionModel, PlaytestStatus } from './shared/playtesthub-enums'
+import { ApplicantStatus, DistributionModel, PlaytestStatus } from './shared/playtesthub-enums'
 import { toastError } from './shared/api-error'
 import { AuditTab } from './tabs/AuditTab'
 import { DiscordBotToolsTab } from './tabs/DiscordBotToolsTab'
@@ -158,15 +159,20 @@ export function PlaytestDetailPage() {
   }
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} data-testid="playtest-detail-page">
+    <>
+    <div
+      style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '16px 24px 0' }}
+      data-testid="playtest-detail-page"
+    >
       <Breadcrumb
+        style={{ marginBottom: 8 }}
         items={[
           { title: 'Extend App UI' },
           { title: <a onClick={() => navigate('/')}>Playtest Hub</a> },
           { title: playtest.title ?? playtest.slug ?? '—' }
         ]}
       />
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 8 }}>
         <div>
           <Typography.Title level={2} style={{ margin: 0 }}>
             {playtest.title ?? '—'}
@@ -207,32 +213,130 @@ export function PlaytestDetailPage() {
       <Tabs
         activeKey={activeTab}
         onChange={handleTabChange}
+        tabBarStyle={{ marginBottom: 0 }}
         items={[
-          {
-            key: 'info',
-            label: 'Playtest Info',
-            children: <PlaytestInfoTab playtest={playtest} playerBaseUrl={playerBaseUrl} />
-          },
-          {
-            key: 'distribution',
-            label: 'Distribution',
-            children: <DistributionTab playtest={playtest} />
-          },
-          { key: 'participants', label: 'Participants', children: <ParticipantsTab playtest={playtest} /> },
-          { key: 'bot-tools', label: 'Discord Bot Tools', children: <DiscordBotToolsTab playtest={playtest} /> },
-          { key: 'survey', label: 'Survey', children: <SurveyTab playtest={playtest} /> },
-          { key: 'responses', label: 'Responses', children: <ResponsesTab playtest={playtest} /> },
-          { key: 'audit', label: 'Audit', children: <AuditTab playtest={playtest} /> }
+          { key: 'info', label: 'Playtest Info', children: null },
+          { key: 'distribution', label: 'Distribution', children: null },
+          { key: 'participants', label: 'Participants', children: null },
+          { key: 'bot-tools', label: 'Discord Bot Tools', children: null },
+          { key: 'survey', label: 'Survey', children: null },
+          { key: 'responses', label: 'Responses', children: null },
+          { key: 'audit', label: 'Audit', children: null }
         ]}
       />
-    </Space>
+    </div>
+
+    <div style={{ margin: '0 -16px -16px -16px', backgroundColor: '#f0f2f5', padding: 16, minHeight: 'calc(100vh - 200px)' }}>
+      {activeTab === 'info' && <PlaytestInfoTab playtest={playtest} playerBaseUrl={playerBaseUrl} />}
+      {activeTab === 'distribution' && <DistributionTab playtest={playtest} />}
+      {activeTab === 'participants' && <ParticipantsTab playtest={playtest} />}
+      {activeTab === 'bot-tools' && <DiscordBotToolsTab playtest={playtest} />}
+      {activeTab === 'survey' && <SurveyTab playtest={playtest} />}
+      {activeTab === 'responses' && <ResponsesTab playtest={playtest} />}
+      {activeTab === 'audit' && <AuditTab playtest={playtest} />}
+    </div>
+    </>
   )
 }
 
 const DISTRIBUTION_MODEL_LABEL: Record<string, string> = {
-  [DistributionModel.ADT]: 'Direct Download (ADT)',
+  [DistributionModel.ADT]: 'ADT (Direct Download)',
   [DistributionModel.STEAM_KEYS]: 'Steam Keys',
   [DistributionModel.AGS_CAMPAIGN]: 'AGS Campaign'
+}
+
+function getPeriodTag(playtest: V1Playtest): { label: string; color: string } {
+  const now = dayjs()
+  const starts = playtest.startsAt ? dayjs(playtest.startsAt) : null
+  const ends   = playtest.endsAt   ? dayjs(playtest.endsAt)   : null
+  if (playtest.status === PlaytestStatus.CLOSED) return { label: 'Stopped',  color: 'red' }
+  if (playtest.status === PlaytestStatus.DRAFT)  return { label: 'Upcoming', color: 'default' }
+  if (starts && now.isBefore(starts)) return { label: 'Upcoming', color: 'blue' }
+  if (ends   && now.isAfter(ends))    return { label: 'Ended',    color: 'orange' }
+  return { label: 'Running', color: 'green' }
+}
+
+function getDaysText(playtest: V1Playtest): string | null {
+  const now = dayjs()
+  const starts = playtest.startsAt ? dayjs(playtest.startsAt) : null
+  const ends   = playtest.endsAt   ? dayjs(playtest.endsAt)   : null
+
+  if (playtest.status === PlaytestStatus.CLOSED) {
+    if (!ends) return null
+    const n = now.diff(ends, 'day')
+    return n === 0 ? 'Ended today' : `Ended ${n} day${n === 1 ? '' : 's'} ago`
+  }
+  if (playtest.status === PlaytestStatus.DRAFT) {
+    if (!starts) return null
+    const n = starts.diff(now, 'day')
+    if (n <= 0) return 'Starting soon'
+    return `Starts in ${n} day${n === 1 ? '' : 's'}`
+  }
+  // OPEN
+  if (ends) {
+    const n = ends.diff(now, 'day')
+    if (n < 0) {
+      const ago = now.diff(ends, 'day')
+      return `Ended ${ago} day${ago === 1 ? '' : 's'} ago`
+    }
+    if (n === 0) return 'Ends today'
+    return `${n} day${n === 1 ? '' : 's'} left`
+  }
+  if (starts && now.isBefore(starts)) {
+    const n = starts.diff(now, 'day')
+    return n <= 0 ? 'Starting soon' : `Starts in ${n} day${n === 1 ? '' : 's'}`
+  }
+  return null
+}
+
+
+function OverviewCard({ playtest }: { playtest: V1Playtest }) {
+  const { sdk } = useAppUIContext()
+  const playtestId = playtest.id ?? ''
+  const { data } = usePlaytesthubServiceAdminApi_GetParticipants_ByPlaytestId(sdk, { playtestId }, { retry: false })
+  const participants = data?.participants ?? []
+  const total = participants.length
+  const cap = playtest.autoApproveLimit ?? null
+  const isManual = !playtest.autoApprove
+  const pending = isManual ? participants.filter(p => p.status === ApplicantStatus.PENDING).length : 0
+  const periodTag = getPeriodTag(playtest)
+  const daysText = getDaysText(playtest)
+
+  const subsectionStyle: React.CSSProperties = {
+    flex: 1,
+    background: '#fafafa',
+    border: '1px solid #f0f0f0',
+    borderRadius: 8,
+    padding: 16,
+  }
+
+  return (
+    <Card title="Overview" data-testid="playtest-overview-card">
+      <div style={subsectionStyle}>
+        <div style={{ display: 'flex', gap: 32, alignItems: 'flex-start' }}>
+          <Statistic
+            title="Total Participants"
+            value={total}
+            suffix={cap != null ? `/ ${cap}` : undefined}
+            valueStyle={{ fontSize: 20, fontWeight: 600 }}
+          />
+          {isManual && (
+            <Statistic title="Pending Approval" value={pending} valueStyle={{ fontSize: 20, fontWeight: 600 }} />
+          )}
+          <div>
+            <div style={{ marginBottom: 4, fontSize: 14, color: 'rgba(0,0,0,0.45)' }}>Playtest Period</div>
+            <Space size={8} align="center">
+              <Typography.Text style={{ fontSize: 20, fontWeight: 600 }}>{formatDateRange(playtest.startsAt, playtest.endsAt)}</Typography.Text>
+              <Tag color={periodTag.color}>{periodTag.label}</Tag>
+            </Space>
+            {daysText && (
+              <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(0,0,0,0.45)' }}>{daysText}</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  )
 }
 
 function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; playerBaseUrl: string }) {
@@ -242,19 +346,6 @@ function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; pl
   const distributionLabel = playtest.distributionModel
     ? (DISTRIBUTION_MODEL_LABEL[playtest.distributionModel] ?? playtest.distributionModel)
     : '—'
-
-  const rows: Array<[string, React.ReactNode]> = [
-    ['Title', playtest.title ?? '—'],
-    ['Slug', <Typography.Text code>{playtest.slug ?? '—'}</Typography.Text>],
-    ['Description', playtest.description ?? '—'],
-    ['Start Date', playtest.startsAt ? dayjs(playtest.startsAt).format('MMMM D, YYYY') : '—'],
-    ['End Date', playtest.endsAt ? dayjs(playtest.endsAt).format('MMMM D, YYYY') : '—'],
-    ['Platforms', (playtest.platforms ?? []).join(', ') || '—'],
-    ['NDA Required', playtest.ndaRequired ? 'Yes' : 'No'],
-    ['Distribution Model', distributionLabel],
-    ['Approval Method', playtest.autoApprove ? 'Auto-Approve' : 'Manual'],
-    ['Max Participants', playtest.autoApproveLimit ?? '—']
-  ]
 
   const shareLink = playerBaseUrl ? `${playerBaseUrl.replace(/\/$/, '')}/#/playtest/${playtest.slug ?? ''}` : ''
 
@@ -269,8 +360,33 @@ function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; pl
     )
   }
 
+  const rows: Array<[string, React.ReactNode]> = [
+    ['Title', playtest.title ?? '—'],
+    ['Slug', <Typography.Text code>{playtest.slug ?? '—'}</Typography.Text>],
+    ['Description', playtest.description ?? '—'],
+    ['Start Date', playtest.startsAt ? dayjs(playtest.startsAt).format('MMMM D, YYYY') : '—'],
+    ['End Date', playtest.endsAt ? dayjs(playtest.endsAt).format('MMMM D, YYYY') : '—'],
+    ['Platforms', (playtest.platforms ?? []).join(', ') || '—'],
+    ['NDA Required', playtest.ndaRequired ? 'Yes' : 'No'],
+    ['Distribution Model', distributionLabel],
+    ['Approval Method', playtest.autoApprove ? 'Auto-Approve' : 'Manual'],
+    ['Max Participants', playtest.autoApproveLimit ?? '—'],
+    ['Sign-Up Link', isDraft
+      ? <Typography.Text type="secondary">Available once published</Typography.Text>
+      : shareLink ? (
+        <span>
+          <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace', wordBreak: 'break-all' }}>
+            {shareLink}
+          </span>
+          <Button type="link" size="small" icon={<CopyOutlined />} onClick={copyShareLink} style={{ paddingInline: 0, marginLeft: 8, height: 'auto' }} />
+        </span>
+      ) : '—'
+    ]
+  ]
+
   return (
     <Space direction="vertical" size="middle" style={{ width: '100%' }} data-testid="playtest-info-tab">
+      <OverviewCard playtest={playtest} />
       <Card
         title="Playtest Information"
         extra={
@@ -294,37 +410,15 @@ function PlaytestInfoTab({ playtest, playerBaseUrl }: { playtest: V1Playtest; pl
               display: 'flex',
               padding: '14px 24px',
               borderTop: idx === 0 ? 'none' : '1px solid #f0f0f0',
-              alignItems: 'flex-start',
+              alignItems: 'center',
               fontSize: 14
             }}
           >
             <div style={{ width: 200, color: 'rgba(0, 0, 0, 0.65)', flexShrink: 0 }}>{label}</div>
-            <div style={{ flex: 1, color: 'rgba(0, 0, 0, 0.88)' }}>{value}</div>
+            <div style={{ flex: 1, color: 'rgba(0, 0, 0, 0.88)', minWidth: 0 }}>{value}</div>
           </div>
         ))}
       </Card>
-
-      {isDraft ? (
-        <Typography.Text type="secondary">
-          Sign-up link becomes available once the playtest is published.
-        </Typography.Text>
-      ) : (
-        <div data-testid="playtest-share-link">
-          <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
-            Shareable Sign-Up Link
-          </Typography.Text>
-          <Input
-            readOnly
-            value={shareLink}
-            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace' }}
-            suffix={
-              <Button type="link" size="small" onClick={copyShareLink} style={{ padding: 0 }}>
-                Copy
-              </Button>
-            }
-          />
-        </div>
-      )}
     </Space>
   )
 }

@@ -1,5 +1,5 @@
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
-import { Alert, Select, Space, Table, Typography } from 'antd'
+import { Alert, Card, Select, Space, Table, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useMemo, useState } from 'react'
 import type { V1Playtest } from '../playtesthubapi/generated-definitions/V1Playtest'
@@ -63,11 +63,13 @@ export function ResponsesTab({ playtest }: { playtest: V1Playtest }) {
   )
   const survey = surveyQuery.data?.survey as V1Survey | undefined
 
-  const [surveyIdFilter, setSurveyIdFilter] = useState<string | undefined>(undefined)
+  // null = user explicitly cleared (all versions); undefined = not yet set (defaults to current)
+  const [surveyIdFilter, setSurveyIdFilter] = useState<string | null | undefined>(undefined)
+  const effectiveSurveyIdFilter = surveyIdFilter === undefined ? survey?.id : (surveyIdFilter ?? undefined)
 
   const responsesQuery = usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId(sdk, {
     playtestId,
-    queryParams: { surveyIdFilter, pageSize: 200 }
+    queryParams: { surveyIdFilter: effectiveSurveyIdFilter, pageSize: 200 }
   })
   const responses = useMemo(() => (responsesQuery.data?.responses ?? []) as V1SurveyResponse[], [responsesQuery.data])
 
@@ -121,92 +123,104 @@ export function ResponsesTab({ playtest }: { playtest: V1Playtest }) {
   ]
 
   return (
-    <Space direction="vertical" style={{ width: '100%' }} data-testid="responses-tab">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <Typography.Text type="secondary">{responses.length} response(s) total · {versions.length} version(s)</Typography.Text>
-        <Select
-          allowClear
-          placeholder="All versions"
-          style={{ minWidth: 240 }}
-          value={surveyIdFilter}
-          onChange={val => setSurveyIdFilter(val ?? undefined)}
-          options={versions.map(v => ({ value: v, label: v === survey?.id ? `${v} (current)` : v }))}
-        />
-      </div>
-
+    <Space direction="vertical" style={{ width: '100%', display: 'flex' }} data-testid="responses-tab">
       {!hasSurvey && <Alert type="info" showIcon message="No survey configured for this playtest." />}
 
       {hasSurvey && (
         <>
-          <Typography.Title level={4}>Aggregates</Typography.Title>
-          {aggregate.length === 0 && <Typography.Text type="secondary">No survey questions to aggregate.</Typography.Text>}
-          <Space direction="vertical" size="middle" style={{ display: 'flex', marginBottom: 24 }}>
-            {aggregate.map(a => (
-              <div key={a.questionId} data-testid="survey-aggregate" style={{ border: '1px solid #f0f0f0', borderRadius: 6, padding: 12 }}>
-                <Typography.Text strong>{a.prompt}</Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  {a.type === QUESTION_TYPE_TEXT && <Typography.Text>{a.textCount} text answer(s) — see rows below for content</Typography.Text>}
-                  {a.type === QUESTION_TYPE_RATING && (
-                    <Space direction="vertical" size={2} style={{ display: 'flex' }}>
-                      {[1, 2, 3, 4, 5].map(n => (
-                        <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ width: 32 }}>★ {n}</span>
-                          <span data-testid={`rating-bar-${a.questionId}-${n}`} style={{ flex: 1 }}>
-                            <span
-                              style={{
-                                display: 'inline-block',
-                                height: 8,
-                                background: '#1677ff',
-                                width: `${Math.min(100, (a.ratingCounts[n] ?? 0) * 20)}%`
-                              }}
-                            />
-                          </span>
-                          <span style={{ width: 32, textAlign: 'right' }}>{a.ratingCounts[n] ?? 0}</span>
-                        </div>
-                      ))}
-                    </Space>
-                  )}
-                  {a.type === QUESTION_TYPE_MULTI_CHOICE && (
-                    <Space direction="vertical" size={2} style={{ display: 'flex' }}>
-                      {Object.entries(a.optionLabels).map(([id, label]) => (
-                        <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ width: 200 }}>{label}</span>
-                          <span data-testid={`option-bar-${a.questionId}-${id}`} style={{ flex: 1 }}>
-                            <span
-                              style={{
-                                display: 'inline-block',
-                                height: 8,
-                                background: '#1677ff',
-                                width: `${Math.min(100, (a.optionCounts[id] ?? 0) * 10)}%`
-                              }}
-                            />
-                          </span>
-                          <span style={{ width: 32, textAlign: 'right' }}>{a.optionCounts[id] ?? 0}</span>
-                        </div>
-                      ))}
-                    </Space>
-                  )}
+          <Card
+            title="Summary"
+            extra={
+              <Space>
+                <Typography.Text type="secondary">
+                  {responses.length} response(s) · {versions.length} version(s)
+                </Typography.Text>
+                <Select
+                  allowClear
+                  placeholder="All versions"
+                  style={{ minWidth: 200 }}
+                  value={effectiveSurveyIdFilter}
+                  onChange={val => setSurveyIdFilter(val ?? null)}
+                  options={versions.map(v => ({ value: v, label: v === survey?.id ? `${v} (current)` : v }))}
+                />
+              </Space>
+            }
+          >
+            {aggregate.length === 0 && (
+              <Typography.Text type="secondary">No survey questions to aggregate.</Typography.Text>
+            )}
+            <Space direction="vertical" size="middle" style={{ display: 'flex' }}>
+              {aggregate.map((a, idx) => (
+                <div key={a.questionId} data-testid="survey-aggregate" style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: 16 }}>
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>Question {idx + 1}</Typography.Text>
+                  <div style={{ marginBottom: 8 }}><Typography.Text strong>{a.prompt}</Typography.Text></div>
+                  <div>
+                    {a.type === QUESTION_TYPE_TEXT && (
+                      <Typography.Text>{a.textCount} text answer(s) — see response list below for content</Typography.Text>
+                    )}
+                    {a.type === QUESTION_TYPE_RATING && (
+                      <Space direction="vertical" size={2} style={{ display: 'flex' }}>
+                        {[1, 2, 3, 4, 5].map(n => (
+                          <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ width: 32 }}>★ {n}</span>
+                            <span data-testid={`rating-bar-${a.questionId}-${n}`} style={{ flex: 1 }}>
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  height: 8,
+                                  background: '#1677ff',
+                                  width: `${Math.min(100, (a.ratingCounts[n] ?? 0) * 20)}%`
+                                }}
+                              />
+                            </span>
+                            <span style={{ width: 32, textAlign: 'right' }}>{a.ratingCounts[n] ?? 0}</span>
+                          </div>
+                        ))}
+                      </Space>
+                    )}
+                    {a.type === QUESTION_TYPE_MULTI_CHOICE && (
+                      <Space direction="vertical" size={2} style={{ display: 'flex' }}>
+                        {Object.entries(a.optionLabels).map(([id, label]) => (
+                          <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ width: 200 }}>{label}</span>
+                            <span data-testid={`option-bar-${a.questionId}-${id}`} style={{ flex: 1 }}>
+                              <span
+                                style={{
+                                  display: 'inline-block',
+                                  height: 8,
+                                  background: '#1677ff',
+                                  width: `${Math.min(100, (a.optionCounts[id] ?? 0) * 10)}%`
+                                }}
+                              />
+                            </span>
+                            <span style={{ width: 32, textAlign: 'right' }}>{a.optionCounts[id] ?? 0}</span>
+                          </div>
+                        ))}
+                      </Space>
+                    )}
+                  </div>
                 </div>
+              ))}
+            </Space>
+          </Card>
+
+          <Card title="Responses">
+            {Array.from(grouped.entries()).map(([surveyVersionId, rows]) => (
+              <div key={surveyVersionId} style={{ marginBottom: 24 }}>
+                <Typography.Text type="secondary">
+                  Survey version: <Typography.Text strong>{surveyVersionId === survey?.id ? `${surveyVersionId} (current)` : surveyVersionId}</Typography.Text>
+                </Typography.Text>
+                <Table<V1SurveyResponse>
+                  rowKey={row => row.id ?? ''}
+                  dataSource={rows}
+                  columns={responseColumns}
+                  pagination={{ pageSize: 50 }}
+                  size="small"
+                  style={{ marginTop: 8 }}
+                />
               </div>
             ))}
-          </Space>
-
-          <Typography.Title level={4}>Responses</Typography.Title>
-          {Array.from(grouped.entries()).map(([surveyVersionId, rows]) => (
-            <div key={surveyVersionId} style={{ marginBottom: 24 }}>
-              <Typography.Text strong>
-                Survey {surveyVersionId === survey?.id ? `${surveyVersionId} (current)` : surveyVersionId}
-              </Typography.Text>
-              <Table<V1SurveyResponse>
-                rowKey={row => row.id ?? ''}
-                dataSource={rows}
-                columns={responseColumns}
-                pagination={{ pageSize: 50 }}
-                size="small"
-                style={{ marginTop: 8 }}
-              />
-            </div>
-          ))}
+          </Card>
         </>
       )}
     </Space>
