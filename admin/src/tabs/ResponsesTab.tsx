@@ -1,7 +1,7 @@
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
 import { Alert, Card, Select, Space, Table, Typography } from 'antd'
 import dayjs from 'dayjs'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { V1Playtest } from '../playtesthubapi/generated-definitions/V1Playtest'
 import type { V1Survey } from '../playtesthubapi/generated-definitions/V1Survey'
 import type { V1SurveyAnswer } from '../playtesthubapi/generated-definitions/V1SurveyAnswer'
@@ -63,18 +63,13 @@ export function ResponsesTab({ playtest }: { playtest: V1Playtest }) {
   )
   const survey = surveyQuery.data?.survey as V1Survey | undefined
 
-  const [surveyIdFilter, setSurveyIdFilter] = useState<string | undefined>(undefined)
-
-  // Default the version filter to the current survey version once it loads.
-  useEffect(() => {
-    if (survey?.id && surveyIdFilter === undefined) {
-      setSurveyIdFilter(survey.id)
-    }
-  }, [survey?.id])
+  // null = user explicitly cleared (all versions); undefined = not yet set (defaults to current)
+  const [surveyIdFilter, setSurveyIdFilter] = useState<string | null | undefined>(undefined)
+  const effectiveSurveyIdFilter = surveyIdFilter === undefined ? survey?.id : (surveyIdFilter ?? undefined)
 
   const responsesQuery = usePlaytesthubServiceAdminApi_GetSurveyResponses_ByPlaytestId(sdk, {
     playtestId,
-    queryParams: { surveyIdFilter, pageSize: 200 }
+    queryParams: { surveyIdFilter: effectiveSurveyIdFilter, pageSize: 200 }
   })
   const responses = useMemo(() => (responsesQuery.data?.responses ?? []) as V1SurveyResponse[], [responsesQuery.data])
 
@@ -144,8 +139,8 @@ export function ResponsesTab({ playtest }: { playtest: V1Playtest }) {
                   allowClear
                   placeholder="All versions"
                   style={{ minWidth: 200 }}
-                  value={surveyIdFilter}
-                  onChange={val => setSurveyIdFilter(val ?? undefined)}
+                  value={effectiveSurveyIdFilter}
+                  onChange={val => setSurveyIdFilter(val ?? null)}
                   options={versions.map(v => ({ value: v, label: v === survey?.id ? `${v} (current)` : v }))}
                 />
               </Space>
