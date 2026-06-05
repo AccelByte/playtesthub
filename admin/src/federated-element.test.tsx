@@ -224,7 +224,7 @@ describe('PlaytestsListPage', () => {
     expect(screen.getByText('AGS Campaign Codes')).toBeInTheDocument()
   })
 
-  it('renders ADT distribution label as "Direct Download (ADT)"', () => {
+  it('renders ADT distribution label as "ADT (Direct Download)"', () => {
     mockGetPlaytests.mockReturnValue({
       data: {
         playtests: [{ id: 'pt_1', slug: 'adt-alpha', title: 'ADT', status: 'PLAYTEST_STATUS_DRAFT', distributionModel: 'DISTRIBUTION_MODEL_ADT' }]
@@ -234,7 +234,7 @@ describe('PlaytestsListPage', () => {
       refetch: vi.fn()
     })
     renderAt('/')
-    expect(screen.getByText('Direct Download (ADT)')).toBeInTheDocument()
+    expect(screen.getByText('ADT (Direct Download)')).toBeInTheDocument()
   })
 
   it('publishes a DRAFT row via the row menu', async () => {
@@ -334,8 +334,29 @@ describe('PlaytestsListPage', () => {
 })
 
 describe('PlaytestCreatePage', () => {
-  it('offers both distribution models with STEAM_KEYS as default', () => {
+  // The create form is a 3-step wizard (Setup → Build Distribution → Access &
+  // Privacy). "Next" runs form.validateFields(), so advancing past step 1
+  // requires the required fields: title + slug + at least one platform.
+  // dateRange is optional. These helpers drive the wizard to the step a given
+  // assertion lives on.
+  async function fillSetupStep(user: ReturnType<typeof userEvent.setup>, { slug = 'demo-slug', title = 'Demo' } = {}) {
+    await user.type(screen.getByLabelText(/playtest title/i), title)
+    await user.type(screen.getByLabelText(/slug/i), slug)
+    await user.click(within(screen.getByTestId('platforms-select')).getByRole('button', { name: 'Steam' }))
+  }
+  async function gotoDistributionStep(user: ReturnType<typeof userEvent.setup>, opts?: { slug?: string; title?: string }) {
+    await fillSetupStep(user, opts)
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+  }
+  async function gotoAccessStep(user: ReturnType<typeof userEvent.setup>, opts?: { slug?: string; title?: string }) {
+    await gotoDistributionStep(user, opts)
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+  }
+
+  it('offers both distribution models with STEAM_KEYS as default', async () => {
     renderAt('/new')
+    const user = userEvent.setup()
+    await gotoDistributionStep(user)
     const agsRadio = screen.getByRole('radio', { name: /AGS Campaign/i })
     expect(agsRadio).toBeEnabled()
     const steamRadio = screen.getByRole('radio', { name: /Steam keys/i })
@@ -343,19 +364,27 @@ describe('PlaytestCreatePage', () => {
     expect(steamRadio).toBeChecked()
   })
 
-  it('shows all the PRD-required fields on the create form', () => {
+  it('shows all the PRD-required fields across the create wizard', async () => {
     renderAt('/new')
+    const user = userEvent.setup()
+    // Step 1 — Playtest Setup.
     expect(screen.getByLabelText(/slug/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/playtest title/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/description/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/banner image url/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/platforms/i)).toBeInTheDocument()
+    // Step 2 — Build Distribution.
+    await gotoDistributionStep(user)
     expect(screen.getByText(/distribution model/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^create$/i })).toBeInTheDocument()
+    // Step 3 — Access & Privacy + the final submit affordance.
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+    expect(screen.getByRole('button', { name: /create playtest/i })).toBeInTheDocument()
   })
 
-  it('approval radio defaults to Manual Approval and hides the auto-approve limit input', () => {
+  it('approval radio defaults to Manual Approval and hides the auto-approve limit input', async () => {
     renderAt('/new')
+    const user = userEvent.setup()
+    await gotoAccessStep(user)
     const manualRadio = screen.getByRole('radio', { name: /manual approval/i })
     expect(manualRadio).toBeChecked()
     expect(screen.queryByLabelText(/auto-approve limit/i)).not.toBeInTheDocument()
@@ -364,6 +393,7 @@ describe('PlaytestCreatePage', () => {
   it('reveals the auto-approve limit input when the Auto-Approve radio is picked', async () => {
     renderAt('/new')
     const user = userEvent.setup()
+    await gotoAccessStep(user)
     await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
     expect(await screen.findByLabelText(/auto-approve limit/i)).toBeInTheDocument()
   })
@@ -373,21 +403,22 @@ describe('PlaytestCreatePage', () => {
     mockCreateMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
     renderAt('/new')
     const user = userEvent.setup()
+    // gotoAccessStep fills the required slug + title + platform on step 1.
+    await gotoAccessStep(user)
     await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
     const limit = await screen.findByLabelText(/auto-approve limit/i)
     await user.type(limit, '100001')
-    // Required fields so the form actually reaches the validator.
-    await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-    await user.type(screen.getByLabelText(/playtest title/i), 'Demo')
-    await user.click(screen.getByRole('button', { name: /^create$/i }))
+    await user.click(screen.getByRole('button', { name: /create playtest/i }))
     expect(
       await screen.findByText('auto_approve_limit must be between 1 and 100000 when auto_approve is true')
     ).toBeInTheDocument()
     expect(mutate).not.toHaveBeenCalled()
   })
 
-  it('offers the ADT distribution radio (M5.B)', () => {
+  it('offers the ADT distribution radio (M5.B)', async () => {
     renderAt('/new')
+    const user = userEvent.setup()
+    await gotoDistributionStep(user)
     expect(screen.getByRole('radio', { name: /^ADT$/i })).toBeEnabled()
   })
 
@@ -399,6 +430,7 @@ describe('PlaytestCreatePage', () => {
     })
     renderAt('/new')
     const user = userEvent.setup()
+    await gotoDistributionStep(user)
     await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
     expect(await screen.findByLabelText(/adt linkage/i)).toBeInTheDocument()
     // The build picker modal (B13) is the canonical UX; the typed adt game
@@ -425,6 +457,7 @@ describe('PlaytestCreatePage', () => {
       })
       renderAt('/new')
       const user = userEvent.setup()
+      await gotoDistributionStep(user)
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
 
       const openButton = await screen.findByRole('button', { name: /select game build/i })
@@ -460,6 +493,7 @@ describe('PlaytestCreatePage', () => {
       })
       renderAt('/new')
       const user = userEvent.setup()
+      await gotoDistributionStep(user)
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -491,6 +525,7 @@ describe('PlaytestCreatePage', () => {
       })
       renderAt('/new')
       const user = userEvent.setup()
+      await gotoDistributionStep(user)
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -524,6 +559,7 @@ describe('PlaytestCreatePage', () => {
       })
       renderAt('/new')
       const user = userEvent.setup()
+      await gotoDistributionStep(user)
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -566,11 +602,10 @@ describe('PlaytestCreatePage', () => {
       })
       renderAt('/new')
       const user = userEvent.setup()
-      // Fill enough of the form to reach submit; the build picker drives the
-      // adtGameId + adtBuildId fields which we then assert end up on the parent
-      // form's submit payload.
-      await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-      await user.type(screen.getByLabelText(/playtest title/i), 'Demo')
+      // Fill enough of the form to reach the Build Distribution step; the build
+      // picker drives the adtGameId + adtBuildId fields which we then assert end
+      // up on the parent form's submit payload.
+      await gotoDistributionStep(user, { slug: 'demo-slug', title: 'Demo' })
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -598,8 +633,7 @@ describe('PlaytestCreatePage', () => {
       })
       renderAt('/new')
       const user = userEvent.setup()
-      await user.type(screen.getByLabelText(/slug/i), 'demo-slug')
-      await user.type(screen.getByLabelText(/playtest title/i), 'My Title')
+      await gotoDistributionStep(user, { slug: 'demo-slug', title: 'My Title' })
       await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
       await user.click(screen.getByLabelText(/adt linkage/i))
       await user.click(await screen.findByText(/adt-ns-1/i))
@@ -609,6 +643,9 @@ describe('PlaytestCreatePage', () => {
       await user.click(within(dialog).getByRole('button', { name: /cancel/i }))
 
       await waitFor(() => expect(screen.queryByRole('dialog', { name: /select game build/i })).not.toBeInTheDocument())
+      // Step 1 fields are unmounted on the Build Distribution step; step back to
+      // confirm the build-picker cancel did not wipe the typed form state.
+      await user.click(screen.getByRole('button', { name: /^back$/i }))
       expect(screen.getByLabelText(/slug/i)).toHaveValue('demo-slug')
       expect(screen.getByLabelText(/playtest title/i)).toHaveValue('My Title')
     })
@@ -647,19 +684,23 @@ describe('PlaytestCreatePage', () => {
   // "linking required" warning. Add a Link ADT button beside it that drives the
   // existing StartADTLink flow (the LinkADTModal → start mutation).
   describe('ADT-not-linked Link button (PM fix #5)', () => {
-    it('renders a Link ADT Namespace button when linkageCount is 0', () => {
+    it('renders a Link ADT Namespace button when linkageCount is 0', async () => {
       mockGetAdtLinkages.mockReturnValue({ data: { linkages: [] }, isLoading: false, error: null })
       renderAt('/new')
+      const user = userEvent.setup()
+      await gotoDistributionStep(user)
       expect(screen.getByRole('button', { name: /link adt namespace/i })).toBeInTheDocument()
     })
 
-    it('does not render the Link ADT button once a linkage exists', () => {
+    it('does not render the Link ADT button once a linkage exists', async () => {
       mockGetAdtLinkages.mockReturnValue({
         data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A' }] },
         isLoading: false,
         error: null
       })
       renderAt('/new')
+      const user = userEvent.setup()
+      await gotoDistributionStep(user)
       expect(screen.queryByRole('button', { name: /link adt namespace/i })).not.toBeInTheDocument()
     })
 
@@ -669,6 +710,7 @@ describe('PlaytestCreatePage', () => {
       mockGetAdtLinkages.mockReturnValue({ data: { linkages: [] }, isLoading: false, error: null })
       renderAt('/new')
       const user = userEvent.setup()
+      await gotoDistributionStep(user)
       await user.click(screen.getByRole('button', { name: /link adt namespace/i }))
       expect(await screen.findByText(/you will be redirected to ADT to authorise the linkage/i)).toBeInTheDocument()
       await user.click(screen.getByRole('button', { name: /^proceed$/i }))
@@ -678,19 +720,28 @@ describe('PlaytestCreatePage', () => {
 })
 
 describe('ADTLinkagesPanel', () => {
-  it('renders empty-state copy when no linkages exist', () => {
+  // The panel now lives behind the "Global Configurations" tab on the list page.
+  async function openConfigTab(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('tab', { name: /global configurations/i }))
+  }
+
+  it('renders empty-state copy when no linkages exist', async () => {
     renderAt('/')
+    const user = userEvent.setup()
+    await openConfigTab(user)
     expect(screen.getByText(/no ADT linkages yet/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /link new ADT namespace/i })).toBeInTheDocument()
   })
 
-  it('renders linkage rows + an Unlink button per row', () => {
+  it('renders linkage rows + an Unlink button per row', async () => {
     mockGetAdtLinkages.mockReturnValue({
       data: { linkages: [{ id: 'lnk-1', adtNamespace: 'adt-ns-1', studioNamespace: 'studio-A', linkedAt: '2026-05-19T00:00:00Z' }] },
       isLoading: false,
       error: null
     })
     renderAt('/')
+    const user = userEvent.setup()
+    await openConfigTab(user)
     expect(screen.getByText('adt-ns-1')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /unlink/i })).toBeInTheDocument()
   })
@@ -698,6 +749,7 @@ describe('ADTLinkagesPanel', () => {
   it('opens the Link ADT modal on click', async () => {
     renderAt('/')
     const user = userEvent.setup()
+    await openConfigTab(user)
     await user.click(screen.getByRole('button', { name: /link new ADT namespace/i }))
     expect(await screen.findByText(/you will be redirected to ADT to authorise the linkage/i)).toBeInTheDocument()
   })
