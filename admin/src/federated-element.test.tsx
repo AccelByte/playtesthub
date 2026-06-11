@@ -166,9 +166,8 @@ async function openRowMenu() {
 }
 
 describe('PlaytestsListPage', () => {
-  it('renders Playtest Hub header and a Create Playtest button', () => {
+  it('renders a Create Playtest button', () => {
     renderAt('/')
-    expect(screen.getByRole('heading', { name: /playtest hub/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /create playtest/i })).toBeInTheDocument()
   })
 

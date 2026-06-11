@@ -11,6 +11,7 @@ import {
   Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message
@@ -205,19 +206,19 @@ function ADTPanel({ playtest }: { playtest: V1Playtest }) {
                     </>
                   )}
                 </Typography.Text>
+                <BuildHealthAlert playtest={playtest} />
               </div>
             </div>
-            <BuildHealthAlert playtest={playtest} />
             <Alert
-              type="success"
+              type="info"
               showIcon
-              icon={<CheckCircleFilled />}
-              message="Approved participants will receive a direct download link via Discord DM from the PlaytestHub bot."
+              description={
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  <li>Upon approval, participants automatically receive a direct download link via Discord DM from the PlaytestHub bot.</li>
+                  <li>Changing the build applies to future approvals and DM retries only — participants already approved retain the link they received.</li>
+                </ul>
+              }
             />
-            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-              Changing the build applies to future approvals and DM retries only — already-approved participants keep the
-              download already sent.
-            </Typography.Text>
           </Space>
         </Card>
       )}
@@ -259,13 +260,11 @@ function BuildHealthAlert({ playtest }: { playtest: V1Playtest }) {
   }
   if (status === 'OK') {
     return (
-      <Alert
-        type="success"
-        showIcon
-        icon={<CheckCircleFilled />}
-        data-testid="adt-build-health-alert"
-        message={`Build is available in ADT${suffix}.`}
-      />
+      <Tooltip title={checkedAt ? `Last checked: ${checkedAt}` : undefined}>
+        <Tag color="success" icon={<CheckCircleFilled />} data-testid="adt-build-health-alert" style={{ cursor: 'default' }}>
+          Available
+        </Tag>
+      </Tooltip>
     )
   }
   return null

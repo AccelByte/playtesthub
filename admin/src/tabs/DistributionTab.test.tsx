@@ -133,7 +133,7 @@ describe('ADTPanel (build health surfacing)', () => {
 
   it('surfaces a success alert when the build is OK', () => {
     renderTab({ ...ADT_PT, adtBuildStatus: 'OK', adtBuildCheckedAt: '2026-05-26T10:00:00Z' })
-    expect(screen.getByTestId('adt-build-health-alert')).toHaveTextContent(/available in ADT/i)
+    expect(screen.getByTestId('adt-build-health-alert')).toHaveTextContent(/available/i)
   })
 
   it('calls CheckADTBuild with the playtestId when Check build is clicked', async () => {
