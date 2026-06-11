@@ -1,9 +1,8 @@
-import { CopyOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, CopyOutlined } from '@ant-design/icons'
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Alert,
-  Breadcrumb,
   Button,
   Card,
   Modal,
@@ -161,17 +160,17 @@ export function PlaytestDetailPage() {
   return (
     <>
     <div
-      style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '16px 24px 0' }}
+      style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '16px 24px 0', borderTop: '1px solid #f0f0f0' }}
       data-testid="playtest-detail-page"
     >
-      <Breadcrumb
-        style={{ marginBottom: 8 }}
-        items={[
-          { title: 'Extend App UI' },
-          { title: <a onClick={() => navigate('/')}>Playtest Hub</a> },
-          { title: playtest.title ?? playtest.slug ?? '—' }
-        ]}
-      />
+      <Button
+        type="link"
+        icon={<ArrowLeftOutlined />}
+        onClick={() => navigate('/')}
+        style={{ padding: 0, height: 'auto', marginBottom: 8 }}
+      >
+        Back to list
+      </Button>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 8 }}>
         <div>
           <Typography.Title level={2} style={{ margin: 0 }}>

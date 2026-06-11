@@ -492,9 +492,6 @@ function PlaytestsListPage() {
     <>
       {/* Full-width white header — negative margins counteract FederatedElement's padding: 16 */}
       <div style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '20px 24px 0' }}>
-        <Typography.Title level={2} style={{ margin: '0 0 2px' }}>
-          Playtest Hub
-        </Typography.Title>
         <Tabs
           activeKey={activeTab}
           onChange={key => setActiveTab(key as 'list' | 'config')}
@@ -1029,7 +1026,8 @@ function PlaytestCreatePage() {
   const createErrorMessage =
     createError && isSlugConflict(createError) ? SLUG_CONFLICT_MESSAGE : apiErrorMessage(createError ?? {}, 'Create failed')
 
-  const handleSubmit = (values: FormValues) => {
+  const handleSubmit = () => {
+    const values = form.getFieldsValue(true) as FormValues
     const isADT = values.distributionModel === DistributionModel.ADT
     createMutation.mutate({
       data: {
@@ -1068,19 +1066,13 @@ function PlaytestCreatePage() {
 
   return (
     <>
-      {/* Full-width white header — title only */}
-      <div style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '20px 24px' }}>
-        <Typography.Title level={2} style={{ margin: 0 }}>
-          Create New Playtest
-        </Typography.Title>
-      </div>
-
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 32px)' }}>
       <Form<FormValues>
         form={form}
         layout="vertical"
         onFinish={handleSubmit}
         scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
-        style={{ marginTop: 16, paddingBottom: 80 }}
+        style={{ marginTop: 16, flex: 1 }}
         initialValues={{
           platforms: [],
           ndaRequired: false,
@@ -1232,10 +1224,9 @@ function PlaytestCreatePage() {
 
         <div
           style={{
-            position: 'fixed',
+            position: 'sticky',
             bottom: 0,
-            left: 0,
-            right: 0,
+            margin: '0 -16px -16px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -1265,6 +1256,7 @@ function PlaytestCreatePage() {
           </Space>
         </div>
       </Form>
+      </div>
       <LinkADTModal open={linkAdtOpen} onClose={() => setLinkAdtOpen(false)} />
     </>
   )
