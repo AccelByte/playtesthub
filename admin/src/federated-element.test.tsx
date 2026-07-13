@@ -363,6 +363,16 @@ describe('PlaytestCreatePage', () => {
     expect(steamRadio).toBeChecked()
   })
 
+  it('requires an initial code quantity when AGS Campaign is selected', async () => {
+    renderAt('/new')
+    const user = userEvent.setup()
+    await gotoDistributionStep(user)
+    await user.click(screen.getByRole('radio', { name: /AGS Campaign/i }))
+    // leave the quantity empty and try to advance
+    await user.click(screen.getByRole('button', { name: /^next$/i }))
+    expect(await screen.findByText('Must be between 1 and 50000')).toBeInTheDocument()
+  })
+
   it('shows all the PRD-required fields across the create wizard', async () => {
     renderAt('/new')
     const user = userEvent.setup()
@@ -411,6 +421,19 @@ describe('PlaytestCreatePage', () => {
     expect(
       await screen.findByText('auto_approve_limit must be between 1 and 100000 when auto_approve is true')
     ).toBeInTheDocument()
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('shows the short range message when the auto-approve limit is left empty', async () => {
+    const mutate = vi.fn()
+    mockCreateMutation.mockReturnValue({ mutate, isPending: false, isError: false, error: null })
+    renderAt('/new')
+    const user = userEvent.setup()
+    await gotoAccessStep(user)
+    await user.click(screen.getByRole('radio', { name: /auto-approve/i }))
+    // leave the limit empty, then submit
+    await user.click(screen.getByRole('button', { name: /create playtest/i }))
+    expect(await screen.findByText('Must be between 1 and 100000')).toBeInTheDocument()
     expect(mutate).not.toHaveBeenCalled()
   })
 
