@@ -183,6 +183,22 @@ describe('PlaytestDetailPage shell', () => {
     await waitFor(() => expect(screen.getByTestId('distribution-tab')).toBeInTheDocument())
   })
 
+  it('Survey tab shows the notify notice with a Learn more / Show less toggle', async () => {
+    renderDetail('autumn-draft')
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('tab', { name: 'Survey' }))
+    const notice = await screen.findByTestId('survey-notify-notice')
+    // Compact line always shown; the detail (bullets + caveat) is hidden until "Learn more".
+    expect(within(notice).getByText(/your approved testers are notified automatically/i)).toBeInTheDocument()
+    expect(within(notice).queryByText(/won't re-send any DMs/i)).not.toBeInTheDocument()
+
+    await user.click(within(notice).getByText(/learn more/i))
+    expect(within(notice).getByText(/won't re-send any DMs/i)).toBeInTheDocument()
+
+    await user.click(within(notice).getByText(/show less/i))
+    expect(within(notice).queryByText(/won't re-send any DMs/i)).not.toBeInTheDocument()
+  })
+
   it('Info tab renders the read-only field grid + Edit button', () => {
     renderDetail('autumn-draft')
     expect(screen.getByTestId('playtest-info-tab')).toBeInTheDocument()
