@@ -2,9 +2,9 @@ import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
 import { InfoCircleFilled } from '@ant-design/icons'
 import { Alert, Card, Modal, Select, Space, Tag, Typography } from 'antd'
 import { useMemo, useState } from 'react'
+import { usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId } from '../playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
 import type { V1AdtBuild } from '../playtesthubapi/generated-definitions/V1AdtBuild'
 import type { V1AdtGame } from '../playtesthubapi/generated-definitions/V1AdtGame'
-import { usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId } from '../playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
 
 // ADTBuildPickerModal renders the namespace → game → version → build
 // picker that B13 specs against docs/images/build-picker-mockup.png.
@@ -87,11 +87,16 @@ export function ADTBuildPickerModal({
             )}
             {showSingleFileDetail && (
               <>
-                <Typography.Paragraph type="secondary" style={{ margin: '8px 0 0' }}>
-                  A single-file build gives every approved playtester one clean download link in their invite, simple to
-                  share and reliable to deliver. Builds split across multiple files produce a separate link for each
-                  file, which makes invites longer and harder to follow.
-                </Typography.Paragraph>
+                <ul style={{ margin: '8px 0 0', paddingInlineStart: 20 }}>
+                  <li>
+                    <Typography.Text strong>Single build file</Typography.Text>: package your build into a single file so testers get a
+                    clean download link (multiple files = multiple links).
+                  </li>
+                  <li>
+                    <Typography.Text strong>buildinfo only</Typography.Text>: only the buildinfo build type is supported. Smartbuild is
+                    currently not supported.
+                  </li>
+                </ul>
                 <Typography.Link onClick={() => setShowSingleFileDetail(false)} style={{ display: 'inline-block', marginTop: 8 }}>
                   Show less
                 </Typography.Link>

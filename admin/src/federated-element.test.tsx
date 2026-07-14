@@ -491,13 +491,13 @@ describe('PlaytestCreatePage', () => {
       const notice = within(dialog).getByTestId('adt-single-file-notice')
       // Compact line is always present; the detail is hidden until "Learn more".
       expect(within(notice).getByText(/package your build into a single file/i)).toBeInTheDocument()
-      expect(within(notice).queryByText(/harder to follow/i)).not.toBeInTheDocument()
+      expect(within(notice).queryByText(/Smartbuild is currently not supported/i)).not.toBeInTheDocument()
 
       await user.click(within(notice).getByText(/learn more/i))
-      expect(within(notice).getByText(/harder to follow/i)).toBeInTheDocument()
+      expect(within(notice).getByText(/Smartbuild is currently not supported/i)).toBeInTheDocument()
 
       await user.click(within(notice).getByText(/show less/i))
-      expect(within(notice).queryByText(/harder to follow/i)).not.toBeInTheDocument()
+      expect(within(notice).queryByText(/Smartbuild is currently not supported/i)).not.toBeInTheDocument()
     })
 
     it('groups builds by game_version_name in the left rail with per-version build counts', async () => {
