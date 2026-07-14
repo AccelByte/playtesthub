@@ -242,7 +242,7 @@ function SurveyTabForm({ playtestId, initialSurvey, hasSurvey, draftPreloadFaile
             )}
             {showNotifyDetail && (
               <>
-                <ul style={{ margin: '8px 0 0', paddingInlineStart: 20 }}>
+                <ul style={{ margin: '8px 0 0', paddingInlineStart: 20, listStyleType: 'disc' }}>
                   <li>
                     <Typography.Text strong>Already approved</Typography.Text> (NDA accepted, if required): a one-time DM with the link.
                   </li>
