@@ -6,7 +6,7 @@ Players apply for a slot, click-accept the NDA, get a code (Steam key or AGS Cam
 
 Built for indie and mid-size studios that already use AGS and need tenant-isolated playtest tooling they can own, audit, and self-host inside their own namespace, without rebuilding the same signup → NDA → key → feedback plumbing every release.
 
-![playtesthub end-to-end walkthrough — admin creates a playtest, player signs up, admin approves, code is granted, player submits a survey response, admin reviews the audit log](docs/images/walkthrough.gif)
+![playtesthub ADT walkthrough — admin creates a playtest with ADT distribution and auto-approve enabled, player signs up, is approved instantly, and receives the build download link from ADT](docs/images/walkthrough.gif)
 
 - [What's in the box](#whats-in-the-box)
 - [Quick start](#quick-start)
