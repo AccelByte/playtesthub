@@ -87,7 +87,7 @@ export function ADTBuildPickerModal({
             )}
             {showSingleFileDetail && (
               <>
-                <ul style={{ margin: '8px 0 0', paddingInlineStart: 20 }}>
+                <ul style={{ margin: '8px 0 0', paddingInlineStart: 20, listStyleType: 'disc' }}>
                   <li>
                     <Typography.Text strong>Single build file</Typography.Text>: package your build into a single file so testers get a
                     clean download link (multiple files = multiple links).
