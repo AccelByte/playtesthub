@@ -577,6 +577,7 @@ const AUTO_APPROVE_LIMIT_MIN = 1
 const AUTO_APPROVE_LIMIT_MAX = 100000
 const AUTO_APPROVE_LIMIT_ERROR =
   'auto_approve_limit must be between 1 and 100000 when auto_approve is true'
+const AUTO_APPROVE_LIMIT_EMPTY_ERROR = 'Must be between 1 and 100000'
 
 // Mirrors the errors.md row for CreatePlaytest / EditPlaytest banner URL —
 // the backend rejects http with the byte-exact "banner_image_url must be
@@ -598,9 +599,33 @@ const bannerImageUrlRule = {
   }
 }
 
+const INITIAL_CODE_QUANTITY_MIN = 1
+const INITIAL_CODE_QUANTITY_MAX = 50000
+const INITIAL_CODE_QUANTITY_ERROR = 'Must be between 1 and 50000'
+
+const initialCodeQuantityRule = ({ getFieldValue }: { getFieldValue: (name: string) => unknown }) => ({
+  validator(_: unknown, value: unknown) {
+    if (getFieldValue('distributionModel') !== DistributionModel.AGS_CAMPAIGN) return Promise.resolve()
+    if (
+      value == null ||
+      value === '' ||
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < INITIAL_CODE_QUANTITY_MIN ||
+      value > INITIAL_CODE_QUANTITY_MAX
+    ) {
+      return Promise.reject(new Error(INITIAL_CODE_QUANTITY_ERROR))
+    }
+    return Promise.resolve()
+  }
+})
+
 const autoApproveLimitRule = ({ getFieldValue }: { getFieldValue: (name: string) => unknown }) => ({
   validator(_: unknown, value: unknown) {
     if (!getFieldValue('autoApprove')) return Promise.resolve()
+    if (value == null || value === '') {
+      return Promise.reject(new Error(AUTO_APPROVE_LIMIT_EMPTY_ERROR))
+    }
     if (typeof value !== 'number' || !Number.isInteger(value) || value < AUTO_APPROVE_LIMIT_MIN || value > AUTO_APPROVE_LIMIT_MAX) {
       return Promise.reject(new Error(AUTO_APPROVE_LIMIT_ERROR))
     }
@@ -1072,13 +1097,21 @@ function PlaytestCreatePage() {
         layout="vertical"
         onFinish={handleSubmit}
         scrollToFirstError={{ behavior: 'smooth', block: 'center' }}
-        style={{ marginTop: 16, flex: 1 }}
+        style={{ marginTop: 16, flex: 1, display: 'flex', flexDirection: 'column' }}
         initialValues={{
           platforms: [],
           ndaRequired: false,
           distributionModel: DistributionModel.STEAM_KEYS,
           autoApprove: false
         }}>
+        {createMutation.isError && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={createErrorMessage}
+          />
+        )}
         <Card styles={{ body: { padding: 0 } }} style={{ borderRadius: 8 }}>
           <Steps
             type="navigation"
@@ -1102,7 +1135,15 @@ function PlaytestCreatePage() {
                 <Form.Item
                   label="Slug"
                   name="slug"
-                  rules={[{ required: true, message: 'Slug is required' }]}
+                  validateFirst
+                  validateTrigger={['onChange', 'onBlur']}
+                  rules={[
+                    { required: true, message: 'Slug is required' },
+                    {
+                      pattern: /^[a-z0-9][a-z0-9-]{2,63}$/,
+                      message: '3–64 chars, lowercase letters, numbers, hyphens; must start with a letter or number'
+                    }
+                  ]}
                   extra="URL-safe identifier. Lowercase, numbers, hyphens. 3–64 characters.">
                   <Input placeholder="e.g. starfield-alpha-w2" />
                 </Form.Item>
@@ -1112,6 +1153,7 @@ function PlaytestCreatePage() {
                 <Form.Item
                   label="Banner Image URL (optional)"
                   name="bannerImageUrl"
+                  validateTrigger="onBlur"
                   rules={[bannerImageUrlRule]}
                   extra="https only — backend rejects http."
                   style={{ marginBottom: 0 }}>
@@ -1153,7 +1195,9 @@ function PlaytestCreatePage() {
                 <Form.Item
                   label="Initial code quantity"
                   name="initialCodeQuantity"
-                  rules={[{ type: 'number', min: 1, max: 50000 }]}
+                  required
+                  dependencies={['distributionModel']}
+                  rules={[initialCodeQuantityRule]}
                   style={{ marginTop: 16, marginBottom: 0 }}>
                   <InputNumber min={1} max={50000} style={{ width: '100%' }} />
                 </Form.Item>
@@ -1182,6 +1226,7 @@ function PlaytestCreatePage() {
                   <Form.Item
                     label="Auto-approve limit"
                     name="autoApproveLimit"
+                    required
                     dependencies={['autoApprove']}
                     rules={[autoApproveLimitRule]}
                     style={{ marginTop: 16, marginBottom: 0 }}>
@@ -1214,19 +1259,13 @@ function PlaytestCreatePage() {
           </div>
         </Card>
 
-        {createMutation.isError && (
-          <Alert
-            type="error"
-            style={{ marginTop: 16 }}
-            message={createErrorMessage}
-          />
-        )}
-
         <div
           style={{
             position: 'sticky',
             bottom: 0,
-            margin: '0 -16px -16px',
+            marginTop: 'auto',
+            marginInline: -16,
+            marginBottom: -16,
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -1400,6 +1439,7 @@ function PlaytestEditPage() {
               <Form.Item
                 label="Auto-approve limit"
                 name="autoApproveLimit"
+                required
                 dependencies={['autoApprove']}
                 rules={[autoApproveLimitRule]}>
                 <InputNumber style={{ width: '100%' }} />
@@ -1409,7 +1449,7 @@ function PlaytestEditPage() {
         </Form.Item>
         {editMutation.isError && (
           <Form.Item>
-            <Alert type="error" message={editMutation.error?.response?.data?.errorMessage ?? 'Update failed'} />
+            <Alert type="error" showIcon message={editMutation.error?.response?.data?.errorMessage ?? 'Update failed'} />
           </Form.Item>
         )}
         <Form.Item style={{ marginBottom: 0 }}>
