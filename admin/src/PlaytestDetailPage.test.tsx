@@ -148,7 +148,7 @@ beforeEach(() => {
 describe('PlaytestDetailPage shell', () => {
   it('renders header + status pill + breadcrumb', () => {
     renderDetail('autumn-draft')
-    expect(screen.getByRole('heading', { name: 'Autumn Build', level: 2 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Autumn Build', level: 3 })).toBeInTheDocument()
     const pill = screen.getByTestId('playtest-status-pill')
     expect(within(pill).getByText('Draft')).toBeInTheDocument()
   })

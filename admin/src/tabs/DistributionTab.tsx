@@ -261,7 +261,7 @@ function BuildHealthAlert({ playtest }: { playtest: V1Playtest }) {
   if (status === 'OK') {
     return (
       <Tooltip title={checkedAt ? `Last checked: ${checkedAt}` : undefined}>
-        <Tag color="success" icon={<CheckCircleFilled />} data-testid="adt-build-health-alert" style={{ cursor: 'default' }}>
+        <Tag color="success" icon={<CheckCircleFilled />} data-testid="adt-build-health-alert" style={{ cursor: 'default', alignSelf: 'flex-start' }}>
           Available
         </Tag>
       </Tooltip>

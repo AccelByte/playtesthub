@@ -160,7 +160,7 @@ export function PlaytestDetailPage() {
   return (
     <>
     <div
-      style={{ margin: '-16px -16px 0 -16px', backgroundColor: '#fff', padding: '16px 24px 0', borderTop: '1px solid #f0f0f0' }}
+      style={{ marginBottom: 8 }}
       data-testid="playtest-detail-page"
     >
       <Button
@@ -173,7 +173,7 @@ export function PlaytestDetailPage() {
       </Button>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 8 }}>
         <div>
-          <Typography.Title level={2} style={{ margin: 0 }}>
+          <Typography.Title level={3} style={{ margin: 0 }}>
             {playtest.title ?? '—'}
           </Typography.Title>
           <Space size={12} style={{ marginTop: 4 }}>
