@@ -495,6 +495,34 @@ describe('PlaytestCreatePage', () => {
       expect(within(dialog).getByText(/starfield dev/i)).toBeInTheDocument()
     })
 
+    it('shows the single-file packaging notice with a Learn more / Show less toggle', async () => {
+      setLinkages()
+      mockGetAdtGames.mockReturnValue({
+        data: { games: [{ id: 'game-1', name: 'Starfield Dev' }] },
+        isLoading: false,
+        error: null
+      })
+      renderAt('/new')
+      const user = userEvent.setup()
+      await gotoDistributionStep(user)
+      await user.click(screen.getByRole('radio', { name: /^ADT$/i }))
+      await user.click(screen.getByLabelText(/adt linkage/i))
+      await user.click(await screen.findByText(/adt-ns-1/i))
+      await user.click(await screen.findByRole('button', { name: /select game build/i }))
+
+      const dialog = await screen.findByRole('dialog', { name: /select game build/i })
+      const notice = within(dialog).getByTestId('adt-single-file-notice')
+      // Compact line is always present; the detail is hidden until "Learn more".
+      expect(within(notice).getByText(/package your build into a single file/i)).toBeInTheDocument()
+      expect(within(notice).queryByText(/Smartbuild is currently not supported/i)).not.toBeInTheDocument()
+
+      await user.click(within(notice).getByText(/learn more/i))
+      expect(within(notice).getByText(/Smartbuild is currently not supported/i)).toBeInTheDocument()
+
+      await user.click(within(notice).getByText(/show less/i))
+      expect(within(notice).queryByText(/Smartbuild is currently not supported/i)).not.toBeInTheDocument()
+    })
+
     it('groups builds by game_version_name in the left rail with per-version build counts', async () => {
       setLinkages()
       mockGetAdtGames.mockReturnValue({

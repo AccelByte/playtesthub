@@ -1,9 +1,10 @@
 import { useAppUIContext } from '@accelbyte/sdk-extend-app-ui'
-import { Card, Modal, Select, Space, Tag, Typography } from 'antd'
+import { InfoCircleFilled } from '@ant-design/icons'
+import { Alert, Card, Modal, Select, Space, Tag, Typography } from 'antd'
 import { useMemo, useState } from 'react'
+import { usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId } from '../playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
 import type { V1AdtBuild } from '../playtesthubapi/generated-definitions/V1AdtBuild'
 import type { V1AdtGame } from '../playtesthubapi/generated-definitions/V1AdtGame'
-import { usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId } from '../playtesthubapi/generated-admin/queries/PlaytesthubServiceAdmin.query'
 
 // ADTBuildPickerModal renders the namespace → game → version → build
 // picker that B13 specs against docs/images/build-picker-mockup.png.
@@ -30,6 +31,7 @@ export function ADTBuildPickerModal({
   const [gameId, setGameId] = useState(initialGameId)
   const [versionName, setVersionName] = useState<string | null>(null)
   const [pickedBuildId, setPickedBuildId] = useState<string | null>(null)
+  const [showSingleFileDetail, setShowSingleFileDetail] = useState(false)
 
   const buildsQuery = usePlaytesthubServiceAdminApi_GetBuildsAdt_ByAdtLinkageId(
     sdk,
@@ -68,6 +70,41 @@ export function ADTBuildPickerModal({
       <Typography.Paragraph type="secondary">
         Choose a game, select a version, then pick a specific build to use for this playtest.
       </Typography.Paragraph>
+      <Alert
+        type="info"
+        showIcon
+        icon={<InfoCircleFilled style={{ marginTop: 3 }} />}
+        style={{ marginBottom: 16, alignItems: 'flex-start' }}
+        data-testid="adt-single-file-notice"
+        message={
+          <div>
+            <Typography.Text>Before uploading to ADT, package your build into a single file.</Typography.Text>
+            {!showSingleFileDetail && (
+              <>
+                {' '}
+                <Typography.Link onClick={() => setShowSingleFileDetail(true)}>Learn more</Typography.Link>
+              </>
+            )}
+            {showSingleFileDetail && (
+              <>
+                <ul style={{ margin: '8px 0 0', paddingInlineStart: 20, listStyleType: 'disc' }}>
+                  <li>
+                    <Typography.Text strong>Single build file</Typography.Text>: package your build into a single file so testers get a
+                    clean download link (multiple files = multiple links).
+                  </li>
+                  <li>
+                    <Typography.Text strong>buildinfo only</Typography.Text>: only the buildinfo build type is supported. Smartbuild is
+                    currently not supported.
+                  </li>
+                </ul>
+                <Typography.Link onClick={() => setShowSingleFileDetail(false)} style={{ display: 'inline-block', marginTop: 8 }}>
+                  Show less
+                </Typography.Link>
+              </>
+            )}
+          </div>
+        }
+      />
       <div style={{ display: 'flex', gap: 16 }}>
         <div style={{ width: 280 }}>
           <Select
